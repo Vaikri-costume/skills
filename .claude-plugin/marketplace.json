@@ -1,0 +1,23 @@
+{
+  "name": "ccvw-skills",
+  "owner": {
+    "name": "Vaikri-costume"
+  },
+  "metadata": {
+    "description": "Vaikri-costume's Claude skills (claude-users tier) — including a build → trace → ship skill-building toolkit.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "ccvw-toolkit",
+      "description": "Build → trace → ship toolkit for authoring bug-free Claude skills: skill-creator-ccvw (build), skill-tracer (trace), skill-publisher (ship).",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/skill-creator-ccvw",
+        "./skills/skill-tracer",
+        "./skills/skill-publisher"
+      ]
+    }
+  ]
+}
