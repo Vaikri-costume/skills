@@ -1,0 +1,13 @@
+{
+  "_comment": "Config for the shared render_ledger.py when rendering a skill-publisher SHIP ledger. Pass with --config @/absolute/path/to/ledger-render-config.json (the @ prefix tells render_ledger.py to load JSON from the file at that path; a bare path without @ is parsed as inline JSON and fails). The publisher's ledger uses 'Run' (not tracer's 'Round') and the POLISH/AUDIT/TIER/PACKAGE/PR phases. render_ledger.py is a byte-vendored copy of skill-tracer's; this config is the only per-skill difference. The valid_actions set MUST stay in lockstep with recovery-protocol.md's action keywords; the renderer's INVALID ACTION flag is a lint only -- recovery-protocol.md's unknown-keyword->addressing rule governs actual execution.",
+  "round_label": "Run",
+  "phase_colors": {
+    "POLISH": "#fff8e0",
+    "AUDIT": "#e6f3ff",
+    "TIER": "#f0e6ff",
+    "PACKAGE": "#e6ffe6",
+    "PR": "#ffe6f0"
+  },
+  "regression_patterns": ["\\bship-regression\\b"],
+  "valid_actions": ["polish", "audit", "tier", "addressing", "packaging", "pr"]
+}
