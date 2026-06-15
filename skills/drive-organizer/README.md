@@ -66,4 +66,6 @@ Other things you can do: `reconcile` (detect/repair drift), `duplicates --coloca
 
 ## For developers
 
+> ⚠️ **v1.2.0 status:** This published release passed all deterministic ship checks (portability, attribution, security, packaging) but has **not** been run through `/skill-tracer` (the cold correctness audit) or the multi-agent `simplify` polish — both were deferred. Treat it as functional-but-un-traced; run `/skill-tracer drive-organizer` before relying on it heavily.
+
 The runtime workflow lives in [`SKILL.md`](SKILL.md). Provenance and changelog live in [`HISTORY.md`](HISTORY.md). To trace this skill for bugs: `/skill-tracer drive-organizer`. To ship a new version: `/skill-publisher drive-organizer`.
