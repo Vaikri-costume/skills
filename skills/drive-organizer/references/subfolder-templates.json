@@ -1,0 +1,518 @@
+{
+  "version": 2,
+  "note": "Source of truth for routing rules. Use during propose to write/audit on-disk .tidy-rules.json files. The on-disk rules are the lazy state (what's been seen); this file is the template (what's possible everywhere). When a file matches a template entry not yet on disk, propose creates the subfolder AND records the rule in the parent's .tidy-rules.json (learning loop).",
+  "Q1_groupings": [
+    {
+      "name": "ENTERTAINMENT",
+      "description": "Music, movies, TV shows, books, audiobooks, comics, graphic novels, games, and hobby content — leisure not tied to paid work in ENTERTAINMENT",
+      "child_parent_type_field": "Q2_per_grouping.ENTERTAINMENT"
+    },
+    {
+      "name": "PERSONAL",
+      "description": "Personal photos, financial records, medical documents, government IDs, admin paperwork, resumes, and personal writing — files belonging to you as a private individual, not tied to a company or production in PERSONAL",
+      "child_parent_type_field": "Q2_per_grouping.PERSONAL"
+    },
+    {
+      "name": "WORK",
+      "description": "Work files tied to a company you run or paid client work — projects, deliverables, admin, finance, branding in WORK",
+      "child_parent_type_field": "Q2_per_grouping.WORK"
+    },
+    {
+      "name": "EDUCATION",
+      "description": "Postgraduate applications, dissertation and coursework, academic papers, research notes, study materials in EDUCATION",
+      "child_parent_type_field": "Q2_per_grouping.EDUCATION"
+    },
+    {
+      "name": "RESOURCES",
+      "description": "Cross-domain shared assets — fonts, blank templates, stock images not tied to a project in RESOURCES",
+      "child_parent_type_field": "Q2_per_grouping.RESOURCES"
+    }
+  ],
+  "Q2_per_grouping": {
+    "ENTERTAINMENT": [],
+    "PERSONAL": [],
+    "WORK": [],
+    "EDUCATION": [],
+    "RESOURCES": []
+  },
+  "prefix_propagation": {
+    "note": "Naming convention: the Q1 grouping name propagates as a prefix to its Q2 children (PERSONAL/PERSONAL Financial/, ENTERTAINMENT/ENTERTAINMENT Music/), EXCEPT WORK, which does not propagate to its company/client children (WORK/[Company]/, not WORK/WORK [Company]/). Company names propagate to their project children (WORK/[Company]/[Company] [Project]/). Deeper levels (Scripts, Financials, References, per-person folders, compound children like Bills/Invoices) do NOT carry prefixes — those are universal subfolder types whose context is established by ancestry."
+  },
+  "parent_type_definitions": {
+    "production_company": {
+      "note": "A company under which multiple projects sit. Children are Admin + per-project folders + per-client folders. Children carry the company prefix — e.g. WORK/[Company]/[Company] Admin, WORK/[Company]/[Company] [Project]. The skill identifies which child a file belongs to from project-specific signals in the parent's .tidy-rules.json (rules are seeded per-company since project lists differ).",
+      "always_present_children": [
+        "[Company] Admin",
+        "[Company] Branding And Marketing"
+      ],
+      "child_parent_types_by_pattern": {
+        "[Company] Admin": "admin",
+        "[Company] CLIENT *": "styling_client",
+        "*": "production"
+      }
+    },
+    "production": {
+      "note": "A single film, series, or sketch production. Holds the show's working files.",
+      "children": [
+        "Scripts",
+        "Schedules",
+        "Scene Breakdown",
+        "Docs",
+        "References",
+        "Legal",
+        "Financials",
+        "Promotional Assets",
+        "Film Coverage",
+        "Branding Materials"
+      ]
+    },
+    "admin": {
+      "note": "Company-wide admin documents not tied to a single project.",
+      "children": [
+        "Templates",
+        "Legal",
+        "Financials",
+        "References",
+        "Branding Materials",
+        "Promotional Assets",
+        "Film Coverage",
+        "Tasks from Notion export",
+        "Planning"
+      ]
+    },
+    "brand_client": {
+      "note": "A consulting client whose deliverables are branding/marketing assets.",
+      "children": [
+        "Branding Materials",
+        "References",
+        "Promotional Assets",
+        "Docs"
+      ]
+    },
+    "styling_client": {
+      "note": "A personal styling client — individual customer styling work.",
+      "children": [
+        "References",
+        "Docs",
+        "Promotional Assets"
+      ]
+    },
+    "personal_tree_root": {
+      "note": "A PERSONAL or EDUCATION subfolder that splits by person. The owner plus any household/family members are the core folders; extended-family or other named people get a [Person Name] pattern folder created on demand.",
+      "children": []
+    },
+    "personal_financial_person": {
+      "children": [
+        "Bills",
+        "Invoices",
+        "Advances",
+        "Expense Reports",
+        "Payment Summaries",
+        "Receipts",
+        "Bank Statements",
+        "Tax Documents",
+        "Legal"
+      ]
+    },
+    "personal_admin_person": {
+      "children": [
+        "Legal",
+        "Tasks from Notion export"
+      ]
+    },
+    "personal_medical_person": {
+      "children": [
+        "CPAP Data"
+      ]
+    },
+    "personal_masters_person": {
+      "children": [
+        "Statements And Proposals",
+        "[Institution]",
+        "Archived",
+        "Future Planning"
+      ]
+    },
+    "personal_id_person": {
+      "children": []
+    },
+    "personal_resumes_person": {
+      "note": "A person folder inside PERSONAL Resumes — holds that person's CVs/resumes. Templates live as a SIBLING of person folders (PERSONAL Resumes/Templates/), not inside any person folder.",
+      "children": []
+    },
+    "personal_writing_person": {
+      "children": []
+    },
+    "photos_root": {
+      "note": "Photos organised by year then month. Year folders contain 'Month YY' subfolders (e.g. 'April 24'). Previously-bundled image sets preserved under photos/ from prior organisation.",
+      "children": [
+        "[YYYY]"
+      ]
+    },
+    "music_root": {
+      "children": [
+        "[(YYYY) AlbumName]",
+        "_Junk",
+        "_Unsorted"
+      ]
+    },
+    "movies_root": {
+      "children": [
+        "[Movie Title (YYYY)]",
+        "[Series Name]"
+      ]
+    },
+    "books_root": {
+      "children": [
+        "[Series Title]"
+      ]
+    },
+    "comics_root": {
+      "children": [
+        "[Series Name]",
+        "Indian Adults Comics"
+      ]
+    },
+    "rpg_root": {
+      "children": [
+        "Game Master Guides",
+        "[Game Name]"
+      ]
+    },
+    "sewing_root": {
+      "children": [
+        "Patterns",
+        "Projects",
+        "Cosplay",
+        "References"
+      ]
+    },
+    "research_root": {
+      "children": [
+        "Academic Papers",
+        "Film Coverage",
+        "Notes",
+        "Digital Tools",
+        "Lyrics Research"
+      ]
+    },
+    "flat": {
+      "note": "A leaf parent — files go directly inside. No further subfolder structure expected.",
+      "children": []
+    }
+  },
+  "compound_children": {
+    "References": {
+      "children": [
+        "[Character Name]",
+        "Look Decks",
+        "Mood Boards",
+        "Locations",
+        "Product Images"
+      ]
+    },
+    "Financials": {
+      "children": [
+        "Bills",
+        "Invoices",
+        "Advances",
+        "Expense Reports",
+        "Payment Summaries",
+        "Receipts",
+        "Bank Statements",
+        "Tax Documents"
+      ]
+    },
+    "Legal": {
+      "children": [
+        "MOUs and Agreements",
+        "Authority Letters",
+        "Contracts",
+        "Appointment and Employment Letters",
+        "Disputes"
+      ]
+    },
+    "Docs": {
+      "children": [
+        "Cast Lists",
+        "Crew Lists",
+        "Pitch Docs",
+        "Info Sheets"
+      ]
+    },
+    "Film Coverage": {
+      "children": [
+        "[Film Title]"
+      ]
+    }
+  },
+  "subfolder_definitions": {
+    "Scripts": {
+      "description": "Screenplays, script drafts, script revisions, scene drafts — .fdx files and PDF scripts in Scripts"
+    },
+    "Schedules": {
+      "description": "Call sheets, shoot schedules, shot lists, shot breakdowns, day-of production documents in Schedules"
+    },
+    "Scene Breakdown": {
+      "description": "Costume decks, scene-wise breakdowns, costume lists, packing lists, character look breakdowns, scene breakdown spreadsheets in Scene Breakdown"
+    },
+    "Docs": {
+      "description": "Production documents — cast lists, crew lists, character bios, pitch docs, info sheets in Docs"
+    },
+    "References": {
+      "description": "Costume references, character references, look decks, mood boards, location scouting photos, product imagery in References"
+    },
+    "Legal": {
+      "description": "Legal documents — MOUs and agreements, authority letters, contracts, employment letters, disputes in Legal"
+    },
+    "Financials": {
+      "description": "Financial documents — bills, invoices, advances, expense reports, payment summaries, receipts, bank statements, tax documents in Financials"
+    },
+    "Film Coverage": {
+      "description": "Film reviews, film analysis, news articles, press coverage, media writing about a specific film, with film title as subfolder in Film Coverage"
+    },
+    "Promotional Assets": {
+      "description": "Social media ads, posters, marketing assets, promotional announcements in Promotional Assets"
+    },
+    "Branding Materials": {
+      "description": "Brand assets — logos, icons, colour variants, letterheads, master design files (.afdesign, .psd, .ai) in Branding Materials"
+    },
+    "Templates": {
+      "description": "Blank templates — billing templates, letterheads, invoice templates, expense sheet templates, measurement templates, stationery in Templates"
+    },
+    "Planning": {
+      "description": "Cross-show planning documents — schedules, company-level plans in Planning"
+    },
+    "Tasks from Notion export": {
+      "description": "Exported Notion task files — .md files with Notion UUID hex suffixes in Tasks from Notion export"
+    },
+    "Admin": {
+      "description": "Company-wide admin documents — templates, legal docs, financials, references, branding materials, Notion exports in Admin"
+    },
+    "Branding And Marketing": {
+      "description": "Company-wide branding and marketing materials in Branding And Marketing"
+    },
+    "PERSONAL Photos": {
+      "description": "Personal photos — faces, social events, meals, travel, everyday life in PERSONAL Photos"
+    },
+    "PERSONAL Financial": {
+      "description": "Personal finance — bank statements, tax docs, receipts, invoices, mutual funds, loan agreements for personal accounts and company-related personal tax work in PERSONAL Financial"
+    },
+    "PERSONAL Medical": {
+      "description": "Medical documents — health reports, prescriptions, lab results, hospital bills, sleep apnea data in PERSONAL Medical"
+    },
+    "PERSONAL Admin": {
+      "description": "Personal admin — visa applications, insurance, NDAs, government forms, general personal admin paperwork in PERSONAL Admin"
+    },
+    "PERSONAL ID and Documents": {
+      "description": "Personal identity documents — ID cards, passports, certificates, degree certificates, PAN, Aadhaar in PERSONAL ID and Documents"
+    },
+    "PERSONAL Resumes": {
+      "description": "CV and resume files — job applications, portfolio CVs, resume templates in PERSONAL Resumes"
+    },
+    "PERSONAL Writing": {
+      "description": "Personal writing — drafts, essays, creative writing in PERSONAL Writing"
+    },
+    "ENTERTAINMENT Music": {
+      "description": "Audio files — songs, soundtracks, lossless and lossy audio in ENTERTAINMENT Music"
+    },
+    "ENTERTAINMENT Movies and TV Shows": {
+      "description": "Video files for movies and TV series — .mp4, .mkv, .avi, .mov, .mxf, plus matching posters and subtitle sidecars in ENTERTAINMENT Movies and TV Shows"
+    },
+    "ENTERTAINMENT Books and Audiobooks": {
+      "description": "Ebook formats (epub, mobi, azw, pdf) and audiobook files in ENTERTAINMENT Books and Audiobooks"
+    },
+    "ENTERTAINMENT Comics": {
+      "description": "Comic books and graphic novels — PDF/CBR/CBZ, manga, Indian adult comics in ENTERTAINMENT Comics"
+    },
+    "ENTERTAINMENT Role Playing Games": {
+      "description": "Tabletop RPG rulebooks, campaign modules, character sheets, session notes in ENTERTAINMENT Role Playing Games"
+    },
+    "ENTERTAINMENT Sewing": {
+      "description": "Hobby sewing — sewing projects, patterns, instructions, material lists, cosplay ebooks and references in ENTERTAINMENT Sewing"
+    },
+    "EDUCATION Masters Applications": {
+      "description": "Masters and postgraduate application materials — motivation letters, personal statements, MPhil/PhD proposals, enrolment docs in EDUCATION Masters Applications"
+    },
+    "EDUCATION Research": {
+      "description": "Academic papers, journal articles, film analysis, news coverage, research notes, lyrics research project in EDUCATION Research"
+    },
+    "RESOURCES Fonts": {
+      "description": "Font files — .ttf, .otf, .woff, .woff2, .ttc in RESOURCES Fonts"
+    },
+    "RESOURCES Templates": {
+      "description": "Blank document templates not tied to any specific company — .dotx, .xltx, .potx in RESOURCES Templates"
+    },
+    "RESOURCES Film Stills": {
+      "description": "Shared film stills, screen captures, and reference imagery from films not tied to a specific project in RESOURCES Film Stills"
+    },
+    "Joint": {
+      "description": "Files belonging jointly to multiple members of the household — joint accounts, joint property, joint applications, joint correspondence in Joint"
+    },
+    "[Person Name]": {
+      "description": "Per-person folder for someone outside the immediate household — extended family, friend, or other named individual whose docs are stored here. Folder name is the person's first name (or full name when disambiguation is needed) in [Person Name]"
+    },
+    "Bills": {
+      "description": "Vendor bills, laundry bills, costume expenses, supplier bills in Bills"
+    },
+    "Invoices": {
+      "description": "Invoices issued or received in Invoices"
+    },
+    "Advances": {
+      "description": "Advance payments made or received, advance receipts in Advances"
+    },
+    "Payment Summaries": {
+      "description": "Payment summary documents, payment reconciliation sheets in Payment Summaries"
+    },
+    "Receipts": {
+      "description": "Loose receipts not part of an expense report in Receipts"
+    },
+    "Bank Statements": {
+      "description": "Bank statements, credit card statements, monthly account statements — personal accounts and accounts attached to company work in Bank Statements"
+    },
+    "Tax Documents": {
+      "description": "Tax returns (ITR), capital gains statements, AIS compliance documents — personal and company-related tax filings in Tax Documents"
+    },
+    "MOUs and Agreements": {
+      "description": "Memorandums of understanding, partnership agreements, signed agreements, loan agreements, mutual fund forms in MOUs and Agreements"
+    },
+    "Authority Letters": {
+      "description": "Authority letters, board resolutions, power-of-attorney letters, signing-authority documents in Authority Letters"
+    },
+    "Contracts": {
+      "description": "Service contracts, employment contracts, vendor contracts in Contracts"
+    },
+    "Appointment and Employment Letters": {
+      "description": "Appointment letters, offer letters, employment letters in Appointment and Employment Letters"
+    },
+    "Disputes": {
+      "description": "Dispute correspondence, dismissal letters, legal notices, complaint replies in Disputes"
+    },
+    "Cast Lists": {
+      "description": "Cast lists, actor sheets, character bios in Cast Lists"
+    },
+    "Crew Lists": {
+      "description": "Crew lists, department lists, contact sheets in Crew Lists"
+    },
+    "Pitch Docs": {
+      "description": "Pitch decks, pitch documents, treatment notes in Pitch Docs"
+    },
+    "Info Sheets": {
+      "description": "Production information sheets, general non-script docs in Info Sheets"
+    },
+    "Look Decks": {
+      "description": "Look deck PDFs, costume look sheets, multi-page reference decks in Look Decks"
+    },
+    "Mood Boards": {
+      "description": "Mood board images and PDFs assembling thematic/aesthetic direction in Mood Boards"
+    },
+    "Locations": {
+      "description": "Location scouting photos and recces in Locations"
+    },
+    "Product Images": {
+      "description": "Product catalog shots, equipment photography, brand product imagery in Product Images"
+    },
+    "Statements And Proposals": {
+      "description": "Motivation letters, personal statements, MPhil/PhD research proposals in Statements And Proposals"
+    },
+    "Archived": {
+      "description": "Offers and documents from non-active programmes (rejected or not accepted) in Archived"
+    },
+    "Future Planning": {
+      "description": "Future postgraduate planning notes, programme shortlists, timelines in Future Planning"
+    },
+    "Academic Papers": {
+      "description": "Academic papers, journal articles, thesis chapters, conference papers in Academic Papers"
+    },
+    "Notes": {
+      "description": "Research notes, bibliographies, reading lists, methodology notes in Notes"
+    },
+    "Digital Tools": {
+      "description": "Research on digital tools, production software, technique references in Digital Tools"
+    },
+    "Lyrics Research": {
+      "description": "Lyrics Research extraction project — corpus, code, venv (atomic), output in Lyrics Research"
+    },
+    "Corpus": {
+      "description": "Source corpus — lyrics data, raw text, transcripts in Corpus"
+    },
+    "Code": {
+      "description": "Code, scripts, notebooks (.py, .ipynb) in Code"
+    },
+    "Output": {
+      "description": "Extracted fashion/costume references from lyrics in Output"
+    },
+    "Backups": {
+      "description": "Backup snapshots and zips in Backups"
+    },
+    "fashion_extraction": {
+      "description": "Python project root with atomic venv. Never split in fashion_extraction"
+    },
+    "CPAP Data": {
+      "description": "OSCAR sleep apnea data backups from ResMed CPAP machines. Atomic folder — never split in CPAP Data"
+    },
+    "Patterns": {
+      "description": "Sewing patterns — printable patterns, PDF patterns in Patterns"
+    },
+    "Projects": {
+      "description": "Active and completed sewing projects in Projects"
+    },
+    "Cosplay": {
+      "description": "Cosplay-related materials including cosplay ebooks and references in Cosplay"
+    },
+    "Fonts": {
+      "description": "Font files — .ttf, .otf, .woff, .woff2, .ttc in Fonts"
+    },
+    "Film Stills": {
+      "description": "Shared film stills not tied to a specific project in Film Stills"
+    },
+    "Game Master Guides": {
+      "description": "Cross-game rulebooks, campaign modules, GM screens, adventure guides in Game Master Guides"
+    },
+    "Indian Adults Comics": {
+      "description": "Indian adult comics collection — Savita Bhabhi Complete Collection and similar in Indian Adults Comics"
+    },
+    "Old Projects": {
+      "description": "Archived inactive projects — completed historical work in Old Projects"
+    },
+    "_Junk": {
+      "description": "Download-site cruft folders — never scanned in _Junk"
+    },
+    "_Unsorted": {
+      "description": "Loose audio files without album context — move to (YYYY) AlbumName when identified in _Unsorted"
+    },
+    "_Inbox": {
+      "description": "Files awaiting routing to a correct destination — review individually in _Inbox"
+    },
+    "[Character Name]": {
+      "description": "Per-character reference folder — costume refs, fitting photos, look images for a named character in [Character Name]"
+    },
+    "[Film Title]": {
+      "description": "Per-film coverage folder — reviews, analysis, news articles, press coverage about this specific film in [Film Title]"
+    },
+    "[Institution]": {
+      "description": "Institution-specific enrolment documents — offer letter, acceptance, fees, timetable, programme docs in [Institution]"
+    },
+    "[YYYY]": {
+      "description": "Year folder containing month subfolders like 'Month YY' (e.g. 'April 24') in [YYYY]"
+    },
+    "[(YYYY) AlbumName]": {
+      "description": "Per-album folder. Files named 'AlbumName - SongTitle - Artist.ext'. Year prefix when known; artist in parens for non-film albums in [(YYYY) AlbumName]"
+    },
+    "[Movie Title (YYYY)]": {
+      "description": "Per-movie folder. Contains video, poster, and subtitle sidecar all sharing the base filename in [Movie Title (YYYY)]"
+    },
+    "[Series Name]": {
+      "description": "Series folder — contains 'Season N' subfolders with episodes and per-episode sidecars in [Series Name]"
+    },
+    "[Series Title]": {
+      "description": "Per-book or per-audiobook series folder. Audiobooks use 'Series Title; Read by Narrator [FORMAT]' in [Series Title]"
+    },
+    "[Game Name]": {
+      "description": "Per-game folder for a specific RPG. Contains Manual/, Characters/, Assets/, Sessions/ in [Game Name]"
+    },
+    "[ProjectName]": {
+      "description": "A single project folder containing scripts, schedules, references, legal, financials and other production materials in [ProjectName]"
+    }
+  }
+}
