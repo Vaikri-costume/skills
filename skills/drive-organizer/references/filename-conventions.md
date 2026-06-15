@@ -1,0 +1,76 @@
+# Filename conventions + project metadata
+
+Detailed naming patterns per grouping, plus the `filename_tag` / `production_period` metadata in each project's `.tidy-rules.json`, plus the on-disk shape of the `proposals_classified.json` Claude writes after each propose pass. Consulted by `propose` for every file.
+
+## Grouping-specific patterns
+
+| Grouping | Pattern | Example |
+|---|---|---|
+| **WORK** — Admin / Branding | `YYYYMMDD_<Company>_<descriptive>.ext` | `20240521_[COMPANY]_invoice_template_v2.pdf` |
+| **WORK** — Projects | `YYYYMMDD_<Company>_<ProjectTag>_<descriptive>.ext` | `20240521_[COMPANY]_[PROJ]_[Person]_advance.pdf` |
+| **PERSONAL** | `YYYYMMDD_<Issuer>_<Type>_<descriptive>.ext` *(Issuer + Type pulled from content_peek)* | `20240615_Provident_Bill_electricity_jun24.pdf`, `20240315_HDFC_Statement_mar24.pdf` |
+| **EDUCATION** | `YYYYMMDD_<Entity>_<descriptive>.ext` *(Entity = institution / publication / author from content_peek)* | `20240601_SOAS_offer_letter.pdf`, `20240515_KhaleejTimes_Param_Sundari_review.pdf` |
+| **ENTERTAINMENT** | `AlbumName - SongTitle - Artist.ext` (no date prefix; album folder carries the year) | `Khoya Khoya Chand - Yeh Ishq Hai - Shreya Ghoshal.mp3` |
+| **RESOURCES** | `<asset_name>.ext` (no date prefix; assets are timeless) | `Helvetica_Neue_Bold.ttf` |
+
+The CONTEXT_TAG embeds enough identifying information that the file remains discoverable if it leaves its folder (email attachment, escaped to `_Inbox`, etc.).
+
+## Always read `content_peek` before generating `new_filename`
+
+When the filename is opaque (numeric prefix + nothing meaningful after stripping), `content_peek` is the primary source for the name. Extract from content: who/what is this document, what type is it, who issued it, any date inside it.
+
+- **Date**: extract from filename first (e.g. `21.05.24`, `2024-06-08`) → convert to YYYYMMDD; fall back to a date in `content_peek`; use file mtime as last resort; omit if truly unknown
+- **Issuer** (PERSONAL): bank / utility / institution name from content_peek (e.g. "HDFC", "Provident", "SOAS")
+- **Type** (PERSONAL): bill / statement / invoice / receipt / form
+- **Entity** (EDUCATION): institution / publication / author from content
+- **Project tag** (WORK): pulled from the project folder's `.tidy-rules.json` `filename_tag` field — see "Project metadata" below
+- **Clean name**: strip leading numeric prefix (`00001200-`); normalise to underscores (max ~5 words); strip duplicate-number suffixes like `(3)`
+
+## Examples
+
+| Original | Grouping | content_peek | New name |
+|----------|----|-------------|----------|
+| `00000936-[Project]_3rd_May_fdx_-_Green_Revision.fdx` | WORK | — | `20240503_[COMPANY]_[PROJ]_[Project]_Green_Revision.fdx` |
+| `00001200-[Person] 21.05.24 advance.pdf` | WORK | "[Project] / [COMPANY] / advance ₹..." | `20240521_[COMPANY]_[PROJ]_[Person]_advance.pdf` |
+| `CC_Statement_2025_06_25 (3).xlsx` | PERSONAL | "Axis Bank credit card statement" | `20250625_Axis_Statement_jun25.xlsx` |
+| `bill_jun24.pdf` | PERSONAL | "Provident Estates electricity bill, June 2024" | `20240615_Provident_Bill_electricity_jun24.pdf` |
+| `00000744-0.pdf` | WORK | "Invoice No. INV-2024-0042 \| Client: [COMPANY] \| ₹50,000" | `20240415_[COMPANY]_invoice_INV2024_0042.pdf` |
+| `param_sundari_review.pdf` | EDUCATION | "Khaleej Times film review" | `20240901_KhaleejTimes_Param_Sundari_review.pdf` |
+| `00000744-0.pdf` | unclear | (empty / unreadable) | `00000744-0.pdf` → `_Inbox/` |
+
+## Project metadata (`filename_tag` + `production_period`)
+
+Each project's `.tidy-rules.json` carries two metadata fields used by `propose` for naming and date-routing:
+
+```json
+{
+  "filename_tag": "[COMPANY]_[PROJ]",
+  "production_period": { "start": "2024-04-01", "end": "2024-08-15" },
+  "rules": [ ... ]
+}
+```
+
+- **`filename_tag`** — canonical tag inserted into `new_filename` for files routed into this project. For Admin / Branding folders the tag is just the company name (`[COMPANY]`, `[COMPANY]`, `[COMPANY]`) — Admin/Brand sub-tags add no information. For projects it's `<Company>_<ProjectTag>` (e.g. `[COMPANY]_[PROJ]`, `[COMPANY]_[PROJ]`).
+- **`production_period`** — `{start, end}` date range. Used during propose to route loose bills, invoices, and receipts: if a file's date falls inside a project's production period, it's a candidate match for that project. Multiple matching projects → ask via the viewer.
+
+**Learn-as-you-go:** `production_period` starts as `null` for any project where the dates aren't known yet. As files get approved into a project, `process-return` expands the period to span the min/max approved file dates (with a one-month buffer at each end). After a few approval rounds, every project has a calibrated production period without you ever specifying dates manually. If you do know a date range up front, set it in the rules file and propose will use it from the start.
+
+## `proposals_classified.json` shape
+
+Claude writes the enriched proposals to `~/.claude/drive-organizer/proposals_classified.json`. Each entry has the raw fields from the script plus the classification fields Claude adds:
+
+```json
+{
+  "id": 1,
+  "current_path": "/abs/path/to/file.jpg",
+  "filename": "00000097-PHOTO-2024-04-17.jpg",
+  "is_image": true,
+  "para_subfolder": "PERSONAL/PERSONAL Photos/2024/April 24",
+  "new_filename": "20240417_outdoor_dinner_group.jpg",
+  "vision_desc": "Group of people at an outdoor dinner celebration",
+  "file_date": "2024-04-17",
+  "reason": "personal photo"
+}
+```
+
+`para_subfolder` is the only routing field — it's a path relative to the drive root. No top-level category bucket is needed; the prefix on the path encodes everything.
