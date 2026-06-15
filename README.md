@@ -18,31 +18,44 @@ The meta-tooling that produces everything else here — chain them: **build** a 
 
 _More skills I build for my workflows will land here._ (Each gets its own row + folder under `skills/`, with its own README.)
 
+## Requirements
+- Claude Code 2.0+ (or Cowork). Skills here are `claude-users` tier unless a skill's own README says otherwise.
+
 ## Install a skill
 
-**Claude Code marketplace** (easiest — installs the toolkit as a plugin):
-```bash
+**New to skills?** A skill is a folder Claude reads and follows when a task matches it. Skills live in `~/.claude/skills/` (available in all your projects) or a project's own `.claude/skills/` (that project only). Once a skill folder is in place, Claude finds it automatically — there's no build step.
+
+**Which method?** Want the whole build → trace → ship toolkit? Use the **marketplace** (one command, auto-updates). Want just one skill, or you're on the web app? Use **clone & copy** or the **Cowork** steps below.
+
+### Option A — Marketplace (gets all three toolkit skills)
+
+Type these **in the Claude Code prompt** (not your terminal). You only `add` the marketplace once:
+```
 /plugin marketplace add Vaikri-costume/skills
 /plugin install ccvw-toolkit@ccvw-skills
 ```
 
-**Clone, then copy the one(s) you want** into your personal skills directory:
+### Option B — Clone & copy (pick individual skills)
+
+Run these **in your terminal**:
 ```bash
 git clone --depth 1 https://github.com/Vaikri-costume/skills.git ccvw-skills
 mkdir -p ~/.claude/skills
-cp -R ccvw-skills/skills/skill-publisher ~/.claude/skills/   # repeat per skill
+cp -R ccvw-skills/skills/skill-tracer ~/.claude/skills/   # repeat per skill you want
 ```
+**No git?** On the repo page open `skills/<name>/`, download it (or grab the repo Zip), and move the `<name>/` folder into `~/.claude/skills/`.
 
-**No git?** On the repo page, open `skills/<name>/`, download it (or the whole repo as a Zip), and move the `<name>/` folder into `~/.claude/skills/`.
+**Project-scoped instead?** Put the `<name>/` folder under `.claude/skills/` in your project rather than `~/.claude/skills/` — then only that project sees it.
 
-**Cowork / Claude.ai (web):** zip the skill folder and upload it via **Settings → Capabilities → Skills**.
+### Option C — Cowork / Claude.ai (web)
 
-**Project-scoped** (one project only): place the skill under `.claude/skills/<name>/` in your project instead of `~/.claude/skills/`.
+Zip the skill folder and upload it via **Settings → Capabilities → Skills**.
 
-Skills load automatically once they're in place. Run one with `/skill-name` or just describe the task — Claude triggers it when relevant. Each skill's own `README.md` carries its full how-to-install + intent.
+### Then: confirm it loaded
 
-## Requirements
-- Claude Code 2.0+ (or Cowork). Skills here are `claude-users` tier unless a skill's own README says otherwise.
+Skills added by copying are picked up when a new session starts — **restart Claude Code** if it was already running (the marketplace install reloads on its own). To check, type `/` and look for the skill in the list, or just run `/skill-tracer`. You can also describe the task and Claude triggers the right skill automatically.
+
+Each skill's own `README.md` carries its full how-to and design intent.
 
 ## License & attribution
 MIT — see [LICENSE](LICENSE). `skill-creator-ccvw` is a Category-A fork of Anthropic's [`skill-creator`](https://github.com/anthropics/skills) (MIT); that lineage and the original license are preserved in [`skills/skill-creator-ccvw/LICENSE.txt`](skills/skill-creator-ccvw/LICENSE.txt) and its `HISTORY.md`.
