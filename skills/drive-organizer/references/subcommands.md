@@ -15,6 +15,8 @@ Consult this file when invoking any of the commands below, hitting their errors,
 - [variants](#variants) — final pass: fuzzy-name groups
 - [merge](#merge) — final pass: combine PDF annotations across versions
 - [csv-export](#csv-export) — refresh the registry's CSV mirror
+- [folder-tree](#folder-tree-on-demand-view) — on-demand: render the organised tree (rules ∩ disk)
+- [cleanup recipes](#cleanup-per-sync-app-eviction-recipes) — per-sync-app eviction commands
 
 ---
 
@@ -24,7 +26,7 @@ Consult this file when invoking any of the commands below, hitting their errors,
 python3 ~/.claude/drive-organizer/organizer.py status
 ```
 
-Reports the active root, total files in the registry, and counts by status (pending / organized / flagged / duplicate / archived). Run at the start of any session to confirm which drive is configured.
+Reports the active root, total files in the registry, and counts by status. The complete status set the backend writes is: `pending` (scanned, awaiting classification), `organized` (moved to its destination), `duplicate` (byte-identical to a kept copy), `flagged` (marked `?` in the viewer), `to_delete` (execute routed it to `Archive/_To Delete/`), `deleted` (reconcile `--prune` marked a confirmed-gone row), and `archived` (a merged original moved to `Archive/_Merged-Originals/`). `cmd_status` prints whatever statuses are present; since the backend only ever writes these seven, any status in the output is one of them (no other value exists — closed set). Run at the start of any session to confirm which drive is configured.
 
 To switch roots, pass `--root /path/to/folder` once (the new root persists for future calls — see SKILL.md "No subcommand").
 
@@ -56,7 +58,7 @@ Prefixes every root-level folder that has no known rules with `x`, deferring it 
 
 Run this **once before the first scan** to quarantine all legacy/unknown folders — they will be skipped until you're ready to process them (see x-folder transition in the batch cycle section of SKILL.md).
 
-Post-migration to the nested grouping structure (ENTERTAINMENT/PERSONAL/WORK/EDUCATION/RESOURCES), the utility shrinks: only the five groupings + Archive + _Inbox + logseq-journals should exist at root, so unknown root folders become anomalies worth flagging individually rather than batch-quarantining.
+**This is the pre-migration bulk tool, run once.** Post-migration to the nested grouping structure (the active groupings — by default ENTERTAINMENT/PERSONAL/WORK/EDUCATION/RESOURCES), the utility retires: only the groupings + Archive + _Inbox + logseq-journals should exist at root, so a *new* unknown root folder that appears later is a one-off anomaly — do **not** re-run `mark-unapproved` (it would x-prefix everything again); instead handle it case-by-case via the mid-batch flow in SKILL.md ("Handling unknown folders → Mid-batch"): ask the user about that one folder and create its `.tidy-rules.json`. Bulk `mark-unapproved` = first-time cleanup; individual flagging = steady state.
 
 ---
 
@@ -73,14 +75,14 @@ Actual output format:
 Flagged files (N total):
   [ID] filename  —  /path/to/file
 
-Flagged files are excluded from propose. To reclassify: classify directly and run execute.
+Flagged files are excluded from propose. To reclassify: peek/classify each, add it back into the next proposals_classified.json batch, and review it in the viewer — not executed directly.
 To manually clear a flag: UPDATE files SET status='pending' WHERE id=<N>;
 ```
 
 When empty, prints: `"No flagged files."` — skip this step in the process-return flow.
 
 For each flagged file:
-1. Peek at content: use the Read tool for images (vision); for documents, extract text via zipfile/raw byte read
+1. Peek at content: use the Read tool for images (vision); for documents, get the text the same way scan does — the simplest path is to re-run `scan` (it re-extracts `content_peek` for the file into the registry, then read it back), or extract directly per the per-format procedure in `references/file-type-routing.md` (e.g. `.docx`/`.xlsx`/`.pptx` → read the relevant XML members from the zip; `.pdf` → PyMuPDF text; plain text → raw read). Don't invent a format-specific reader — file-type-routing.md is the source of truth for which bytes/members to read.
 2. Classify it (same logic as propose: generate `para_subfolder`, `new_filename`, `reason`)
 3. Add it to the `proposals_classified.json` batch alongside new pending files — it goes back through the viewer, not executed directly
 
@@ -106,14 +108,14 @@ python3 ~/.claude/drive-organizer/organizer.py reconcile --apply      # BULK: re
 
    Each entry carries a **`suggestion`** (`restore` or `accept`) from a landing-spot heuristic — found inside a proper grouping folder → probably intentional → `accept`; loose at the root or in `_Inbox` → probably accidental → `restore`. **The suggestion is advisory; confirm with the user, then act per file** with `--restore ID` (move it back to its recorded home) or `--accept ID` (leave the file where it is and update the registry's `current_path` + `para_subfolder` to match). `--apply` is a bulk "restore everything" shortcut — use it only when you've confirmed *every* move was accidental.
 
-2. **Bad registry rows** — rows whose `current_path` no longer exists on disk **and no relocated copy was found** (`missing_on_disk` — genuinely deleted), or organized rows with no destination (`organized_without_destination`). Once the user confirms a file was deleted on purpose, `--prune ID` marks its row `deleted` so it stops being reported every run.
-3. **Mangled root folders** — root-level folders that break the five-grouping invariant: an unexpected non-grouping folder, a miscased grouping (`work` vs `WORK` — only detectable on case-sensitive drives), or a rule-bearing project folder still sitting at the root (legacy flat layout). **Report-only** — folder renames are too risky to automate; fix by hand.
+2. **Bad registry rows** — three `issue` values: `missing_on_disk` (the `current_path` no longer exists on disk **and** no relocated copy was found — genuinely deleted), `no_current_path` (an organized/duplicate row whose `current_path` is null/empty), or `organized_without_destination` (organized rows with no destination). Once the user confirms a file was deleted on purpose, `--prune ID` marks its row `deleted` so it stops being reported every run.
+3. **Mangled root folders** — root-level folders that break the **active-grouping invariant** (the configured area set — the default five `ENTERTAINMENT/PERSONAL/WORK/EDUCATION/RESOURCES`, or whatever `<root>/.organizer/config.json` `"areas"` defines; reconcile reads `_active_groupings()`, it does not hardcode five): an unexpected non-grouping folder, a miscased grouping (`work` vs `WORK` — only detectable on case-sensitive drives), or a rule-bearing project folder still sitting at the root (legacy flat layout). **Report-only** — folder renames are too risky to automate; fix by hand.
 
 **Recommended order** (the summary prints it): resolve the **registry-backed misplaced files first** (grouped, per-file restore/accept), then prune confirmed deletions, then deal with the **unregistered / mangled folders** (manual judgment). Output: a human summary plus a full `<root>/.organizer/reconcile-report.json` (arrays `misplaced_files` with `id`/`issue`/`fix_from`/`fix_to`/`suggestion`, `bad_registry_rows`, `mangled_folders`, `applied`). The `--restore`/`--accept`/`--prune` commands read this report, so run a dry-run `reconcile` first.
 
 `reconcile` also (re)generates `<root>/.organizer/organize-rules.yaml` — a synced [`organize`](https://github.com/tfeldmann/organize) ruleset derived from the `.tidy-rules.json` cascade. It's a **verification artifact**, not used for normal classification. For a keyword-level cross-check of structural placement (catches name-based misplacements the registry may not know about), run `organize sim "<root>/.organizer/organize-rules.yaml"` (requires `organize-tool`; the count of `semantic-only` rules it can't verify is reported). `--apply` does **not** run organize — it only moves the registry-detected misplaced files.
 
-After `--apply`, run `cleanup` to remove any folders left empty by the moves.
+After `--apply`, run `cleanup` to remove any folders left empty by the moves. **Not every misplaced file is moved:** `--apply` skips a file whose source is gone or whose destination already exists, recording `apply_result: "skipped — source no longer present"` / `"skipped — destination already exists"` in `reconcile-report.json` (the printed summary reports only the moved count). After `--apply`, read the report's `applied`/`misplaced_files` entries for any `skipped` `apply_result` and resolve those by hand — they were not fixed.
 
 ---
 
@@ -174,6 +176,8 @@ python3 ~/.claude/drive-organizer/organizer.py merge \
 
 Uses PyMuPDF to extract annotations (highlights, comments, sticky notes) from non-canonical versions and insert them into the canonical file. Originals move to `Archive/_Merged-Originals/` and are marked `status='archived'` in the registry (CSV mirror updates automatically).
 
+**No-data-loss guard — handle the WARNING.** If a variant carried annotations that could not be copied, the script prints `WARNING: <file> has N annotation(s) but none could be copied — left in place (not archived) to avoid data loss.` to stderr and **leaves that file where it is** (not archived). So the `Merge complete: N files merged` count can be lower than the group size, and a variant remains un-merged on purpose. Don't treat that as failure: report the warning to the user, leave the file, and (if they still want it merged) retry or merge it manually — never delete or move a warned file to reclaim the "missing" count.
+
 If PyMuPDF is not installed: `pip install pymupdf` (or `pip3 install --user --break-system-packages pymupdf` on macOS PEP-668 systems).
 
 If the script prints `"No other files in this variant group."` — the `group_id` from variants is stale; re-run `variants` to get fresh IDs and try again.
@@ -191,3 +195,49 @@ python3 ~/.claude/drive-organizer/organizer.py csv-export
 Forces a manual refresh of `<root>/.organizer/registry.csv` from the SQLite registry. Every mutation already mirrors automatically (scan, execute, duplicates --colocate, merge, etc.) so this command is rarely needed — only run it if the CSV looks out of date, has been manually edited and you want to overwrite the changes, or has been deleted.
 
 The CSV is meant for human auditing (open in Numbers / Excel / a text editor); the SQLite `registry.db` is the authoritative source. Both live in `<root>/.organizer/`.
+
+---
+
+## folder-tree (on-demand view)
+
+When the user asks to see the folder tree (any wording — "show me the folder tree", "what's the structure look like", "list the folders") for the drive root or any organised folder, show the **intersection of rule-defined structure AND actual filesystem state** — what's organised, not what's possible.
+
+**Gather the two inputs:** for the *rule-defined* half, run `organizer.py rules --json` — it aggregates every `.tidy-rules.json` across the tree (each entity's `occurrences[].dest` is a rule-defined folder path); for the *filesystem* half, `ls`/walk the actual directories. Intersect:
+
+**Include:**
+- Folders referenced in the root `.tidy-rules.json` (the canonical top-level project folders)
+- Subfolders referenced in each folder's own `.tidy-rules.json` *that also physically exist on disk*
+
+**Exclude:**
+- Subfolders that exist on disk but aren't referenced in any `.tidy-rules.json` (e.g. `ENTERTAINMENT Music/`'s 1107 artist folders, season folders inside media folders, raw content subfolders)
+- Subfolders referenced in rules but not yet on disk (aspirational destinations — show them only if she asks for the rule-defined structure specifically)
+- All files
+
+**Why:** a flat list of rule-folders isn't a tree, and the full filesystem tree is dominated by media/content folders that drown out the project structure she cares about. The intersection gives her what's both *intended* (rules) and *realised* (on disk).
+
+**Output format:** standard tree characters (`├──`, `└──`, `│   `) with `/` suffix on folder names. Mark rule-bearing folders with a small ` [rules]` tag so she can see which folders carry their own classification rules vs which are just destination subfolders.
+
+---
+
+## bootstrap (proposals-file shape)
+
+`bootstrap --apply` reads a JSON **object** with two top-level keys (a bare list or any non-object is rejected with an error; an object missing `rules`/`entities` writes zero of that kind):
+
+```json
+{
+  "rules": [ {"parent": "<rel path of the folder's PARENT, '' for root>", "folderName": "<folder name>", "description": "<inferred signal> in <folder name>"} ],
+  "entities": { "<folder name>": {"entity_type": "<area|project|person|category|policy|atomic|unknown>", "notes": "<why>"} }
+}
+```
+
+`--apply` writes each `rules[]` entry into its folder's parent `.tidy-rules.json` and each `entities{}` entry into `entities.json`. (See SKILL.md "bootstrap (setup walkthrough)" for the full detect→lock→emit→infer→apply→review flow.)
+
+---
+
+## cleanup (per-sync-app eviction recipes)
+
+After `cleanup` removes empty folders, tell the user how to free local disk space by evicting the grouping folders this batch wrote to (the top-level groupings — e.g. `WORK/`, `PERSONAL/` — **not** the `_Inbox/`/`Archive/` staging folders), using their sync app:
+- **OneDrive**: right-click folder → *Free up space*
+- **iCloud Drive**: right-click folder → *Remove Download*
+- **Dropbox Smart Sync**: right-click folder → Smart Sync → *Online only*
+- **Google Drive (Stream mode)**: no action needed — files evict automatically once closed
