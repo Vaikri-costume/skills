@@ -73,4 +73,38 @@ Claude writes the enriched proposals to `~/.claude/drive-organizer/proposals_cla
 }
 ```
 
-`para_subfolder` is the only routing field — it's a path relative to the drive root. No top-level category bucket is needed; the prefix on the path encodes everything.
+`para_subfolder` is the only routing field — it's a path relative to the drive root. No top-level category bucket is needed; the prefix on the path encodes everything. (`para_category` is **not** part of the verdict Claude writes: it's a derived registry column the viewer/execute set automatically from the path's top segment — so it's absent from the shape above by design, not omission.)
+
+---
+
+## Writing a new subfolder rule (project-specific vs generalizable)
+
+Subfolder rules always go in the **per-folder** `.tidy-rules.json`, never in root descriptions — the root `description` matches files to a *top-level* folder, so stuffing subfolder patterns into it pollutes that signal. Where the rule goes depends on scope:
+
+- **Project-specific** → append to that one project's `.tidy-rules.json` (e.g. `WORK/[COMPANY]/[COMPANY] [Project]/.tidy-rules.json` only). **Write the CONCRETE folder name, not a `[Placeholder]` pattern** — a per-folder rule's `folderName` is the literal on-disk folder, and the matcher tokenises `folderName` directly (a literal `[Character]` would route on the token "character"). The `[Character]`/`[Project]` brackets are abstract notation used *only* in `subfolder-templates.json`; expand them to real names here. Example — for a folder `Zara Costume Trials`: `folderName: "Zara Costume Trials"`, `description: "Zara costume trial photos for <project> in Zara Costume Trials"` (description must end with `in <FolderName>`, space not comma — see SKILL.md "Description format").
+- **Generalizable across a project type** → add/update the entry in `references/subfolder-templates.json` (the canonical place for cross-project shared structure) — e.g. a pattern that should apply to all production folders goes under `compound_children.References` or wherever it belongs in the cascade. Per-folder rules files only carry patterns that *don't* generalise.
+
+---
+
+## proposals_approved.json shape
+
+The viewer writes `~/.claude/drive-organizer/proposals_approved.json` on submit — the same entry shape as `proposals_classified.json` plus an `action` field:
+
+```json
+[
+  {
+    "id": 1,
+    "current_path": "/absolute/path/to/file.jpg",
+    "filename": "original_filename.jpg",
+    "is_image": true,
+    "para_subfolder": "PERSONAL/PERSONAL Photos/2024/April 24",
+    "new_filename": "20240417_outdoor_dinner_group.jpg",
+    "vision_desc": "Group of people at an outdoor dinner celebration",
+    "file_date": "2024-04-17",
+    "reason": "personal photo",
+    "action": "approved"
+  }
+]
+```
+
+`action` values are a **closed set**: exactly `"approved"` | `"rejected"` | `"inbox"` | `"delete"` — the viewer emits no others, and any other value is a contract violation (execute defaults an unrecognized/absent `action` to `"approved"` via `entry.get("action", "approved")`, so a malformed action silently routes by `para_subfolder` rather than erroring — don't rely on that). Flagged entries (`?`) are **not** in this file — they go directly to the registry as `status='flagged'`. Rejected entries must have their `para_subfolder` corrected and written back before execute. `new_filename` is always populated.

@@ -63,7 +63,7 @@
     "category": "Work",
     "keywords": ["project", "meeting", "client", "proposal", "brief", "contract", "agreement"],
     "extensions": ["doc", "docx", "key", "pdf", "pptx"],
-    "onedrive_hint": "Use the cascading Q model — match against root, then WORK/, then the company ([COMPANY]/[COMPANY]/[COMPANY]), then the project. With project signal → <Project>/Docs/ or <Project>/Legal/. No signal → ask."
+    "onedrive_hint": "Use the cascading Q model — match against root, then WORK/, then the company (one of the real company folders the WORK .tidy-rules.json defines, e.g. [COMPANY A]/[COMPANY B]/[COMPANY C]), then the project. With project signal → <Project>/Docs/ or <Project>/Legal/. No signal → ask."
   },
   {
     "category": "Development",
