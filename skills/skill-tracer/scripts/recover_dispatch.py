@@ -62,12 +62,19 @@ from pathlib import Path
 
 DIRECTIONS = ("forward", "backward", "executor")
 # "Forward trace of <skill>" / "Backward trace of <skill>" / "Executor trace of <skill>"
-DESC_RE = re.compile(r"^(Forward|Backward|Executor)\s+trace\s+of\s+(.+)$")
+# Case-insensitive (review-finding 8): SKILL.md Step 4 mandates the capitalized prefix, but a lowercase
+# orchestrator slip ("forward trace of X") would otherwise make that dispatch silently
+# unrecoverable. The direction is normalized via .lower() at the match site, so accepting any
+# casing here is strictly more recoverable with no downside.
+DESC_RE = re.compile(r"^(Forward|Backward|Executor)\s+trace\s+of\s+(.+)$", re.IGNORECASE)
 
 
 def encoded_cwd() -> str:
-    cwd = os.getcwd()
-    return "-" + cwd.lstrip("/").replace("/", "-")
+    # The harness encodes the project dir by replacing EVERY non-alphanumeric char with '-'
+    # (not just '/'): e.g. '/Users/x/Information for LLMs' -> '-Users-x-Information-for-LLMs'.
+    # Replacing only '/' mis-encodes any cwd containing a space or '.', pointing auto-location at
+    # the wrong project dir and silently failing recovery (the workspace path here has spaces).
+    return re.sub(r"[^A-Za-z0-9]", "-", os.getcwd())
 
 
 def newest_jsonl(project_dir: Path) -> Path | None:
@@ -84,7 +91,7 @@ def recover(jsonl_path: Path, skill: str) -> dict:
     tasknotif_line: dict[str, int] = {}
     tasknotif_text: dict[str, str] = {}
 
-    with jsonl_path.open() as fh:
+    with jsonl_path.open(encoding="utf-8") as fh:
         for lineno, line in enumerate(fh, start=1):
             try:
                 obj = json.loads(line)
@@ -104,7 +111,19 @@ def recover(jsonl_path: Path, skill: str) -> dict:
                             if m and m.group(2).strip() == skill:
                                 d = m.group(1).lower()  # forward/backward/executor
                                 tuid = block.get("id")
-                                # most-recent-wins: replace any earlier (discarded) dispatch
+                                if tuid is None:
+                                    continue  # id-less tool_use can't be paired to a result — skip (B9)
+                                # most-recent-wins: a discard-and-retry leaves the OLD tuid mapped to d
+                                # too; drop it AND any stale result already recorded under d, so the
+                                # discarded dispatch's (possibly later-arriving) result can't overwrite
+                                # the retry's result_text (B1 — the failure most-recent-wins must prevent).
+                                prev = found.get(d)
+                                if prev is not None:
+                                    tuid_to_dir.pop(prev["tuid"], None)
+                                    result_line.pop(d, None)
+                                    result_text.pop(d, None)
+                                    tasknotif_line.pop(d, None)
+                                    tasknotif_text.pop(d, None)
                                 found[d] = {"tuid": tuid, "dispatch_line": lineno, "result_line": None}
                                 tuid_to_dir[tuid] = d
 

@@ -38,15 +38,14 @@ import argparse
 import datetime as _dt
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
-# PRE-FLIGHT <path>: <line_count> lines, last edited <yyyy-mm-dd>
-# Path may contain spaces; line_count is an int; date is yyyy-mm-dd.
-PREFLIGHT_RE = re.compile(
-    r"^\s*PRE-FLIGHT\s+(?P<path>.+?):\s*(?P<lines>\d+)\s+lines,\s*last edited\s+(?P<date>\d{4}-\d{2}-\d{2})\s*$"
-)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ledger_common as lc  # noqa: E402  (single source of truth for the PRE-FLIGHT line format)
+
+# PRE-FLIGHT <path>: <line_count> lines, last edited <yyyy-mm-dd> — canonical parser is in ledger_common.
+PREFLIGHT_RE = lc.PREFLIGHT_RE
 
 
 def count_lines(path: Path) -> int:
@@ -96,8 +95,20 @@ def check(lines: list[str]) -> dict:
         reasons = []
         if cur_lines != reported_lines:
             reasons.append(f"line-count {reported_lines}->{cur_lines}")
-        if cur_date != reported_date:
-            reasons.append(f"mtime-date {reported_date}->{cur_date}")
+        # review-finding 6: line-count is the strict, robust drift signal (above). The date dimension is a
+        # coarse proxy for same-line-count edits, but the agent's PRE-FLIGHT date and the file's
+        # local mtime date can straddle a midnight / timezone boundary and differ by one day with
+        # NO real edit — a spurious all-three re-dispatch. So tolerate a ±1-calendar-day skew on
+        # the date dimension; a genuine mid-round edit changes the line count or shifts the date
+        # by more than a day. This does not weaken real-drift detection (line-count owns that).
+        try:
+            _rd = _dt.datetime.strptime(reported_date, "%Y-%m-%d").date()
+            _cd = _dt.datetime.strptime(cur_date, "%Y-%m-%d").date()
+            date_drifted = abs((_cd - _rd).days) > 1
+        except ValueError:
+            date_drifted = cur_date != reported_date
+        if date_drifted:
+            reasons.append(f"mtime-date {reported_date}->{cur_date} (>1 day)")
         if reasons:
             drift.append({
                 "path": str(path),
@@ -125,7 +136,7 @@ def main() -> int:
         if not p.is_file():
             print(f"ERROR: --file not found: {p}", file=sys.stderr)
             return 2
-        lines = p.read_text().splitlines()
+        lines = p.read_text(encoding="utf-8").splitlines()
     else:
         if sys.stdin.isatty():
             print("ERROR: no input — pass --file <path> or pipe PRE-FLIGHT lines on stdin",

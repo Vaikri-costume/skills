@@ -45,18 +45,7 @@ A claim, reference, or section is an issue when one of the following is true. Ea
 
 (Attribution checking is NOT a forward-trace concern. A skill's missing/incorrect attribution is caught by skill-creator-ccvw at scaffold time (`attribution_lint.py`) and by skill-publisher at ship time. The forward trace's job is correctness — does each claim match reality — not lineage credit. If you notice the body claims a behavior that the skill's own SKILL.md/scripts contradict, that's an `internal-contradiction` (a real correctness bug); flag that. But "this skill borrowed a pattern without crediting it" is not a trace finding.)
 
-These categories overlap at the edges. See "Anti-double-counting" in the prompt body for the rule on flags that fit more than one category.
-
----
-
-## Issues outside the categories above
-
-
-The categories above describe the most frequent failures the claim→reality reading surfaces, not the complete set. While reading each claim forward to the reality it points at, if you notice anything else that would defeat the executor — a discrepancy, an ambiguity, a contradiction, a gap, a silent assumption, a structural problem that does not match any category above — flag it with the same discipline.
-
-Use a kebab-case tag that names the failure precisely (e.g. `[stale-cross-reference]`, `[script-arg-undocumented]`, `[wrong-file-extension]`, or whatever fits). The bar is unchanged: exact-quote `Claim:` and `Target:`, no hedging, no qualifying, no grading. The categories are entry points for this trace's reading approach, not a permission boundary for what to flag. If you can quote the failing text and describe the wrong state the executor would reach, the issue belongs in the report regardless of whether it fits a named category.
-
-Do not invent issues to fill the report. If nothing outside the categories surfaces, the report contains only the categorised issues.
+(These categories overlap and are entry points, not a closed set. The prompt body's "Beyond the listed categories" and "Anti-double-counting" sections govern flagging beyond this list and de-duping overlaps.)
 
 ---
 
