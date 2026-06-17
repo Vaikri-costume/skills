@@ -92,14 +92,24 @@ def main() -> int:
         if not label or not isinstance(slots, dict):
             print(f"ERROR: each spec entry needs a 'label' and a 'slots' object: {entry!r}", file=sys.stderr)
             return 2
-        prompt = template
-        for k, v in slots.items():
-            prompt = prompt.replace(k, str(v))
-        leftover = sorted(set(SLOT_RE.findall(prompt)))
+        # SINGLE-PASS substitution (B8): replace all placeholders in one regex pass so a slot VALUE
+        # that happens to contain another slot's [TOKEN] (e.g. an inlined trace definition that quotes
+        # a slot name) is NOT re-substituted, and the result is independent of slot insertion order.
+        # Longest key first so e.g. [SKILL_NAME] is matched before [SKILL].
+        if slots:
+            keys = sorted(slots, key=len, reverse=True)
+            pattern = re.compile("|".join(re.escape(k) for k in keys))
+            prompt = pattern.sub(lambda m: str(slots[m.group(0)]), template)
+        else:
+            prompt = template
+        # Unfilled = a [SLOT] in the TEMPLATE the spec gave no value for. Computed from the template,
+        # NOT the substituted prompt, so a [TOKEN] that legitimately appears inside a slot's VALUE
+        # (left literal by the single-pass substitution) is not mis-flagged as an unfilled slot.
+        leftover = sorted(s for s in set(SLOT_RE.findall(template)) if s not in slots)
         fname = args.filename_template.format(label=label, run_timestamp=run_timestamp)
         out_path = out_dir / fname
         try:
-            out_path.write_text(prompt)
+            out_path.write_text(prompt, encoding="utf-8")
         except OSError as e:
             # makes the "missing file after write" exit-1 reachable: a write that
             # raises (permission/disk) lands here instead of crashing the script.

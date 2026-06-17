@@ -46,7 +46,7 @@ A line is an issue when one of the following is true. Each item below is a compl
 
 **16. List of unmarked closure.** The line presents a list (categories, examples, cases, values, paths, options, conditions, file types, error codes) without stating whether it is closed (complete and final — items outside the list are out-of-scope or violations) or open (illustrative and extensible — items outside the list are also valid and need the same handling). The executor reading the list cannot judge how to handle anything not named: do they refuse / error / fall through to a default, or do they extend the pattern to the new case? Either explicit marker resolves it ("these are the only X" / "examples include — there may be others"). Without one, the executor is forced to guess and two readings give different actions. Quote the list and the surrounding text that should carry the closure marker.
 
-These categories overlap at the edges. See "Anti-double-counting" in the prompt body for the rule on flags that fit more than one category.
+(These categories overlap and are entry points, not a closed set. The prompt body's "Beyond the listed categories" and "Anti-double-counting" sections govern flagging beyond this list and de-duping overlaps.)
 
 ---
 
@@ -55,17 +55,6 @@ These categories overlap at the edges. See "Anti-double-counting" in the prompt 
 In skills documenting a multi-step protocol (build / trace / ship workflows), a handful of the categories above recur heavily — and precisely because they are numerous, they are easy to wave off as stylistic nitpicks. They are NOT nits: each defeats a cold executor and is a real defect. Flag every instance with the same discipline as a one-off. The recurring ones: **action-unspecified** (cat 2 — a step names an action but no procedure/script for it), **unresolvable-referent** (cat 1 — a value/label with no antecedent in text already read), **missing-case / edge-case gap** (cat 5), **silent-format-expectation** (cat 12 — a substituted value whose exact format is load-bearing but unstated), and **missing-WHY-at-point-of-use** (cat 13). Two more are introduced by editing the skill itself: **label-overloading** (one label — e.g. `(b)` — reused for two distinct things) and **unguarded-conditional** (an "if X is available / if applicable" branch with no test for X).
 
 (Orchestrator edit-time guard — applies when addressing these clusters, not to the cold agent's read: re-check each FIX against this list before moving on. The commonest cascade is a fix that *introduces* a fresh instance — an added conditional with no test, a new dangling referent, a value referenced without saying how to derive it. Catching it at edit time is one whole round cheaper than the next trace catching it.)
-
----
-
-## Issues outside the categories above
-
-
-The categories above describe the most frequent failures the executor encounters, not the complete set. While reading line-by-line in the executor's order, if you notice anything else that would defeat the executor — a discrepancy, an ambiguity, a contradiction, a gap, a silent assumption, a structural problem that does not match any category above — flag it with the same discipline.
-
-Use a kebab-case tag that names the failure precisely (e.g. `[stale-cross-reference]`, `[script-arg-undocumented]`, `[wrong-file-extension]`, or whatever fits the failure). The bar is unchanged: exact-quote `Claim:` and `Target:`, no hedging, no qualifying, no grading. The categories are guidance for what to look for; they are not a permission boundary for what to flag. If you can quote the failing text and describe the wrong state the executor would reach as a result, the issue belongs in the report regardless of whether it fits a named category.
-
-Do not invent issues to fill the report. If, after reading in the prescribed manner, nothing outside the categories surfaces, the report contains only the categorised issues.
 
 ---
 
