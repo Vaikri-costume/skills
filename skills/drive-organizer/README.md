@@ -2,7 +2,7 @@
 
 ## What this skill does
 
-Drive Organizer sorts the files on a drive — cloud-synced (OneDrive, iCloud, Dropbox, Google Drive), external, or local — into a five-grouping nested folder structure (ENTERTAINMENT, PERSONAL, WORK, EDUCATION, RESOURCES) that *you* define and that the skill *learns* from your corrections over time. It reads file content (and images, via vision) to decide where each file belongs, proposes a destination + a clean filename for every file, and lets you approve or correct them in a browser before anything moves. A Python backend keeps a SQLite registry (mirrored to a human-readable CSV) so nothing is ever lost and duplicates are caught across batches.
+Drive Organizer sorts the files on a drive — cloud-synced (OneDrive, iCloud, Dropbox, Google Drive), external, or local — into a nested folder structure of top-level groupings (by default ENTERTAINMENT, PERSONAL, WORK, EDUCATION, RESOURCES — the set is user-configurable) that *you* define and that the skill *learns* from your corrections over time. It reads file content (and images, via vision) to decide where each file belongs, proposes a destination + a clean filename for every file, and lets you approve or correct them in a browser before anything moves. A Python backend keeps a SQLite registry (mirrored to a human-readable CSV) so nothing is ever lost and duplicates are caught across batches.
 
 Concrete use cases:
 
