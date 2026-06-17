@@ -1,7 +1,7 @@
 ---
-version: "1.3.0"
+version: "1.3.1"
 category: C
-parent-version: "1.2.0"
+parent-version: "1.3.0"
 author:
   primary: "Vaikri-costume"
 inspirations:
@@ -13,6 +13,29 @@ inspirations:
 # History — drive-organizer
 
 ## Changelog
+
+### 1.3.1 — 2026-06-17
+- **Phase-0 baseline hardening** — the clean diff baseline for the v2.x incremental delivery. A full
+  uncapped whole-file code review (6 cold independent agents) surfaced **144 findings (12 critical, 34
+  high, 52 medium, 46 low)**; all were fixed except the `x`-prefix matches (deleted by the upcoming
+  scan-priority feature). Validated: py_compile + node --check (both viewers) + the >25 GB four-loop
+  sandbox gate (all invariants passed). Recorded in `~/.claude/skill-tracer-audit-ledger/drive-organizer.md`.
+  Highlights:
+  - **Data-loss / corruption:** path-traversal guard on every JSON-driven destination (`cmd_execute`,
+    duplicates co-locate, bootstrap) via a shared `_safe_dest`; atomic writes everywhere via `_atomic_write`;
+    a move-intent journal so a crash mid-`execute` is recoverable; `cmd_merge` saves to temp→verify→replace
+    (no in-place corruption) and refuses to archive on partial annotation transfer; `_rename_entity`
+    boundary-anchored `current_path` rewrite + single-transaction commit + pre-scan abort on collision;
+    `_merge_entities` refuses when source files would be orphaned.
+  - **Dedup integrity:** never mark a file duplicate against a stale/missing row; never hash a partial cloud
+    materialisation (confirm fully-local first); nanosecond mtime fast-check.
+  - **Cross-platform cloud detection** (BL-C2, brought forward): `_is_placeholder` now dispatches per OS
+    (macOS dataless flag + in-process xattr; Windows recall/offline attributes; Linux best-effort) — no more
+    per-file `xattr` subprocess.
+  - **Viewer:** all-flagged pages can submit; empty POSTs no longer truncate approvals; null `current_path`
+    no longer blanks the page; segments normalised (no silent depth changes); Content-Length guarded.
+  - **Security/robustness:** rules-viewer `</script>` XSS closed; fitz thread-lock; bounded XML/zip peeks;
+    `_is_external` fails closed on a corrupt rules file; SQLite `busy_timeout`/WAL.
 
 ### 1.3.0 — 2026-06-16
 - **Phase 8 — organiser intelligence + rules viewer/editor.** Added a browser **rules viewer/editor** (`rules-viewer`): rules aggregated by entity, semantically clustered (Areas/Projects/People/Categories/Policies/Atomic/Unknown), 250/session · 25/page, with usage stats, dead-rule flags, why-routed, conflict warnings, test-a-file, coverage gaps, full CRUD + rename/merge/bulk, **rethink** (re-inference, distinct from delete), area add/rename/remove, level-promotion, partial-apply + preview/undo, light/dark. Backed by a new `rules` aggregation subcommand + per-drive `entities.json` metadata.
