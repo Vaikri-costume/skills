@@ -30,7 +30,7 @@ Output JSON:
           "raw": "...", "runtime": "...", "action": "dispatch|addressing|handoff|<unknown>",
           "round": <int>, "action_valid": <bool>
       } | null,
-      "last_round_clean": <bool|null>,    # from the round-summary comment 'raw flags 0'; null if unknown
+      "last_round_clean": <bool|null>,    # phase-aware: true iff the highest (closed) round has zero TRACE-phase rows (cold trace clean); REVIEW (CR*) rows don't count; null if that round has no summary (didn't close)
       "row_count": <int>
     }
 
@@ -40,65 +40,48 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
+import os
 import sys
 from pathlib import Path
 
-VALID_ACTIONS = {"dispatch", "addressing", "handoff"}
-IN_FLIGHT_RE = re.compile(r"^in-flight::\s*(.*)$", re.MULTILINE)
-# Data row, Phase column optional (7-col current, or 6-col pre-Phase back-compat):
-#   | <runtime> | <round> | [<PHASE> |] C<n> | ...
-ROW_RE = re.compile(r"^\|\s*[0-9T:\-]+\s*\|\s*(\d+)\s*\|(?:\s*[A-Za-z\-]+\s*\|)?\s*C\d+\s*\|")
-# Round-summary comment carrying the clean signal:
-SUMMARY_RE = re.compile(r"<!--\s*Round\s+(\d+)\s+total:\s*raw flags\s+(\d+)\b")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ledger_common as lc  # noqa: E402  (single source of truth for the ledger format/vocab/parse)
 
 
 def parse(text: str) -> dict:
     highest = 0
     row_count = 0
+    trace_rows = {}  # round -> count of TRACE-phase data rows (REVIEW/SIMPLIFY rows excluded)
     for line in text.splitlines():
-        m = ROW_RE.match(line)
-        if m:
+        row = lc.parse_row(line)
+        if row:
             row_count += 1
-            r = int(m.group(1))
+            r = row["round"]
             if r > highest:
                 highest = r
+            if row["phase"] == "TRACE":
+                trace_rows[r] = trace_rows.get(r, 0) + 1
 
-    in_flight = None
-    mf = IN_FLIGHT_RE.search(text)
-    if mf:
-        raw = mf.group(1).strip()
-        parts = raw.split()
-        action = parts[1] if len(parts) >= 2 else None
-        rnd = None
-        if len(parts) >= 3:
-            rm = re.match(r"round-(\d+)", parts[2])
-            if rm:
-                rnd = int(rm.group(1))
-        in_flight = {
-            "raw": raw,
-            "runtime": parts[0] if parts else None,
-            "action": action,
-            "round": rnd,
-            "action_valid": action in VALID_ACTIONS,
-        }
+    in_flight = lc.parse_in_flight(text)
 
-    # last_round_clean: the round-summary comment is the authoritative clean signal.
-    last_clean = None
+    # last_round_clean is PHASE-AWARE: a round is "clean" (converged) when its cold trace returned
+    # zero TRACE clusters — i.e. zero TRACE-phase rows — which matches Condition A. It must NOT key
+    # on the summary's total raw-flag count, because a round-1 that converges WITH a code-review
+    # phase carries REVIEW (CR*) rows, so its raw-flag count is > 0 even though the cold trace was
+    # clean. Counting only TRACE rows fixes that mis-classification.
     best_round = -1
-    for sm in SUMMARY_RE.finditer(text):
+    for sm in lc.SUMMARY_RE.finditer(text):
         sr = int(sm.group(1))
         if sr >= best_round:
             best_round = sr
-            last_clean = (int(sm.group(2)) == 0)
-    # A converged round writes a `raw flags 0` summary but NO data rows (Step 6 writes one row
-    # per cluster; zero clusters → zero rows). Count it so the round total isn't stuck at the
-    # last cluster-bearing round — else a converged-then-marker-cleared ledger looks like it
-    # stopped at round N-1 and recovery rule 5 mis-routes. The summary round can exceed the
-    # highest data row.
+    # A converged round writes a summary but may have NO TRACE data rows (zero TRACE clusters), and
+    # for round 1 only REVIEW rows. The summary round can exceed the highest data row.
     highest = max(highest, best_round if best_round >= 0 else 0)
-    if best_round < highest:
-        # highest round has data rows but no summary comment → didn't close → cleanliness unknown
+    if best_round == highest and best_round >= 0:
+        # highest round closed (has a summary) → clean iff it raised zero TRACE clusters.
+        last_clean = (trace_rows.get(highest, 0) == 0)
+    else:
+        # highest round has data rows but no summary comment → didn't close → cleanliness unknown.
         last_clean = None
 
     return {
@@ -126,7 +109,7 @@ def main() -> int:
         }, indent=2))
         return 0
     try:
-        text = p.read_text()
+        text = p.read_text(encoding="utf-8")
     except OSError as e:
         print(f"ERROR: cannot read ledger {p}: {e}", file=sys.stderr)
         return 2

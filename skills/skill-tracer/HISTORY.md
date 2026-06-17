@@ -1,7 +1,10 @@
 ---
-version: "2.0.2"
+version: "2.2.0"
 category: B
-parent-version: "2.0.1"
+parent-version: "2.1.0"
+published-to:
+  repo: "https://github.com/Vaikri-costume/skills"
+  path: "skills/skill-tracer"
 author:
   primary: "Vaikri-costume"
 inspirations:
@@ -19,6 +22,23 @@ inspirations:
 # History — skill-tracer
 
 ## Changelog
+
+### 2.2.0 — 2026-06-17 (exhaustive self-trace to convergence + `--audit-fixes` mode)
+- **Added: `--audit-fixes` diagnostic mode.** Checks whether the fixes recorded in the ledger since the last convergence actually landed (vs light-touch / band-aid / regressed) by dispatching one cold audit agent over the rounds-since-convergence. Read-only — reports a per-finding classification, applies no fixes, writes no rows. Spec in `references/audit-fixes.md`; integrated into Step 1(a) recovery, Step 7 mode-routing, and the Step 9 exit set.
+- **Exhaustive self-trace (rounds 31–47).** Forward + backward (the correctness directions) converged. Fixed script bugs across the ledger toolchain: `recover_dispatch` most-recent-wins on discard-retry + id-less-tuid skip + full-non-alphanumeric `encoded_cwd`; `_tally` token-boundary; `render_ledger` phantom-round-0 guard, `type(e).__name__` in the broad except, and 6-col back-compat row acceptance; `ledger_state` marker parse; `stage_cold_prompts` single-pass substitution; `append_ledger` `re.escape` in close-round + `utf-8` everywhere + `--cluster ^C\d+$` guard + close-round single-read. Introduced **`scripts/ledger_common.py`** as the single source of truth for the row / marker / PRE-FLIGHT / vocab parsers — `append_ledger`, `ledger_state`, `check_drift`, `check_results` import it; `render_ledger` stays standalone (config-driven, serves both this skill and skill-publisher).
+- **Doc consolidations.** Resolved doc-vs-code contradictions and collapsed duplicated rules to single-home-plus-pointer — the malformed-marker tree, resume-wakeup, `verify-auditability --expect`, `check_drift` exit codes, the stop-after-round computation, the forward/backward/executor escape-hatch scaffold (→ `prompt-template.md`), and the TRACE-vs-all Condition-A invariant (→ Step 8 as the single authoritative home).
+- **New mechanisms.** USER-PAUSE cross-round resolution + enumeration; Step-7 mode-routing completeness (`<stop-after-round>` `>` and `null` cases, the TRACE-clusters-plus-unresolved-USER-PAUSE precedence).
+- **Final code-review fixes.** `check_results` ABORTED false-positive (a quoted `ABORTED` line in an ISSUE block no longer aborts the report — relevant when tracing skill-tracer on itself); the `--expect` comma-spacing doc claim corrected; the error-table `--cluster`-rejection row added.
+- **Known / ratified.** SKILL.md grew to ~11k words; the cold-executor design keeps point-of-use detail inline (moving it to references re-triggers the executor cascade), so the length is ratified and flagged for a future deliberate structural pass.
+
+### 2.1.0 — 2026-06-16 (round-1 code-review pass)
+- **Added: round-1 code-review pass (SKILL.md Step 2.5).** On round 1 of a brand-new trace — and on the first round of a re-trace of a skill updated since it last converged — skill-tracer now runs one full-depth local pass of the sibling `code-review` skill (`/code-review max`, no `--fix`, no issue cap) as the **first phase of round 1**, before the cold agents dispatch. Runs in full-convergence mode only (diagnostic modes skip it). The post-update-convergence trigger gates on an mtime check (`find … -newermt "<prior convergence Runtime>"`) so an unchanged converged skill isn't re-reviewed for nothing.
+- **Whole-skill scope, not a diff.** The pass reviews every in-scope file's full contents (`[SKILL_PATH]` + `[FILE_LIST]`), not a working-tree diff — skills aren't always under git (skill-tracer's own tree isn't) and a new skill has no diff. If `/code-review` can't be scoped to whole files, skill-tracer falls back to a single general-purpose Agent running code-review's `max` methodology over the file set.
+- **Sub-phase of round 1, not a separate round.** The code-review phase and the cold trace share round 1: `REVIEW`-phase `CR*` rows and `TRACE`-phase `F/B/E` rows land under the same Round with one continuous cluster sequence; the round closes once (Step 7) and `verify-auditability --expect` is the union of both flag sets. **Condition A is tested over the `TRACE` clusters only** — the cold trace reads the post-code-review-fix files, so a clean cold trace in round 1 is a genuine clean cold round; `REVIEW` clusters never block convergence.
+- **Findings go through the existing considered-fix gate**, not auto-applied: `--fix` is deliberately *not* passed, so each finding is clustered (Step 5) and addressed under Step 6's bias-toward-FIX + intent-preservation rules, preserving invariant 2. Recorded as **`REVIEW`-phase rows** with a new **`CR*`** flag prefix (distinct from the `C*` Cluster column).
+- **Added: post-convergence suggestion** — Step 9 now suggests a final `/code-review max <skill>` pass over the converged artifact (the round-1 pass reviewed the pre-trace skill; convergence may have rewritten it across many rounds), then `/skill-publisher`.
+- **`code-review` linked as a sibling** in SKILL.md "See also" + README, and `Skill` added to `allowed-tools` (skill-tracer invokes `/code-review` via the Skill tool).
+- **Recovery: rule 2 handles the `REVIEW` phase** — an interrupted `addressing round-N` with no `Forward/Backward/Executor trace` dispatch in the JSONL is recovered by re-running the code-review phase then proceeding into the cold trace (same round); if a trace dispatch exists, the `REVIEW` rows are already done and only the trace addressing is recovered. Rules 4/5 note Step 2.5 is the first phase of round 1, not a separate round.
 
 ### 2.0.2 — 2026-06-07 (shipped — claude-users portability)
 - **Now ships at `claude-users` tier** (was `personal`): guarded the glossary-precedence reads of the user's `CLAUDE.md`/`memory` to portable `${XDG_*:-$HOME/.claude}` form + explicitly optional, so the skill no longer hard-depends on personal config.

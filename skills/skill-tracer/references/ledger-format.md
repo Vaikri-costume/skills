@@ -44,7 +44,7 @@ Step 5 produces the `<flag-to-cluster-map>` (its flag→cluster map) in memory; 
 
 **Blank lines in Address values:** the render script also exits table-parsing mode on any blank line inside the table. An Address value that spans multiple lines (blank line embedded) will silently truncate the table at that row, dropping all subsequent rows. Address values must be single-line (no embedded newlines). SKILL.md Step 6 delegates row format to this reference — this single-line constraint applies at every Step 6 write.
 
-**Write rows with `scripts/append_ledger.py` instead of hand-typing** — it rejects (non-zero exit) any of three malformations, so a bad row fails loudly at write time rather than being silently dropped/truncated by the renderer later: (1) a literal `|` in a cell, (2) an embedded newline, and (3) an Address that doesn't start with one of `FIX` / `STRENGTHEN` / `USER-PAUSE` (or their `would-` variants):
+**Write rows with `scripts/append_ledger.py` instead of hand-typing** — it rejects (non-zero exit) any of three malformations, so a bad row fails loudly at write time rather than being silently dropped/truncated by the renderer later: (1) a literal `|` in a cell, (2) an embedded newline, and (3) an Address that doesn't start with one of `FIX` / `STRENGTHEN` / `USER-PAUSE` (or their `would-` variants) **at a token boundary** — `ledger_common.address_kind_ok` requires the kind be followed by a space *or* `(` (so `would-STRENGTHEN (…)` and `would-STRENGTHEN(…)` both pass; a *bare* kind with nothing after it, or `FIXED…`/`STRENGTHENING`, is rejected):
 
 ```bash
 python3 ~/.claude/skills/skill-tracer/scripts/append_ledger.py append <ledger> \
@@ -74,8 +74,8 @@ At end of round, `append_ledger.py close-round <ledger> --round <N>` recomputes 
 
 - **Runtime**: ISO-8601 UTC time when the round started, formatted `YYYY-MM-DDTHH:MM`. Fresh rounds (recovery rules 4/5) use current invocation's Runtime; resumed rounds (rules 1/2/3) preserve the prior session's Runtime from the in-flight marker. All rows in the same round share the same Runtime regardless of how many invocations addressed that round's clusters.
 - **Round**: cumulative-per-skill round number.
-- **Phase**: always `TRACE` — skill-tracer is correctness-only, so every row is a trace-agent cluster. (The column is retained for ledger-format stability + back-compat with pre-refactor rows that carry `SIMPLIFY`/`PORT-AUDIT`; new rows are always `TRACE`.)
-- **Cluster**: simple `C<n>` — `C1` is the first cluster in this round, `C2` the second. Cluster numbers restart at 1 within each round (Round column disambiguates).
+- **Phase**: `TRACE` for cold-trace-agent clusters (the overwhelming majority — skill-tracer is correctness-only). `REVIEW` for clusters sourced from the round-1 code-review pass (SKILL.md Step 2.5). The code-review pass is the *first phase of round 1* (not a separate round), so a round-1 ledger can hold **both** `REVIEW` rows and `TRACE` rows under the same Round number — the Phase column is what tells them apart; only round 1 (or a re-trace's fresh first round) ever carries `REVIEW` rows. `SIMPLIFY` for clusters from a `/simplify` cleanup pass (prose/structure cleanups, not correctness). The writable phases are therefore `TRACE`/`REVIEW`/`SIMPLIFY` (`append_ledger.py`'s `KNOWN_PHASES`); `PORT-AUDIT` is **read-tolerated** in old ledgers (`ledger_state.py`/`render_ledger.py` accept any `[A-Z\-]+` phase) but **write-forbidden** here — it belongs to skill-publisher.
+- **Cluster**: simple `C<n>` — `C1` is the first cluster in this round, `C2` the second. Cluster numbers restart at 1 **at the start of each round** (the Round column disambiguates) — **with one exception: round 1's two phases share a single continuous sequence**. The code-review (`REVIEW`) clusters take the first `C` numbers, then the cold-trace (`TRACE`) clusters *continue* from there — the TRACE phase does NOT restart at `C1` within round 1 (it is the same round, so restart-at-1 applies once, at the REVIEW phase's start, not again at the TRACE phase). (WHY this is a hand-maintained convention, not machine-enforced — review-finding 9: no script verifies cluster-number continuity; `verify-auditability` and the summary tally key only on Round number and **flag-IDs**, never cluster-IDs. Cluster IDs are organizational display labels, so a slip like two `C1` rows in one round is cosmetic, not an auditability breach — the no-orphan-flag invariant is defined over flags, which remain unique. Keep the continuity for readability; nothing breaks if it drifts.)
 - **Root cause**: one-line description of what the cluster is (the underlying problem all its flags point at). Defect-focused.
 - **Address**: FIX / STRENGTHEN / USER-PAUSE in the per-type formats spec'd in address-decision.md.
 - **Flags**: every raw flag-ID belonging to this cluster (comma-separated, ordered by prefix — see Flag-ID scheme below).
@@ -84,15 +84,18 @@ At end of round, `append_ledger.py close-round <ledger> --round <N>` recomputes 
 
 ## Flag-ID scheme
 
-Three flag prefixes — one per cold direction. Per-source counters are independent — a round with forward + backward findings has `F1, F2, B1`, not `F1, F2, F3`.
+Four flag prefixes — three for the cold directions, one for the code-review pass. Per-source counters are independent — a round with forward + backward findings has `F1, F2, B1`, not `F1, F2, F3`.
 
 | Prefix | Source | Phase |
 |---|---|---|
 | `F*` | forward trace | TRACE |
 | `B*` | backward trace | TRACE |
 | `E*` | executor trace | TRACE |
+| `CR*` | code-review pass (SKILL.md Step 2.5) | REVIEW |
 
-**Flags-column ordering** (when a cluster has multiple prefixes): `F*` → `B*` → `E*`.
+`CR*` is distinct from `C*` on purpose — `C*` is the Cluster column (`C1`, `C2`, …), never a flag. `CR*` flags appear only in the round-1 code-review *phase* (the `REVIEW`-phase rows); a single cluster is always one phase, so a cluster never mixes `CR*` with `F*/B*/E*` even though both can appear under round 1.
+
+**Flags-column ordering** (when a cluster has multiple prefixes): `F*` → `B*` → `E*` (`TRACE`-phase clusters). A `REVIEW`-phase cluster carries only `CR*` flags.
 
 (Pre-refactor ledgers may carry historical `EFF*`/`A11Y*`/`SEC*`/`G*`/`G-PORT*`/`SIM-*` flags from when skill-tracer ran cadenced directions + the CCVW audit + simplify pass. Those moved to skill-creator-ccvw (efficiency/accessibility iterate-quality) and skill-publisher (security, CCVW audit, simplify). New trace rows use only `F*`/`B*`/`E*`.)
 
@@ -122,7 +125,7 @@ If they flag the same text under **different** root causes (e.g. forward says "c
 
 Each trace agent returns a `PRE-FLIGHT` line per file in the format `PRE-FLIGHT <path>: <line_count> lines, last edited <yyyy-mm-dd>`.
 
-**Concrete drift test:** for each PRE-FLIGHT line, compare the reported line count against the file's current line count (`wc -l <path>`) and the reported last-edited date against the file's current mtime date. Drift on either dimension — any non-zero line-count delta, or any date difference — counts as concurrent modification. The threshold is not "sharp" in a fuzzy sense; it is "non-zero."
+**Concrete drift test:** for each PRE-FLIGHT line, compare the reported line count against the file's current line count (`wc -l <path>`) and the reported last-edited date against the file's current mtime date. **Line count is the strict signal** — any non-zero line-count delta is drift. **The date dimension tolerates a ±1-calendar-day skew** (review-finding 6): the agent's PRE-FLIGHT date and the file's local mtime date can straddle a midnight / timezone boundary and differ by one day with no real edit, so only a date delta of **more than one day** counts as drift. This does not weaken detection — a genuine mid-round edit changes the line count (caught strictly), and the date check still catches a multi-day-stale dispatch. `check_drift.py` implements exactly this.
 
 **Run it deterministically with `scripts/check_drift.py`** rather than hand-comparing (hand-counting `wc -l` across N files + matching dates is exactly the silent-error-prone work a script should own). Pipe the agents' PRE-FLIGHT lines (or a whole agent report — non-PRE-FLIGHT lines are ignored) to it:
 
@@ -161,3 +164,5 @@ These comments don't appear in the rendered table but make per-invocation totals
 Every raw flag from every round must appear in the Flags column of exactly one row tagged with that round's Runtime. No flag-ID may be left out. If you tell the user "round 1 raised 78 flags and we applied 24 fixes," the ledger must show all 78 flag-IDs distributed across 24 rows with that round's Runtime.
 
 This is the no-orphan-flag invariant (Invariant 3 in SKILL.md) operationalized at the ledger row level.
+
+`verify-auditability` enforces it, but its missing-flag detection is **only as complete as `--expect`**: a flag omitted from *both* a ledger row *and* the `--expect` set is invisible to the check (nothing flags its absence). So `--expect` must be the round's *complete* raised flag set (the full key-set of `<flag-to-cluster-map>`) — that completeness is the orchestrator's responsibility, not something the script can verify on its own. (The check independently catches double-counting and stale/unexpected flags regardless of `--expect` completeness; only the missing-flag arm depends on it.)

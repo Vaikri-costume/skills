@@ -40,6 +40,10 @@ If any file is missing, abort with a single line `ABORTED — missing files: <co
 
 [INLINED_TRACE_DEFINITION]
 
+## Beyond the listed categories
+
+The category list in the task above describes the most frequent failures this trace's reading surfaces — it is **not** the complete set, and **not** a permission boundary. While reading in this trace's manner, if you notice anything else that would defeat the executor — a discrepancy, ambiguity, contradiction, gap, silent assumption, or structural problem not matching any listed category — flag it with the same discipline: a precise kebab-case tag (e.g. `[stale-cross-reference]`, `[script-arg-undocumented]`), exact-quote `Claim:` and `Target:`, no hedging or grading. If you can quote the failing text and describe the wrong state, it belongs in the report regardless of category. **Do not invent issues to fill the report** — if nothing outside the categories surfaces, the report contains only the categorised issues. (Flags fitting more than one category: see "Anti-double-counting" below.)
+
 ## When in doubt, flag
 
 Your job is to surface; the orchestrator's job is to dismiss what is not actionable. The cost asymmetry is sharp — one extra dismissed issue is cheap for the orchestrator to dismiss; one missed real issue is much more expensive to recover. The default is to flag. Surface any finding you can quote. Do not defer.
