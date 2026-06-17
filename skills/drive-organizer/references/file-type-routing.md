@@ -78,7 +78,7 @@ Either way:
 Apply the cascading-Q model from SKILL.md "Routing model". For documents specifically the cascade walks like this:
 
 - **Q1** — root rules' descriptions discriminate between ENTERTAINMENT / PERSONAL / WORK / EDUCATION / RESOURCES. Match by filename, content_peek, and parent of current_path. Project / character / cast / company name in content_peek is the strongest signal for WORK.
-- **Q2** — inside the grouping, match against that grouping's `.tidy-rules.json`. For WORK, this distinguishes [COMPANY] / [COMPANY] / [COMPANY]. For PERSONAL, this distinguishes Financial / Medical / Admin / ID / Resumes / Writing. For EDUCATION, Masters Applications / Research. For ENTERTAINMENT, Music / Movies / Books / Comics / RPGs / Sewing. For RESOURCES, Fonts / Templates / Film Stills.
+- **Q2** — inside the grouping, match against that grouping's `.tidy-rules.json`. For WORK, this distinguishes the individual companies (e.g. `[COMPANY A]` / `[COMPANY B]` / `[COMPANY C]` — the actual company folders that exist in this user's WORK rules; the bracketed names are placeholders for whatever real companies the on-disk rules define). For PERSONAL, this distinguishes Financial / Medical / Admin / ID / Resumes / Writing. For EDUCATION, Masters Applications / Research. For ENTERTAINMENT, Music / Movies / Books / Comics / RPGs / Sewing. For RESOURCES, Fonts / Templates / Film Stills.
 - **Q3** — inside the thing, the question narrows further. For a WORK production, it's the production type (project name, Admin, CLIENT). For a PERSONAL tree, it's the person. For Research, it's Academic Papers / Film Coverage / Notes / Lyrics Research.
 - **Q4** — inside compound subfolders (References / Financials / Legal / Docs / Film Coverage), the leaf-type question selects the specific child.
 
@@ -271,9 +271,11 @@ Extension: `.md`. Backend extracts text. Two common cases:
 
 ## Code and config
 
-Extensions: `.py`, `.js`, `.ts`, `.json`, `.yaml`, `.yml`, `.env`, `.gitignore`, `.go`.
+Extensions: **code** — `.py`, `.js`, `.ts`, `.env`, `.gitignore`, `.go`; **data/config** — `.json`, `.yaml`, `.yml`, `.xml`.
 
-Always route to `_Inbox/` with a `?` flag noting "code file — shouldn't be in OneDrive; confirm before routing". Never silently route to a project folder.
+**Code** files always route to `_Inbox/` with a `?` flag noting "code file — shouldn't be in OneDrive; confirm before routing". Never silently route to a project folder.
+
+**Precedence for `.json`/`.yaml`/`.yml`/`.xml` (data/config, not code):** these are governed by the data-file rule above — *if inside a project folder, route to that project's `Docs/` or `References/`; if standalone with no context, `_Inbox/`*. They are listed here only to note they are NOT treated as code. So a `config.json` inside a project follows the project (Docs/References); a loose `.json` at the root goes to `_Inbox/`. Pure code (`.py`/`.js`/`.ts`/`.go`) is always `_Inbox/` regardless of location.
 
 ---
 

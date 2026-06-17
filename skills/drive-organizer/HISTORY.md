@@ -1,7 +1,7 @@
 ---
-version: "1.2.0"
+version: "1.3.0"
 category: C
-parent-version: "1.1.0"
+parent-version: "1.2.0"
 author:
   primary: "Vaikri-costume"
 inspirations:
@@ -13,6 +13,17 @@ inspirations:
 # History — drive-organizer
 
 ## Changelog
+
+### 1.3.0 — 2026-06-16
+- **Phase 8 — organiser intelligence + rules viewer/editor.** Added a browser **rules viewer/editor** (`rules-viewer`): rules aggregated by entity, semantically clustered (Areas/Projects/People/Categories/Policies/Atomic/Unknown), 250/session · 25/page, with usage stats, dead-rule flags, why-routed, conflict warnings, test-a-file, coverage gaps, full CRUD + rename/merge/bulk, **rethink** (re-inference, distinct from delete), area add/rename/remove, level-promotion, partial-apply + preview/undo, light/dark. Backed by a new `rules` aggregation subcommand + per-drive `entities.json` metadata.
+- **Un-locked the area set** — the five groupings are now the *default*, not a hard limit; `_active_groupings()` reads the active set from templates `Q1_groupings` or a `config.json "areas"` override (more/fewer/renamed areas supported); `_normalize_grouping`, reconcile, and the grouping invariant all read it.
+- **Faster, cheaper classification.** W1 deterministic auto-classify fast-path (toggleable) + W1b delegated **fan-out** classification ([[mine-sources]] pattern — one sub-agent per 25 files, briefed with paths not content), via canonical `references/classify-prompt.md`. Cost toggles: `vision` / `skip_types` / `skip_over_mb` / `auto_classify` / `auto_approve`.
+- **Bootstrap rules-builder** (`bootstrap`) — reverse-engineer rules from an existing tree: atomic-unit folders detected + approved + **locked first** (never descended), then unruled folders sampled and inferred; cold-start + audit modes.
+- **Inbox arbiter sweep** — when `_Inbox/` reaches ~100 files, a parallel arbiter pass (`references/arbiter-prompt.md`) re-judges all inboxed files against the now-larger rule set; lazy `_Inbox` routing is bounced back, low-confidence reroutes surface in the viewer.
+- **Scan speed-ups (W4)** — skip-rehash unchanged files via a new `mtime` column (re-scan hashing ~0s); parallel SHA256 hashing (content-peek stays sequential — PyMuPDF isn't thread-safe).
+- **Learning-loop speed-ups (W5)** — aliases route to their entity, negative signals suppress wrong destinations, signal inferred from approved siblings.
+- **Hardening** — 5-round `skill-tracer` (65 fixes, incl. the auto-route destination-field bug, Python-3.9 import via `from __future__ import annotations`, and a parallel-`fitz` segfault) + this `skill-publisher` polish/audit pass (SKILL.md trimmed 554→493 to clear the 500-line guidance; duplications collapsed; clarity fixes).
+- **Whole-file code review (19 fixes).** A max-effort code review over the entire backend — including never-before-reviewed original code — fixed: `_peek_pdf` slicing a non-sliceable PyMuPDF Document (every PDF peek silently returned nothing); `duplicates` mis-pairing id/path/size via parallel `GROUP_CONCAT` (could co-locate the wrong file); `merge` archiving originals before saving the merged canonical, and a `_dupN` archive-collision clobber; non-deterministic `variants` group ids (salted `hash()`) → stable `sha256`; `_rename_entity` SQL `REPLACE` corrupting unrelated path segments → exact prefix rewrite; `execute` committing only once at end (a mid-batch crash left files moved but un-recorded) → per-file commit; scan/download-batch now prune external + atomic folders at every depth (not just top level); the GB cap admits at least one oversized file (no permanent stall); a `_bootstrap_apply` path-traversal guard; a reconcile `--accept` self-flag loop; the rules viewer's `const DATA`/`<option> value=`/group-header/apostrophe-escaping bugs; and a `_locked_atomic_names` helper de-duplicating four copies of the same comprehension. Validated by `py_compile` + `node --check` on both viewers + a heavy >25 GB four-loop sandbox gate (all invariants passed).
 
 ### 1.2.0 — 2026-06-15
 - **Fixed cloud-placeholder detection** (real-OneDrive bug): `_is_placeholder` only checked legacy xattr markers, which modern FileProvider OneDrive files don't carry — so the entire cloud-download path (scan priorities P2/P4/P6) silently never fired. Now uses the macOS `UF_DATALESS` flag / zero-allocated-blocks signal (verified against 12/12 real placeholders). Found via real-OneDrive integration testing.
