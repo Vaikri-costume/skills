@@ -1,7 +1,7 @@
 ---
-version: "1.0.1"
+version: "1.1.0"
 category: B
-parent-version: "1.0.0"
+parent-version: "1.0.1"
 author:
   primary: "Vaikri-costume"
 inspirations:
@@ -19,6 +19,10 @@ inspirations:
 # History — skill-publisher
 
 ## Changelog
+
+### 1.1.0 — 2026-06-17 (shipped)
+- **Auto-tag on ship**: `scripts/github_pr.py` now creates + pushes an annotated `<skill>-v<version>` tag on the ship commit after a successful `gh pr create`, so the next ship has a `<last-ship-tag>` to diff from (`references/changelog-format.md`'s `git log <last-ship-tag>..HEAD`). Best-effort (a tag failure surfaces as a `tag_warning` field, never a ship-blocker — the PR already landed) and idempotent (skips an existing tag, safe for the exit-5 recovery re-run).
+- Documented the per-skill `<skill>-v<version>` tag convention (the form a monorepo of several skills needs — a bare `v<version>` collides across skills sharing a version) in `references/changelog-format.md`, added the tag step + squash/rebase caveat to `references/github-pr-workflow.md`, and added a Step-9 ship-tag row to `references/ship-checklist.md`.
 
 ### 1.0.1 — 2026-06-07 (shipped)
 - Correctness + clarity pass driven by `skill-tracer`: relocated deep exit-code/mechanism detail from SKILL.md into `references/` (PR/package/render exit codes, portability output interpretation, degraded-scaffold + install-form derivation) with accurate one-line pointers.

@@ -29,7 +29,7 @@ Append a new entry at the TOP of the changelog body (newest first) by filling `a
 
 **Sourcing the change summary:** combine —
 1. This ship run's ledger rows (the POLISH + AUDIT + TIER clusters addressed — e.g., "Polished SKILL.md (simplify pass, -40 lines)", "Fixed 3 portability violations for claude-users tier").
-2. The skill's git diff since the last ship, if the skill is in a git repo (`git log <last-ship-tag>..HEAD --oneline`). `<last-ship-tag>` is the git tag for the prior ship version — by convention `v<prior-version>` (e.g. `v1.1.0`). If no git tag was set at the prior ship, use the prior HISTORY.md `version` value with `git log --since=<prior-ship-date>` as a fallback, or omit this source and rely on the ledger rows alone.
+2. The skill's git diff since the last ship, if the skill is in a git repo (`git log <last-ship-tag>..HEAD --oneline`). `<last-ship-tag>` is the git tag for the prior ship version — by convention `<skill>-v<prior-version>` (e.g. `skill-tracer-v2.2.0`), the per-skill form a monorepo of several skills needs (a bare `v<prior-version>` would collide across skills sharing a version). The PR flow (`github-pr-workflow.md`, step 8) now creates + pushes this tag at each ship, so it is normally present. If no git tag was set at the prior ship (a skill shipped before this was added, or a best-effort tag that didn't land), use the prior HISTORY.md `version` value with `git log --since=<prior-ship-date>` as a fallback, or omit this source and rely on the ledger rows alone.
 3. Any user-described change ("I added a new export format").
 
 Keep entries factual + concise — one line per meaningful change. Don't list every prose tweak; summarize ("polish pass" covers the simplify edits).
