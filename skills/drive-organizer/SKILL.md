@@ -12,7 +12,7 @@ metadata:
   tier: claude-users
   created: "2026-05-18"
   created-by: Vaikri-costume
-  parent-version: "1.2.0"
+  parent-version: "1.3.0"
   intended-audience: claude-users
 ---
 

@@ -18,13 +18,13 @@ Usage:
 from __future__ import annotations  # defer annotation eval so `X | None` works on Python 3.9
 import argparse
 import concurrent.futures as _futures
+import copy
 import hashlib
 import json
 import os
 import re
 import shutil
 import sqlite3
-import subprocess
 import sys
 import threading
 import time
@@ -51,6 +51,10 @@ PARA_ROOTS = {"_Inbox", "_To Delete", "_Duplicates", "_Merged-Originals", "Archi
 
 PEEK_CHARS = 300   # max chars to extract for content peek
 
+# Classification fan-out batch size: cmd_propose partitions the to-classify
+# residual into batches of this size, one classification sub-agent per batch.
+BATCH = 25
+
 # Cloud-download polling. The scan used to do a single fixed 0.5s check after
 # triggering a download and skip the file if it hadn't materialised yet — so any
 # file slower than one tick was deferred to a future scan, which is the main
@@ -61,24 +65,74 @@ DOWNLOAD_POLL_TIMEOUT  = float(os.environ.get("DRIVE_ORG_DL_TIMEOUT", "30"))
 
 
 # ---------------------------------------------------------------------------
+# Shared safety helpers (Phase-0 baseline review: BL-A1 atomic writes, BL-A2 path containment)
+# ---------------------------------------------------------------------------
+def _atomic_write(path: "Path", text: str, encoding: str = "utf-8") -> None:
+    """Write `text` to `path` atomically: write a temp file in the same directory
+    then os.replace() it into place. A crash or full disk can never leave a
+    truncated config / .tidy-rules.json / output file (BL-A1). Always UTF-8 (BL-A5)."""
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    try:
+        tmp.write_text(text, encoding=encoding)
+        os.replace(str(tmp), str(path))
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+
+
+def _safe_dest(root: "Path", sub: str) -> "Path | None":
+    """Resolve <root>/<sub> and return it ONLY if it stays inside `root`.
+
+    Rejects absolute subpaths, '..' escapes, and symlink components that resolve
+    outside root (BL-A2). Returns None when the destination would fall outside
+    root — callers MUST treat None as 'reject this move/write', never fall back to
+    an unchecked join. The returned path is the *resolved* path; use it for the
+    actual filesystem operation so validation and write target are identical."""
+    if sub is None:
+        return None
+    s = str(sub).strip()
+    if not s:
+        return None
+    p = Path(s)
+    if p.is_absolute():
+        return None
+    root_r = Path(root).resolve()
+    cand = (root_r / p).resolve()
+    try:
+        cand.relative_to(root_r)
+    except ValueError:
+        return None
+    return cand
+
+
+# ---------------------------------------------------------------------------
 # Config (saved active root)
 # ---------------------------------------------------------------------------
 
 def _read_config_root() -> "Path | None":
-    if CONFIG_PATH.exists():
-        try:
-            data = json.loads(CONFIG_PATH.read_text())
-            root = data.get("root")
-            if root:
-                return Path(root).expanduser().resolve()
-        except Exception:
-            pass
+    # File-absent is fine (no saved root yet) -> return None silently.
+    if not CONFIG_PATH.exists():
+        return None
+    # File present-but-corrupt/unreadable is a data-safety hazard: a silent fall
+    # back to the default root could organize the WRONG drive. Warn loudly.
+    try:
+        data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        root = data.get("root")
+        if root:
+            return Path(root).expanduser().resolve()
+    except Exception as e:
+        print(f"WARNING: saved config root at {CONFIG_PATH} is corrupt/unreadable "
+              f"({e}); ignoring it. Pass --root explicitly to be safe.", file=sys.stderr)
     return None
 
 
 def _save_config_root(root: Path):
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(json.dumps({"root": str(root)}, indent=2))
+    _atomic_write(CONFIG_PATH, json.dumps({"root": str(root)}, ensure_ascii=False, indent=2))
 
 
 # ---------------------------------------------------------------------------
@@ -96,14 +150,18 @@ def _has_rules(folder_path: Path, root: Path) -> bool:
     root_rules = root / ".tidy-rules.json"
     if root_rules.exists():
         try:
-            data = json.loads(root_rules.read_text())
+            data = json.loads(root_rules.read_text(encoding="utf-8"))
             folder_name = folder_path.name
             for rule in data.get("rules", []):
-                top = rule.get("folderName", "").split("/")[0]
+                fn = rule.get("folderName", "")
+                if not fn:  # skip rules with an empty folderName
+                    continue
+                top = fn.split("/")[0]
                 if top == folder_name:
                     return True
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"WARNING: could not parse {root_rules} ({e}); "
+                  f"treating '{folder_path.name}' as having no rules.", file=sys.stderr)
     return False
 
 
@@ -117,9 +175,14 @@ def _is_external(folder_path: Path) -> bool:
     if not rules_file.exists():
         return False
     try:
-        data = json.loads(rules_file.read_text())
-    except Exception:
-        return False
+        data = json.loads(rules_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        # Fail CLOSED: if we can't read the rules we cannot prove the folder is
+        # safe to enter, so treat it as external (opaque) rather than walking
+        # into someone else's shared content.
+        print(f"WARNING: could not parse {rules_file} ({e}); "
+              f"treating '{folder_path.name}' as EXTERNAL (will not enter).", file=sys.stderr)
+        return True
     if isinstance(data, dict) and data.get("external") is True:
         return True
     return False
@@ -132,18 +195,28 @@ def _merge_lists(base_list: list, override_list: list) -> list:
     names append) — so a user override of `ENTERTAINMENT` cleanly replaces the
     skeleton's `ENTERTAINMENT` rather than duplicating it. Otherwise concatenate
     with simple dedup.
+
+    Dedup semantics (by-name branch): keys are the `name` values; within base or
+    override, an earlier same-named entry is dropped in favour of the override's
+    (or, absent an override, the base's first occurrence). If any `name` is
+    unhashable (e.g. a list/dict value), we cannot build the name index, so we
+    fall back to the concat+value-dedup branch rather than crash.
     """
     items = base_list + override_list
     if items and all(isinstance(x, dict) and "name" in x for x in items):
-        by_name = {x["name"]: x for x in base_list}
-        for x in override_list:
-            by_name[x["name"]] = x  # override wins
-        result, seen = [], set()
-        for x in base_list + override_list:
-            if x["name"] not in seen:
-                result.append(by_name[x["name"]])
-                seen.add(x["name"])
-        return result
+        try:
+            by_name = {x["name"]: x for x in base_list}
+            for x in override_list:
+                by_name[x["name"]] = x  # override wins
+            result, seen = [], set()
+            for x in base_list + override_list:
+                if x["name"] not in seen:
+                    result.append(by_name[x["name"]])
+                    seen.add(x["name"])
+            return result
+        except TypeError:
+            # An unhashable "name" — can't dedup by name; fall through to concat.
+            pass
     return base_list + [x for x in override_list if x not in base_list]
 
 
@@ -153,15 +226,21 @@ def _deep_merge(base: dict, override: dict) -> dict:
     lists merge via _merge_lists (by "name" when present, else concat+dedup);
     scalars from the override win. Used to layer a per-user template override
     over the shipped skeleton.
+
+    The result must NOT alias the cached base or the override: nested dict/list
+    values that are NOT recursively merged are deep-copied so a caller mutating
+    the returned tree can never corrupt the process-wide _TEMPLATES_CACHE base.
     """
-    out = dict(base)
+    out = {k: copy.deepcopy(v) for k, v in base.items()}
     for k, v in override.items():
         if k in out and isinstance(out[k], dict) and isinstance(v, dict):
             out[k] = _deep_merge(out[k], v)
         elif k in out and isinstance(out[k], list) and isinstance(v, list):
-            out[k] = _merge_lists(out[k], v)
+            # _merge_lists returns elements aliased from base/override; deep-copy
+            # so the merged list can't reach back into the cached base or override.
+            out[k] = copy.deepcopy(_merge_lists(out[k], v))
         else:
-            out[k] = v
+            out[k] = copy.deepcopy(v)
     return out
 
 
@@ -175,15 +254,20 @@ def _read_user_config(root: "Path | None" = None) -> dict:
     Returns {} when the file is absent or the root is unknown. Never raises.
     """
     root = root or _EFFECTIVE_ROOT
+    # `not root` guard: _EFFECTIVE_ROOT can still be unset/empty very early in
+    # startup (before main() resolves it) — with no drive there is nowhere to
+    # read per-user config from, so return the empty default.
     if not root:
         return {}
     cfg = Path(root) / ".organizer" / "config.json"
     if not cfg.exists():
         return {}
     try:
-        data = json.loads(cfg.read_text())
+        data = json.loads(cfg.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
-    except Exception:
+    except Exception as e:
+        print(f"WARNING: could not parse user config {cfg} ({e}); "
+              f"using defaults.", file=sys.stderr)
         return {}
 
 
@@ -193,7 +277,11 @@ def _load_templates() -> dict:
     """
     Load the subfolder templates source-of-truth from the skill's references folder,
     then deep-merge any per-user override at <root>/.organizer/templates.json on top.
-    Cached for the lifetime of the process. Returns {} if the shipped file is missing.
+    Returns {} if the shipped file is missing.
+
+    Caching: a long-running viewer server can hold this process while the user
+    edits their override file, so the cache is keyed on the override file's mtime
+    (and existence) — if that changes, we re-read instead of serving stale data.
 
     The shipped file is a generic skeleton (the five Q1 groupings + universal compound
     children). Each user grows their own taxonomy lazily via .tidy-rules.json, and may
@@ -202,8 +290,15 @@ def _load_templates() -> dict:
     generic while the user's drive carries their specifics.
     """
     global _TEMPLATES_CACHE
-    if _TEMPLATES_CACHE is not None:
-        return _TEMPLATES_CACHE
+    override_path = None
+    if _EFFECTIVE_ROOT:
+        override_path = Path(_EFFECTIVE_ROOT) / ".organizer" / "templates.json"
+    try:
+        override_mtime = override_path.stat().st_mtime if override_path and override_path.exists() else None
+    except OSError:
+        override_mtime = None
+    if _TEMPLATES_CACHE is not None and _TEMPLATES_CACHE[0] == override_mtime:
+        return _TEMPLATES_CACHE[1]
     # Templates live in the skill's references/ at the canonical Claude Code skills
     # path. First-time-setup copies ONLY organizer.py to ~/.claude/drive-organizer/;
     # references/ are NOT copied, so they are read from the install dir here. If the
@@ -217,21 +312,22 @@ def _load_templates() -> dict:
     base = {}
     if templates_path.exists():
         try:
-            base = json.loads(templates_path.read_text())
-        except Exception:
+            base = json.loads(templates_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"WARNING: could not parse shipped templates {templates_path} "
+                  f"({e}); using empty skeleton.", file=sys.stderr)
             base = {}
     # Per-user override on the active drive (never shipped with the skill).
-    if _EFFECTIVE_ROOT:
-        override_path = Path(_EFFECTIVE_ROOT) / ".organizer" / "templates.json"
-        if override_path.exists():
-            try:
-                override = json.loads(override_path.read_text())
-                if isinstance(override, dict):
-                    base = _deep_merge(base, override)
-            except Exception:
-                pass
-    _TEMPLATES_CACHE = base
-    return _TEMPLATES_CACHE
+    if override_path and override_path.exists():
+        try:
+            override = json.loads(override_path.read_text(encoding="utf-8"))
+            if isinstance(override, dict):
+                base = _deep_merge(base, override)
+        except Exception as e:
+            print(f"WARNING: could not parse template override {override_path} "
+                  f"({e}); ignoring it.", file=sys.stderr)
+    _TEMPLATES_CACHE = (override_mtime, base)
+    return base
 
 
 def cmd_templates(args):
@@ -244,8 +340,9 @@ def cmd_templates(args):
 
 def _bubble_sort_proposals(proposals: list) -> list:
     """
-    Bubble-sort proposals by destination so files going to the same leaf
-    appear together in the viewer. Sort key: (para_subfolder, filename).
+    Sort proposals by destination so files going to the same leaf appear
+    together in the viewer. (Name is historical — this uses Python's built-in
+    sorted(), not a bubble sort.) Sort key: (para_subfolder, filename).
     Inbox / unrouted files sort to the end.
     """
     def sort_key(p):
@@ -269,8 +366,10 @@ def _project_metadata(project_path: Path) -> dict:
     if not rules_file.exists():
         return {}
     try:
-        data = json.loads(rules_file.read_text())
-    except Exception:
+        data = json.loads(rules_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"WARNING: could not parse {rules_file} ({e}); "
+              f"treating '{project_path.name}' as having no project metadata.", file=sys.stderr)
         return {}
     if not isinstance(data, dict):
         return {}
@@ -292,10 +391,18 @@ def _enumerate_project_metadata(root: Path) -> list:
     out = []
     # Top-level folders (legacy flat) and nested grouping/company/project folders
     SKIP = {".organizer", "logseq-journals", "Archive"}
-    for top in sorted(root.iterdir()):
+    try:
+        tops = sorted(root.iterdir())
+    except (PermissionError, OSError) as e:
+        print(f"WARNING: could not list {root} ({e}); no project metadata enumerated.",
+              file=sys.stderr)
+        return out
+    for top in tops:
         if not top.is_dir() or top.name.startswith(('.', '_')):
             continue
         if top.name.startswith('x') or top.name in SKIP:
+            continue
+        if _is_external(top):
             continue
         # Direct-level project (legacy flat)
         meta = _project_metadata(top)
@@ -304,7 +411,9 @@ def _enumerate_project_metadata(root: Path) -> list:
         # Two-level (new nested: WORK/COMPANY/PROJECT, PERSONAL/PERSONAL X)
         try:
             for mid in sorted(top.iterdir()):
-                if not mid.is_dir() or mid.name.startswith('.'):
+                if not mid.is_dir() or mid.name.startswith(('.', '_')) or mid.name in PARA_ROOTS:
+                    continue
+                if _is_external(mid):
                     continue
                 meta_mid = _project_metadata(mid)
                 if meta_mid.get("filename_tag"):
@@ -312,7 +421,9 @@ def _enumerate_project_metadata(root: Path) -> list:
                 # Three-level (e.g. WORK/VAIKRI/VAIKRI CS Yeh Saali Naukri/)
                 try:
                     for deep in sorted(mid.iterdir()):
-                        if not deep.is_dir() or deep.name.startswith('.'):
+                        if not deep.is_dir() or deep.name.startswith(('.', '_')) or deep.name in PARA_ROOTS:
+                            continue
+                        if _is_external(deep):
                             continue
                         meta_deep = _project_metadata(deep)
                         if meta_deep.get("filename_tag"):
@@ -332,10 +443,15 @@ def _find_project_for_destination(dest_subfolder: str, root: Path) -> "Path | No
     """
     if not dest_subfolder:
         return None
-    cur = root / dest_subfolder
+    # Contain the candidate inside root: reject absolute / '..' / symlink escapes
+    # so we never walk arbitrary ancestors outside the configured drive.
+    cur = _safe_dest(root, dest_subfolder)
+    if cur is None:
+        return None
+    root_r = Path(root).resolve()
     # Walk up until cur is root
     while True:
-        if cur == root or cur.parent == cur:
+        if cur == root_r or cur.parent == cur:
             return None
         if _project_metadata(cur).get("filename_tag"):
             return cur
@@ -352,8 +468,10 @@ def _expand_production_period(project_path: Path, file_date_iso: str, buffer_day
     if not rules_file.exists():
         return
     try:
-        data = json.loads(rules_file.read_text())
-    except Exception:
+        data = json.loads(rules_file.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"WARNING: could not parse {rules_file} ({e}); "
+              f"not expanding production_period.", file=sys.stderr)
         return
     if not isinstance(data, dict):
         return  # legacy list-format files don't carry project metadata
@@ -363,27 +481,41 @@ def _expand_production_period(project_path: Path, file_date_iso: str, buffer_day
     except (ValueError, TypeError):
         return
 
+    # Clamp the file date to a sane range so one mis-dated file (e.g. epoch 1970,
+    # or a future timestamp from a bad clock) can't blow the period out forever.
+    floor_dt = datetime(1990, 1, 1)
+    ceil_dt = datetime.now() + timedelta(days=365)
+    if file_dt < floor_dt or file_dt > ceil_dt:
+        return  # out-of-range date: ignore rather than widen the period
+
     buf = timedelta(days=buffer_days)
     period = data.get("production_period")
     if not period or not isinstance(period, dict):
         new_start = (file_dt - buf).date().isoformat()
         new_end = (file_dt + buf).date().isoformat()
     else:
-        try:
-            cur_start = datetime.fromisoformat(period["start"][:10]) if period.get("start") else file_dt
-            cur_end = datetime.fromisoformat(period["end"][:10]) if period.get("end") else file_dt
-        except (ValueError, KeyError, TypeError):
-            cur_start = file_dt
-            cur_end = file_dt
-        new_start_dt = min(cur_start, file_dt - buf)
-        new_end_dt = max(cur_end, file_dt + buf)
+        # Parse the existing bounds independently. A half-open period (only start
+        # OR only end set) is widened only on the side that exists — the missing
+        # bound is filled from THIS file's date, never coerced to overwrite a
+        # real existing bound. Non-ISO bound strings are treated as absent.
+        def _parse(v):
+            if not v:
+                return None
+            try:
+                return datetime.fromisoformat(str(v)[:10])
+            except (ValueError, TypeError):
+                return None
+        cur_start = _parse(period.get("start"))
+        cur_end = _parse(period.get("end"))
+        new_start_dt = min(cur_start, file_dt - buf) if cur_start is not None else (file_dt - buf)
+        new_end_dt = max(cur_end, file_dt + buf) if cur_end is not None else (file_dt + buf)
         new_start = new_start_dt.date().isoformat()
         new_end = new_end_dt.date().isoformat()
 
     if data.get("production_period") == {"start": new_start, "end": new_end}:
         return  # nothing changed
     data["production_period"] = {"start": new_start, "end": new_end}
-    rules_file.write_text(json.dumps(data, indent=2))
+    _atomic_write(rules_file, json.dumps(data, ensure_ascii=False, indent=2))
 
 
 def _date_matches_period(file_date_iso: str, period: dict) -> bool:
@@ -448,6 +580,11 @@ def get_db() -> sqlite3.Connection:
     REGISTRY_DB.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(REGISTRY_DB))
     conn.row_factory = sqlite3.Row
+    # Overlapping connections (parallel scan workers, download-batch, viewer) must
+    # wait on a busy lock rather than instantly raising "database is locked"; WAL
+    # lets readers and a writer coexist.
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
     # Migration: add mtime to pre-existing registries (W4 skip-rehash fast-check).
     try:
@@ -462,11 +599,22 @@ def get_db() -> sqlite3.Connection:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def sha256_of(path: Path) -> str:
+def sha256_of(path: Path, expected_size: int | None = None) -> str:
+    """Hash the file. If expected_size is given (the size recorded at admission),
+    re-stat after the read and raise OSError on a mismatch — a file that grew or
+    shrank under us (a still-materialising cloud download, a concurrent edit) would
+    otherwise yield a hash of partial bytes that we'd commit as authoritative."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
+    if expected_size is not None:
+        post = os.stat(path).st_size
+        if post != expected_size:
+            raise OSError(
+                f"size changed during hash ({expected_size} -> {post}); "
+                f"file not stable, refusing to commit hash"
+            )
     return h.hexdigest()
 
 
@@ -521,7 +669,12 @@ def peek_content(path: Path) -> str | None:
             return _peek_audio(path)
         else:
             return None
-    except Exception:
+    except (OSError, ValueError, zipfile.BadZipFile, ET.ParseError,
+            KeyError, UnicodeError, RuntimeError):
+        # Expected, per-file failures (unreadable, malformed container, bad XML) —
+        # peek is best-effort. Deliberately NOT a bare `except Exception`: a
+        # MemoryError (e.g. a pathological parse) must propagate, not be masked as
+        # "no peek" while the process is already in trouble.
         return None
 
 
@@ -582,6 +735,12 @@ def _peek_audio(path: Path) -> str | None:
     return " | ".join(parts)
 
 
+# PyMuPDF (fitz) is NOT thread-safe — concurrent Document use segfaults. Even though
+# peeking is meant to run sequentially, serialise all fitz access behind one lock so a
+# future caller (or a stray parallel path) can't crash the process.
+_FITZ_LOCK = threading.Lock()
+
+
 def _peek_pdf(path: Path) -> str | None:
     try:
         import fitz
@@ -590,31 +749,60 @@ def _peek_pdf(path: Path) -> str | None:
     # NB: a fitz Document is iterable but does NOT support slicing — `doc[:3]`
     # raises TypeError, which (before this fix) escaped the ImportError-only
     # guard and made every PDF peek silently return None. Index explicitly.
-    try:
-        doc = fitz.open(str(path))
-        text = ""
-        for i in range(min(3, doc.page_count)):
-            text += doc[i].get_text()
-            if len(text) >= PEEK_CHARS * 2:
-                break
-        doc.close()
-        return _clean(text)
-    except Exception:
-        return None
+    with _FITZ_LOCK:
+        doc = None
+        try:
+            doc = fitz.open(str(path))
+            text = ""
+            for i in range(min(3, doc.page_count)):
+                text += doc[i].get_text()
+                if len(text) >= PEEK_CHARS * 2:
+                    break
+            return _clean(text)
+        except Exception:
+            return None
+        finally:
+            # Always release the native handle, even on exception, or PyMuPDF leaks
+            # file descriptors / mmap'd pages across a large scan.
+            if doc is not None:
+                try:
+                    doc.close()
+                except Exception:
+                    pass
+
+
+# Cap bytes parsed from any single zip member / XML file. Defangs zip-bombs and
+# oversized XML: we read at most this much into memory and parse only that prefix.
+_XML_PEEK_CAP = 5 * 1024 * 1024  # 5 MB
+
+
+def _read_capped(fileobj, cap: int = _XML_PEEK_CAP) -> bytes:
+    """Read at most `cap` bytes from an open binary stream. Bounds memory so a
+    zip-bomb member or a multi-GB XML can't be slurped whole before parsing; we
+    parse only the prefix (a truncated tail yields ET.ParseError, handled upstream)."""
+    return fileobj.read(cap)
+
+
+def _parse_capped_member(zf: zipfile.ZipFile, member: str) -> "ET.Element":
+    """Read a bounded prefix of a zip member and parse it. Raises KeyError if the
+    member is absent (handled by callers) and ET.ParseError on a truncated/invalid
+    prefix (also handled by callers / _peek_zip_xml)."""
+    with zf.open(member) as f:
+        data = _read_capped(f)
+    return ET.fromstring(data)
 
 
 def _peek_zip_xml(path: Path, extractor) -> str | None:
     try:
         with zipfile.ZipFile(str(path)) as zf:
             return extractor(zf)
-    except (zipfile.BadZipFile, KeyError):
+    except (zipfile.BadZipFile, KeyError, ET.ParseError):
         return None
 
 
 def _docx_text(zf: zipfile.ZipFile) -> str | None:
     ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-    with zf.open("word/document.xml") as f:
-        root = ET.parse(f).getroot()
+    root = _parse_capped_member(zf, "word/document.xml")
     texts = [el.text for el in root.iter(f"{{{ns}}}t") if el.text]
     return _clean(" ".join(texts))
 
@@ -623,8 +811,7 @@ def _xlsx_text(zf: zipfile.ZipFile) -> str | None:
     # Shared strings contains all cell text
     ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
     try:
-        with zf.open("xl/sharedStrings.xml") as f:
-            root = ET.parse(f).getroot()
+        root = _parse_capped_member(zf, "xl/sharedStrings.xml")
         texts = [el.text for el in root.iter(f"{{{ns}}}t") if el.text]
         return _clean(" ".join(texts[:40]))
     except KeyError:
@@ -635,30 +822,43 @@ def _xlsx_text(zf: zipfile.ZipFile) -> str | None:
 def _pptx_text(zf: zipfile.ZipFile) -> str | None:
     ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
     texts = []
-    # Read first 3 slides
-    for i in range(1, 4):
-        slide_path = f"ppt/slides/slide{i}.xml"
+    # Enumerate actual slide parts rather than guessing slide1..3 — decks can omit
+    # or renumber slides. Sorted for deterministic ordering; first 3 slides.
+    slide_names = sorted(
+        n for n in zf.namelist()
+        if n.startswith("ppt/slides/") and n.endswith(".xml")
+        and "/" not in n[len("ppt/slides/"):]  # exclude slideLayouts/_rels subpaths
+    )[:3]
+    for slide_path in slide_names:
         try:
-            with zf.open(slide_path) as f:
-                root = ET.parse(f).getroot()
-            texts += [el.text for el in root.iter(f"{{{ns}}}t") if el.text]
-        except KeyError:
-            break
+            root = _parse_capped_member(zf, slide_path)
+        except (KeyError, ET.ParseError):
+            continue
+        texts += [el.text for el in root.iter(f"{{{ns}}}t") if el.text]
     return _clean(" ".join(texts)) if texts else None
 
 
 def _peek_fdx(path: Path) -> str | None:
-    root = ET.parse(str(path)).getroot()
-    # FDX: try title page first, then first 5 paragraphs
-    title_el = root.find(".//TitlePage")
-    source = title_el if title_el is not None else root
-    paragraphs = list(source.iter("Paragraph"))[:8]
-    texts = []
-    for p in paragraphs:
-        for el in p.iter():
-            if el.text and el.text.strip():
-                texts.append(el.text.strip())
-    return _clean(" ".join(texts)) if texts else None
+    # FDX is plain XML on disk (not zipped) — cap the read and guard parse failures.
+    try:
+        with open(path, "rb") as f:
+            data = _read_capped(f)
+        root = ET.fromstring(data)
+    except (OSError, ET.ParseError):
+        return None
+    try:
+        # FDX: try title page first, then first 8 paragraphs
+        title_el = root.find(".//TitlePage")
+        source = title_el if title_el is not None else root
+        paragraphs = list(source.iter("Paragraph"))[:8]
+        texts = []
+        for p in paragraphs:
+            for el in p.iter():
+                if el.text and el.text.strip():
+                    texts.append(el.text.strip())
+        return _clean(" ".join(texts)) if texts else None
+    except ET.ParseError:
+        return None
 
 
 def _peek_text(path: Path, ext: str) -> str | None:
@@ -693,40 +893,106 @@ def _clean(text: str) -> str | None:
 
 _UF_DATALESS = 0x40000000  # macOS flag set by NSFileProvider on not-yet-downloaded files
 
+# Windows reparse/offline attributes signalling a not-yet-materialised placeholder.
+_WIN_RECALL_ON_DATA_ACCESS = 0x00400000  # FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+_WIN_OFFLINE              = 0x00001000  # FILE_ATTRIBUTE_OFFLINE
+
+
+def _listxattr_names(path: Path) -> bytes:
+    """Return the file's raw extended-attribute name table (NUL-separated bytes),
+    read in-process — never forks an `xattr` subprocess.
+
+    macOS CPython does NOT expose os.listxattr (that's Linux-only), so on darwin we
+    call libc listxattr(2) directly via ctypes. Returns b'' on any error. We only
+    need the NAMES (the dataless marker's presence is the signal), so a substring
+    search over this blob is sufficient — no per-name getxattr needed.
+    """
+    if hasattr(os, "listxattr"):
+        # Linux (and any platform where CPython exposes it).
+        try:
+            names = os.listxattr(path, follow_symlinks=False)
+        except OSError:
+            return b""
+        return b"\x00".join(
+            (n.encode("utf-8", "surrogateescape") if isinstance(n, str) else n)
+            for n in names
+        )
+    if sys.platform == "darwin":
+        import ctypes
+        try:
+            libc = ctypes.CDLL("libc.dylib", use_errno=True)
+        except OSError:
+            return b""
+        cpath = os.fsencode(str(path))
+        XATTR_NOFOLLOW = 0x0001
+        # First call with NULL buffer to get the required size.
+        size = libc.listxattr(cpath, None, ctypes.c_size_t(0), XATTR_NOFOLLOW)
+        if size <= 0:
+            return b""
+        buf = ctypes.create_string_buffer(size)
+        got = libc.listxattr(cpath, buf, ctypes.c_size_t(size), XATTR_NOFOLLOW)
+        if got <= 0:
+            return b""
+        return buf.raw[:got]
+    return b""
+
+
 def _is_placeholder(path: Path) -> bool:
     """
-    Is this file a cloud-only placeholder (not downloaded locally)?
+    Is this file a cloud-only placeholder (bytes not materialised locally)?
 
-    Primary signal: the macOS dataless flag (UF_DATALESS), which modern
-    FileProvider-based clients — OneDrive's ~/Library/CloudStorage mount, iCloud
-    Drive, etc. — set on files whose bytes live only in the cloud. Equivalently,
-    such a file reports a real logical size but ZERO allocated blocks. (The old
-    xattr-marker heuristic missed these entirely — a dataless OneDrive file
-    carries only com.apple.FinderInfo, none of the provider markers — so the
-    whole cloud-download path silently never fired.) Legacy xattr markers are
-    kept as a fallback for older sync clients. Returns False on error (treat as
-    local rather than risk a spurious download).
+    Cross-platform, in-process — never forks a per-file `xattr` subprocess (that
+    leaked processes and added a fork per file across a large drive).
+
+      * macOS (darwin): authoritative dataless detection. We read the file's
+        FileProvider xattr markers via os.listxattr/os.getxattr in-process, and
+        treat UF_DATALESS in st_flags as an additional signal. st_blocks==0 is
+        deliberately NOT used alone — APFS clones and transparently-compressed
+        files legitimately report zero blocks while being fully local.
+      * Windows (win32): placeholder when st_file_attributes has
+        FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS or FILE_ATTRIBUTE_OFFLINE set.
+      * Linux/other: no reliable provider signal → treat as local (False).
+
+    Returns False on error (treat as local rather than risk a spurious download).
     """
-    try:
-        st = os.stat(path)
-        if getattr(st, "st_flags", 0) & _UF_DATALESS:
+    plat = sys.platform
+
+    if plat == "darwin":
+        try:
+            st = os.stat(path)
+        except OSError:
+            return False
+        dataless_flag = bool(getattr(st, "st_flags", 0) & _UF_DATALESS)
+        # Signal 1: BSD dataless flag — authoritative on its own.
+        if dataless_flag:
             return True
-        if st.st_size > 0 and getattr(st, "st_blocks", 1) == 0:
-            return True
-    except OSError:
+        # Signal 2: FileProvider provider markers in the xattr name table, read
+        # in-process. The dataless/itemState markers are dispositive; OneDrive/fpfs
+        # markers also appear on local files, so those only count alongside the flag
+        # (which we already know is unset here, so they alone never trigger).
+        names_blob = _listxattr_names(path)
+        if not names_blob:
+            return False
+        for marker in (b"com.apple.fileprovider.dataless#N",
+                       b"com.apple.cloud.itemState"):
+            if marker in names_blob:
+                return True
         return False
-    try:
-        result = subprocess.run(
-            ["xattr", str(path)],
-            capture_output=True, text=True, timeout=1
-        )
-        return any(m in result.stdout for m in [
-            "com.microsoft.OneDrive",
-            "com.apple.cloud.itemState",
-            "com.apple.fileprovider",
-        ])
-    except Exception:
-        return False
+
+    if plat == "win32":
+        import stat as _stat
+        try:
+            st = os.stat(path)
+        except OSError:
+            return False
+        attrs = getattr(st, "st_file_attributes", 0)
+        recall = getattr(_stat, "FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS",
+                         _WIN_RECALL_ON_DATA_ACCESS)
+        offline = getattr(_stat, "FILE_ATTRIBUTE_OFFLINE", _WIN_OFFLINE)
+        return bool(attrs & (recall | offline))
+
+    # Linux / other: no provider signal available — treat as local.
+    return False
 
 
 def cmd_download_batch(args):
@@ -743,20 +1009,30 @@ def cmd_download_batch(args):
     total_bytes = 0
     at_cap = False
 
-    # Skip already-organised files so we don't re-download freed-up content
+    # Folders scan treats as opaque locked atomic units — don't download files inside
+    # them, since scan will ignore those files anyway (wasted bandwidth + cloud egress).
+    _locked_atomic = _locked_atomic_names(drive)
+
+    # Skip already-organised files so we don't re-download freed-up content.
+    # NB: `with sqlite3.connect(...) as conn` commits but does NOT close the
+    # connection — it leaks the handle. Use an explicit try/finally close.
     organized_paths: set[str] = set()
     if REGISTRY_DB.exists():
+        conn = None
         try:
-            with sqlite3.connect(str(REGISTRY_DB)) as _db:
-                _db.row_factory = sqlite3.Row
-                organized_paths = {
-                    r["current_path"]
-                    for r in _db.execute(
-                        "SELECT current_path FROM files WHERE status='organized'"
-                    ).fetchall()
-                }
+            conn = sqlite3.connect(str(REGISTRY_DB))
+            conn.row_factory = sqlite3.Row
+            organized_paths = {
+                r["current_path"]
+                for r in conn.execute(
+                    "SELECT current_path FROM files WHERE status='organized'"
+                ).fetchall()
+            }
         except Exception:
             pass
+        finally:
+            if conn is not None:
+                conn.close()
 
     print(f"Scanning for online-only files (cap: {cap_gb:.0f} GB)...")
     print()
@@ -775,7 +1051,8 @@ def cmd_download_batch(args):
             # same opacity contract as scan. Pruned first so the top-level x/hidden
             # filters below operate on the already-cleaned dir list.
             dirs[:] = [d for d in dirs
-                       if not _atomic_marker(root_path / d)
+                       if d not in _locked_atomic
+                       and not _atomic_marker(root_path / d)
                        and not _is_external(root_path / d)]
 
             rel = root_path.relative_to(drive)
@@ -811,13 +1088,17 @@ def cmd_download_batch(args):
                     skipped += 1
                     continue
 
-                if fsize == 0:
-                    # Zero-byte: might be a placeholder, skip — scan won't process 0-byte files anyway
-                    skipped += 1
+                if not _is_placeholder(filepath):
+                    # A genuinely-empty local file (fsize==0, not a placeholder) has
+                    # nothing to download — it's already local. Either way, nothing
+                    # to trigger here.
+                    already_local += 1
                     continue
 
-                if not _is_placeholder(filepath):
-                    already_local += 1
+                if fsize == 0:
+                    # A placeholder reporting zero logical size has no bytes to pull
+                    # down; skip rather than open() a no-op.
+                    skipped += 1
                     continue
 
                 if total_bytes + fsize > cap_bytes:
@@ -959,8 +1240,18 @@ def cmd_scan(args):
     buckets: dict[int, list[tuple[Path, int, bool]]] = {p: [] for p in range(1, 7)}
 
     def eligible(filepath: Path) -> tuple[bool, int]:
-        """Return (eligible, size_bytes). Eligible = not skipped, not zero-byte, not organised."""
+        """Return (eligible, size_bytes). Eligible = not skipped, not a symlink, not
+        organised. A genuinely-empty REAL file (size 0, not a cloud placeholder) is
+        eligible — it should be registered/organised, not silently dropped; only a
+        zero-byte *placeholder* is skipped (it has no materialisable bytes)."""
         if should_skip(filepath):
+            return False, 0
+        # Skip symlinks: never hash/move through a link (could escape the drive or
+        # double-count the target). is_symlink() does not follow the link.
+        try:
+            if filepath.is_symlink():
+                return False, 0
+        except OSError:
             return False, 0
         if str(filepath) in organized_paths:
             return False, 0
@@ -968,12 +1259,19 @@ def cmd_scan(args):
             fsize = filepath.stat().st_size
         except OSError:
             return False, 0
-        if fsize == 0:
+        if fsize == 0 and _is_placeholder(filepath):
+            # Zero-byte cloud placeholder with nothing to download — defer.
             return False, 0
         return True, fsize
 
     for entry in drive.iterdir():
         if entry.name.startswith(".") or should_skip(entry):
+            continue
+        # Skip symlinked top-level entries entirely (file or dir).
+        try:
+            if entry.is_symlink():
+                continue
+        except OSError:
             continue
         if entry.is_file():
             ok, fsize = eligible(entry)
@@ -999,6 +1297,7 @@ def cmd_scan(args):
                 # (node_modules, .git, bundles) by signature.
                 subdirs[:] = [d for d in subdirs
                               if not d.startswith(".")
+                              and not (root_path / d).is_symlink()
                               and d not in _locked_atomic
                               and not _atomic_marker(root_path / d)
                               and not _is_external(root_path / d)]
@@ -1045,7 +1344,10 @@ def cmd_scan(args):
                 stopped_at_priority = priority
                 break
             try:
-                cur_mtime = int(filepath.stat().st_mtime)
+                # Full-precision mtime (nanoseconds): an int(st_mtime) truncates to
+                # the second, so two edits within the same second look "unchanged"
+                # and the file is never re-hashed. Stored in the same `mtime` column.
+                cur_mtime = filepath.stat().st_mtime_ns
             except OSError:
                 cur_mtime = 0
             ex = existing_index.get(str(filepath))
@@ -1078,10 +1380,32 @@ def cmd_scan(args):
                         time.sleep(DOWNLOAD_POLL_INTERVAL)
                         waited += DOWNLOAD_POLL_INTERVAL
                     t_download += time.monotonic() - _wstart
-                    if _is_placeholder(filepath):
-                        print(f"  skip {filepath}: still online-only after {DOWNLOAD_POLL_TIMEOUT:.0f}s", file=sys.stderr)
-                        skipped += 1
-                        continue
+
+                # Never hash a partially-downloaded file. Confirm it is (a) no longer
+                # dataless AND (b) byte-stable across two reads — a still-streaming
+                # OneDrive file can clear the dataless flag while its size is still
+                # climbing. If unconfirmed, defer to a future scan rather than commit
+                # a hash of partial bytes.
+                if _is_placeholder(filepath):
+                    print(f"  skip {filepath}: still online-only after {DOWNLOAD_POLL_TIMEOUT:.0f}s", file=sys.stderr)
+                    skipped += 1
+                    continue
+                try:
+                    s1 = filepath.stat()
+                    time.sleep(DOWNLOAD_POLL_INTERVAL)
+                    s2 = filepath.stat()
+                except OSError as e:
+                    print(f"  skip {filepath}: vanished during materialise check: {e}", file=sys.stderr)
+                    skipped += 1
+                    continue
+                if _is_placeholder(filepath) or s1.st_size != s2.st_size:
+                    print(f"  skip {filepath}: not fully materialised (size unstable), deferring", file=sys.stderr)
+                    skipped += 1
+                    continue
+                # Re-capture size/mtime now that the real bytes are present — the
+                # placeholder-reported values may differ from the materialised file.
+                fsize = s2.st_size
+                cur_mtime = s2.st_mtime_ns
                 triggered_count += 1
 
             to_process.append((filepath, fsize, cur_mtime))
@@ -1096,7 +1420,10 @@ def cmd_scan(args):
         filepath, fsize, cur_mtime = item
         try:
             _h = time.monotonic()
-            digest = sha256_of(filepath)
+            # Pass the admission size: sha256_of re-stats afterward and raises if the
+            # file changed size mid-hash (a still-materialising download / concurrent
+            # edit), so we never commit a hash of partial bytes.
+            digest = sha256_of(filepath, expected_size=fsize)
             return ("ok", filepath, fsize, cur_mtime, filepath.suffix.lower(),
                     digest, time.monotonic() - _h)
         except OSError as e:
@@ -1106,7 +1433,35 @@ def cmd_scan(args):
     if to_process:
         workers = min(8, (os.cpu_count() or 2) + 2)
         with _futures.ThreadPoolExecutor(max_workers=workers) as pool:
-            results = list(pool.map(_hash_only, to_process))
+            # as_completed + per-future try/except: one worker raising an unexpected
+            # error must not discard the whole batch's completed hashes (pool.map
+            # re-raises the first exception and drops every result).
+            futures = {pool.submit(_hash_only, item): item for item in to_process}
+            for fut in _futures.as_completed(futures):
+                try:
+                    results.append(fut.result())
+                except Exception as e:  # defensive — _hash_only already traps OSError
+                    item = futures[fut]
+                    results.append(("err", item[0], str(e)))
+
+    # A candidate duplicate row only counts if its file is still real and live:
+    # current_path exists on disk AND status is organized/pending. A row whose
+    # original was deleted/moved (stale current_path) or already marked duplicate
+    # must NOT poison a fresh file into 'duplicate' (it would then never organise).
+    def _is_live_dup(digest_val: str, exclude_id: int | None = None) -> bool:
+        rows = conn.execute(
+            "SELECT id, current_path, status FROM files WHERE sha256 = ?",
+            (digest_val,)
+        ).fetchall()
+        for row in rows:
+            if exclude_id is not None and row["id"] == exclude_id:
+                continue
+            if row["status"] not in ("organized", "pending"):
+                continue
+            cp = row["current_path"]
+            if cp and Path(cp).exists():
+                return True
+        return False
 
     # Pass 3 (sequential): content-peek (thread-unsafe) + registry writes.
     for res in results:
@@ -1128,14 +1483,21 @@ def cmd_scan(args):
             t_peek += time.monotonic() - _p
 
         existing = conn.execute(
-            "SELECT id, sha256 FROM files WHERE current_path = ?", (path_str,)
+            "SELECT id, sha256, status FROM files WHERE current_path = ?", (path_str,)
         ).fetchone()
         if existing:
             if existing["sha256"] != digest:
+                # Hash changed under a known path. Don't blindly reset to 'pending'
+                # for a row that was a 'duplicate' — re-evaluate dedup against the new
+                # hash instead of silently re-proposing it as a fresh file.
+                if existing["status"] == "duplicate":
+                    new_status = "duplicate" if _is_live_dup(digest, exclude_id=existing["id"]) else "pending"
+                else:
+                    new_status = "pending"
                 conn.execute(
                     """UPDATE files SET sha256=?, file_size=?, mtime=?, content_peek=?,
-                       status='pending', batch_id=? WHERE id=?""",
-                    (digest, fsize, cur_mtime, content_peek, batch_id, existing["id"])
+                       status=?, batch_id=? WHERE id=?""",
+                    (digest, fsize, cur_mtime, content_peek, new_status, batch_id, existing["id"])
                 )
                 updated_count += 1
             else:
@@ -1143,10 +1505,7 @@ def cmd_scan(args):
                 conn.execute("UPDATE files SET mtime=? WHERE id=?", (cur_mtime, existing["id"]))
             continue
 
-        dup = conn.execute(
-            "SELECT id FROM files WHERE sha256 = ? AND status != 'duplicate' LIMIT 1",
-            (digest,)
-        ).fetchone()
+        dup = _is_live_dup(digest)
         status = "duplicate" if dup else "pending"
         conn.execute(
             """INSERT INTO files
@@ -1249,6 +1608,11 @@ def _build_rules_index(root: Path) -> tuple:
             if not folder:
                 continue
             dest = (f"{parent_disp}/{folder}" if parent_disp else folder).strip("/")
+            # Normalise the grouping (first) segment to its canonical case so two
+            # rules differing only in grouping case ('Personal/...' vs 'PERSONAL/...')
+            # collapse to one destination — otherwise the auto-classify matcher reads
+            # them as competing destinations and (wrongly) falls through as ambiguous.
+            dest = _normalize_grouping(dest)
             dest_set.add(dest)
             leaf = folder.split("/")[-1]
             meta = entities_meta.get(leaf, {}) if isinstance(entities_meta, dict) else {}
@@ -1303,7 +1667,9 @@ def _auto_classify_entry(entry: dict, root: Path, index: list, dest_set: set) ->
     #    to the SAME destination (competing destinations => ambiguous => classifier).
     fname = (entry.get("filename") or "").lower()
     if fname:
-        ftok = set(re.split(r"[^a-z0-9]+", fname))
+        # Only tokens of length>=3 (drop empty strings too) can drive an auto-route:
+        # a single short/empty token must not trigger an over-confident match.
+        ftok = {t for t in re.split(r"[^a-z0-9]+", fname) if len(t) >= 3}
         # match a dest when its tokens hit AND none of its negative tokens hit (W5)
         matched = {e["dest"] for e in index
                    if (e["tokens"] & ftok) and not (e.get("neg") and e["neg"] & ftok)}
@@ -1419,13 +1785,13 @@ def cmd_propose(args):
                 entry["content_peek"] = None
         result.append(entry)
 
-    # W1b — partition the to-classify residual into batches of 25 for the fan-out:
+    # W1b — partition the to-classify residual into batches of BATCH for the fan-out:
     # the skill dispatches one classification sub-agent per classify_batch, briefed
     # with file PATHS (not inlined content). auto_routed files carry no batch.
     to_classify = [e for e in result if e.get("needs_classification")]
     for i, e in enumerate(to_classify):
-        e["classify_batch"] = i // 25
-    n_batches = (len(to_classify) + 24) // 25
+        e["classify_batch"] = i // BATCH
+    n_batches = (len(to_classify) + BATCH - 1) // BATCH
 
     # Audit trail: every auto-route is appended to <root>/.organizer/auto-routed.csv
     # so the user can see exactly what was decided deterministically (never opaque).
@@ -1445,7 +1811,7 @@ def cmd_propose(args):
               f"{len(rows) - len(auto_log)} need classification. Audit: {audit}", file=sys.stderr)
 
     name_only = sum(1 for e in to_classify if e.get("route_by_name_only"))
-    print(f"To classify: {len(to_classify)} file(s) in {n_batches} batch(es) of 25 "
+    print(f"To classify: {len(to_classify)} file(s) in {n_batches} batch(es) of {BATCH} "
           f"(fan-out one sub-agent per classify_batch){'; ' + str(name_only) + ' route-by-name-only (open blocked)' if name_only else ''}.",
           file=sys.stderr)
 
@@ -1454,7 +1820,7 @@ def cmd_propose(args):
     metadata = _enumerate_project_metadata(_EFFECTIVE_ROOT)
     sidecar = Path.home() / ".claude" / "drive-organizer" / "project_metadata.json"
     sidecar.parent.mkdir(parents=True, exist_ok=True)
-    sidecar.write_text(json.dumps(metadata, indent=2))
+    _atomic_write(sidecar, json.dumps(metadata, indent=2))
     print(f"Project metadata sidecar: {sidecar} ({len(metadata)} projects)", file=sys.stderr)
 
     print(json.dumps(result, indent=2))
@@ -1480,6 +1846,60 @@ def cmd_execute(args):
     conn = get_db()
     moved = errors = 0
 
+    # --- Crash-recovery move journal (BL-A: move-then-commit crash window) ----------
+    # A crash BETWEEN shutil.move and the registry UPDATE+commit would leave a file
+    # at its new location but the registry pointing at the old path. To make that
+    # window recoverable we keep a tiny sidecar journal: before each move we record
+    # {id, src, dest}; we move; we UPDATE+commit; then we clear the journal entry.
+    # On start, a non-empty journal is reconciled — if the file is already at `dest`
+    # the move happened (fix the registry row); if it is still at `src` we leave it
+    # for the normal pass to re-move.
+    journal_path = drive / ".organizer" / ".move-journal.json"
+
+    def _read_journal() -> dict:
+        try:
+            data = json.loads(journal_path.read_text())
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _write_journal_entry(jid, jsrc, jdest):
+        journal_path.parent.mkdir(parents=True, exist_ok=True)
+        j = _read_journal()
+        j[str(jid)] = {"id": jid, "src": jsrc, "dest": jdest}
+        _atomic_write(journal_path, json.dumps(j, indent=2))
+
+    def _clear_journal_entry(jid):
+        j = _read_journal()
+        if str(jid) in j:
+            del j[str(jid)]
+            _atomic_write(journal_path, json.dumps(j, indent=2))
+
+    # Reconcile any leftover journal from a previous crashed run BEFORE processing.
+    pending_journal = _read_journal()
+    if pending_journal:
+        for jid, rec in list(pending_journal.items()):
+            try:
+                jdest = Path(rec["dest"]); jsrc = Path(rec["src"])
+            except Exception:
+                _clear_journal_entry(jid)
+                continue
+            if jdest.exists() and not (jsrc.exists() and jsrc.samefile(jdest)):
+                # The move completed but the registry may not have been updated.
+                conn.execute(
+                    "UPDATE files SET current_path=?, processed_at=? WHERE id=?",
+                    (str(jdest), datetime.now().isoformat(), rec.get("id"))
+                )
+                conn.commit()
+                print(f"  RECOVERED: journal entry id {rec.get('id')} -> {jdest}", file=sys.stderr)
+                _clear_journal_entry(jid)
+            elif jsrc.exists():
+                # File still at source — the move never happened; leave for re-move.
+                _clear_journal_entry(jid)
+            else:
+                # Neither src nor dest present — nothing safe to do; drop the stale entry.
+                _clear_journal_entry(jid)
+
     for entry in approved:
         file_id     = entry["id"]
         src         = Path(entry["current_path"])
@@ -1488,7 +1908,12 @@ def cmd_execute(args):
         # Derive the top-level grouping from the path when the entry carries no
         # para_category (e.g. reclassified-rejected entries Claude rewrote with only
         # para_subfolder updated) — so the registry column is never stale/_Inbox.
-        category    = entry.get("para_category") or (subfolder.split("/")[0] if subfolder else "") or "_Inbox"
+        # Derive deterministically from the normalised subfolder's first segment, and
+        # fall back to _Inbox whenever that segment is not a real active grouping.
+        category    = entry.get("para_category")
+        if not category:
+            first_seg = _normalize_grouping(subfolder).split("/")[0] if subfolder else ""
+            category = first_seg if first_seg in _active_groupings() else "_Inbox"
         new_filename = entry.get("new_filename")
         vision_desc  = entry.get("vision_desc")
         file_date    = entry.get("file_date")
@@ -1498,25 +1923,39 @@ def cmd_execute(args):
             errors += 1
             continue
 
-        if action == "delete":
-            dest_dir = drive / "Archive" / "_To Delete"
-        else:
-            dest_dir = drive / subfolder
+        # Build the destination dir via _safe_dest so a JSON-supplied subfolder can
+        # never escape the drive (path traversal: '..' / absolute / symlink escape).
+        # _safe_dest returning None means 'reject' — record an error and SKIP the
+        # move; NEVER fall back to an unchecked drive / subfolder join.
+        sub_rel = "Archive/_To Delete" if action == "delete" else subfolder
+        dest_dir = _safe_dest(drive, sub_rel)
+        if dest_dir is None:
+            print(f"  ERROR: unsafe destination subfolder {sub_rel!r} for {src} — skipped.",
+                  file=sys.stderr)
+            errors += 1
+            continue
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest_name = new_filename if new_filename else src.name
         dest      = dest_dir / dest_name
 
-        if dest.exists() and dest != src:
+        # Collision loop. Treat a case-insensitive same-file (dest IS src on a
+        # case-insensitive FS, or via samefile) as identity so we don't needlessly
+        # rename a file onto itself; only suffix-bump for a genuinely different file.
+        if dest.exists() and not (src.exists() and dest.samefile(src)):
             stem, suffix = dest.stem, dest.suffix
             counter = 2
-            while dest.exists():
+            while dest.exists() and not (src.exists() and dest.samefile(src)):
                 dest = dest_dir / f"{stem}_{counter}{suffix}"
                 counter += 1
 
+        # Journal the intent BEFORE moving so a crash in the move-then-commit window
+        # is recoverable on the next run.
+        _write_journal_entry(file_id, str(src), str(dest))
         try:
             shutil.move(str(src), str(dest))
         except OSError as e:
             print(f"  ERROR moving {src}: {e}", file=sys.stderr)
+            _clear_journal_entry(file_id)   # move never happened — drop the intent
             errors += 1
             continue
 
@@ -1535,6 +1974,8 @@ def cmd_execute(args):
         # every move's record if execute crashed mid-batch — leaving files relocated
         # but the registry still pointing at their old paths.
         conn.commit()
+        # Registry now durable for this file — clear the journal intent.
+        _clear_journal_entry(file_id)
         moved += 1
 
         # Expand the destination project's production_period to include
@@ -1576,7 +2017,9 @@ def _pick_keeper(files: list) -> dict:
         depth = min(p.count("/"), 20)   # cap depth so a deeply-nested staging path
                                         # can never out-rank a real destination
         # Tuple ordering: prefer organized, then non-staging, then deeper, then the
-        # lowest id (deterministic tiebreak — input order is not guaranteed stable).
+        # lowest id as a deterministic final tiebreak (input order is not guaranteed
+        # stable). NOTE: the keeper is chosen with max(), so the id term is NEGATED
+        # (-id) — a smaller id yields a larger -id, so max() lands on the lowest id.
         return (organized, not_staging, depth, -int(r.get("id", 0)))
     return max(files, key=score)
 
@@ -1596,8 +2039,14 @@ def cmd_duplicates(args):
         src = Path(row["current_path"])
         if not src.exists():
             conn.close(); sys.exit(f"File not found on disk: {src}")
+        # Use the SAME status filter as the main keeper selection below so the keeper
+        # chosen here matches the one the user reviewed in the duplicates listing —
+        # an unfiltered query could include rows the listing excluded and pick a
+        # different keeper, co-locating beside a copy the user never saw.
         group = conn.execute(
-            "SELECT id, current_path, status FROM files WHERE sha256=? AND sha256 IS NOT NULL",
+            "SELECT id, current_path, status FROM files "
+            "WHERE sha256=? AND sha256 IS NOT NULL "
+            "AND status IN ('organized','pending','duplicate')",
             (row["sha256"],)
         ).fetchall()
         if len(group) < 2:
@@ -1609,6 +2058,13 @@ def cmd_duplicates(args):
             sys.exit(f"File id {target} is the keeper (best-placed copy of this group); "
                      f"co-locate a different copy instead.")
         keeper_path = Path(keeper["path"])
+        # Verify the keeper actually exists on disk before co-locating beside it —
+        # if it has been moved/deleted out from under the registry, co-locating into
+        # a phantom directory would strand the duplicate. Abort cleanly instead.
+        if not keeper_path.exists():
+            conn.close()
+            sys.exit(f"Keeper id {keeper['id']} not found on disk: {keeper_path}. "
+                     f"Re-run duplicates to refresh the registry before co-locating.")
         keeper_dir = keeper_path.parent
         keeper_dir.mkdir(parents=True, exist_ok=True)
         # next _dupN beside the keeper, using the keeper's stem so they sort adjacent
@@ -1616,7 +2072,11 @@ def cmd_duplicates(args):
         while (keeper_dir / f"{keeper_path.stem}_dup{n}{src.suffix}").exists():
             n += 1
         dest = keeper_dir / f"{keeper_path.stem}_dup{n}{src.suffix}"
-        shutil.move(str(src), str(dest))
+        try:
+            shutil.move(str(src), str(dest))
+        except OSError as e:
+            conn.close()
+            sys.exit(f"Failed to co-locate id {target} ({src} -> {dest}): {e}")
         conn.execute(
             "UPDATE files SET current_path=?, status='duplicate', processed_at=? WHERE id=?",
             (str(dest), datetime.now().isoformat(), target)
@@ -1655,6 +2115,7 @@ def cmd_duplicates(args):
         keeper = _pick_keeper(files)
         groups.append({
             "sha256": sha[:16] + "...",
+            "_sha_full": sha,                   # full digest, used only for a stable sort
             "keeper_id": keeper["id"],          # the copy to keep in place; co-locate the rest
             "files": files,
         })
@@ -1663,7 +2124,11 @@ def cmd_duplicates(args):
         print("No exact duplicates found.")
         return
 
-    groups.sort(key=lambda g: g["sha256"])
+    # Sort by the FULL sha256 — the truncated display string ('<16hex>...') collides
+    # for any two groups sharing a 16-hex prefix, making the order non-deterministic.
+    groups.sort(key=lambda g: g["_sha_full"])
+    for g in groups:
+        g.pop("_sha_full", None)
     print(json.dumps(groups, indent=2))
 
 
@@ -1687,7 +2152,7 @@ def cmd_variants(args):
         fname = row["filename"] or ""
         ext   = (row["extension"] or "").lower()
         base  = Path(fname).stem                       # drop the extension FIRST, otherwise the
-        base  = re.sub(r"^\d+-", "", base)             # $-anchored variant-token strip below can
+        base  = re.sub(r"^\d+[-_]\s*", "", base)       # $-anchored variant-token strip below can
         # Strip trailing variant tokens repeatedly — "report_final_v2" carries two,
         # and a single re.sub would leave one behind, splitting variants that should group.
         while True:
@@ -1712,12 +2177,10 @@ def cmd_variants(args):
     for key, members in groups.items():
         if len(members) < 2:
             continue
-        sizes = [m["file_size"] for m in members if m["file_size"]]
-        if not sizes:
-            continue
-        min_s, max_s = min(sizes), max(sizes)
-        if min_s == 0 or (max_s / min_s) > 2.0:
-            continue
+        # Do NOT drop a group because a member lacks file_size (missing => unknown
+        # => include it) and do NOT gate on a size ratio: a highlighted/annotated PDF
+        # can legitimately exceed 2x the plain original, so a ratio cap would split
+        # exactly the variant pairs this command exists to surface.
         # Stable, content-derived id — Python's builtin hash() is salted per process
         # (PYTHONHASHSEED), so it produced a different group_id every run and could
         # collide mod 100000. A hashlib digest of the key is deterministic. (sha256,
@@ -1762,7 +2225,17 @@ def _copy_pdf_annot(src, page_dst) -> bool:
     }
     try:
         if t in quad_types:
-            new = getattr(page_dst, quad_types[t])(quads=src.vertices)
+            # Quad-based markup must be created from QUADS, not the flat vertices
+            # list. Prefer src.quads (already grouped 4 points per quad); fall back
+            # to reconstructing quads from src.vertices in groups of 4. Passing the
+            # flat vertices as quads= is wrong and silently drops the annotation.
+            quads = getattr(src, "quads", None)
+            if not quads:
+                verts = list(src.vertices or [])
+                quads = [verts[i:i + 4] for i in range(0, len(verts) - 3, 4)]
+            if not quads:
+                return False
+            new = getattr(page_dst, quad_types[t])(quads=quads)
         elif t == fitz.PDF_ANNOT_TEXT:
             new = page_dst.add_text_annot(src.rect.tl, (src.info or {}).get("content", ""))
         elif t == fitz.PDF_ANNOT_FREE_TEXT:
@@ -1831,7 +2304,12 @@ def cmd_merge(args):
         conn.close()
         sys.exit(f"Canonical file not found: {canonical_path}")
 
-    doc_canonical = fitz.open(str(canonical_path))
+    try:
+        doc_canonical = fitz.open(str(canonical_path))
+    except Exception as e:
+        conn.close()
+        sys.exit(f"Could not open canonical PDF {canonical_path}: {e}\n"
+                 f"Nothing was changed — no originals archived.")
     to_archive = []   # (id, other_path) — archived only AFTER a successful save
 
     for other_row in others:
@@ -1845,6 +2323,9 @@ def cmd_merge(args):
             print(f"  skip {other_path}: {e}", file=sys.stderr)
             continue
 
+        src_pages = len(doc_other)
+        more_pages = src_pages > len(doc_canonical)
+
         src_annots = copied = 0
         for page_num in range(min(len(doc_canonical), len(doc_other))):
             page_src = doc_other[page_num]
@@ -1856,37 +2337,85 @@ def cmd_merge(args):
 
         doc_other.close()
 
-        # Safety: never archive a variant that carried annotations none of which
-        # transferred — archiving an un-merged original would silently lose them.
-        if src_annots > 0 and copied == 0:
-            print(f"  WARNING: {other_path.name} has {src_annots} annotation(s) but none could be "
-                  f"copied — left in place (not archived) to avoid data loss.", file=sys.stderr)
+        # Safety (a): the source has MORE pages than the canonical, so any annotation
+        # on its trailing pages can't be merged (those pages don't exist in canonical).
+        # Archiving would silently drop them — keep the original in place instead.
+        if more_pages:
+            print(f"  WARNING: {other_path.name} has {src_pages} pages vs canonical "
+                  f"{len(doc_canonical)} — trailing-page annotations cannot merge; "
+                  f"left in place (not archived).", file=sys.stderr)
+            continue
+
+        # Safety (b): the no-data-loss guard compares COPIED to the SOURCE annotation
+        # count. Any shortfall (copied < src_annots) is partial loss = loss — keep the
+        # original. (Covers the all-failed case too.)
+        if src_annots > 0 and copied < src_annots:
+            print(f"  WARNING: {other_path.name} has {src_annots} annotation(s) but only "
+                  f"{copied} could be copied — left in place (not archived) to avoid data loss.",
+                  file=sys.stderr)
             continue
 
         to_archive.append((other_row["id"], other_path))
 
-    # Persist the merged canonical FIRST. Only once it is safely on disk do we
-    # archive the originals — otherwise a save failure after the originals were
-    # already moved would lose the merged annotations with no source to recover from.
+    # Persist the merged canonical FIRST. Never save(incremental=True) OVER the
+    # canonical in place — a crash or error mid-write would corrupt the only copy.
+    # Instead: save to a TEMP path, verify it re-opens, then os.replace() it over the
+    # canonical atomically. Only once that succeeds do we archive the originals.
+    import os as _os
+    tmp_path = canonical_path.with_name(f".{canonical_path.name}.merge.tmp.{_os.getpid()}")
+
+    def _save_to_tmp():
+        # Prefer a non-incremental full save to the temp file (a temp file has no
+        # existing bytes to append to, so incremental is not meaningful here).
+        try:
+            doc_canonical.save(str(tmp_path), incremental=False, encryption=0)
+        except Exception:
+            # Retry with deflate off in case the source is encrypted/linearised and
+            # the first attempt raised — keep it simple, one fallback attempt.
+            doc_canonical.save(str(tmp_path), incremental=False)
+
     try:
-        doc_canonical.save(str(canonical_path), incremental=True, encryption=0)
-    except Exception as e:
+        _save_to_tmp()
         doc_canonical.close()
+        # Verify the temp file re-opens (and has pages) before we trust it.
+        _verify = fitz.open(str(tmp_path))
+        if _verify.page_count < 1:
+            _verify.close()
+            raise RuntimeError("merged temp PDF has no pages")
+        _verify.close()
+        _os.replace(str(tmp_path), str(canonical_path))
+    except Exception as e:
+        try:
+            doc_canonical.close()
+        except Exception:
+            pass
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
         conn.close()
         sys.exit(f"Failed to save merged canonical {canonical_path}: {e}\n"
-                 f"No originals were archived — nothing lost.")
-    doc_canonical.close()
+                 f"Canonical left untouched; no originals were archived — nothing lost.")
 
     archive_dir = drive / "Archive" / "_Merged-Originals"
     archive_dir.mkdir(parents=True, exist_ok=True)
     merged_count = 0
+    archive_failures = 0
     for other_id, other_path in to_archive:
         dest = archive_dir / other_path.name
         n = 1
         while dest.exists():            # counter loop — a single `_dup` could clobber a prior archive
             dest = archive_dir / f"{other_path.stem}_dup{n}{other_path.suffix}"
             n += 1
-        shutil.move(str(other_path), str(dest))
+        # Wrap each archive move so one failure doesn't abort the whole merge
+        # mid-way (the canonical is already saved; the rest should still archive).
+        try:
+            shutil.move(str(other_path), str(dest))
+        except OSError as e:
+            print(f"  WARNING: could not archive original {other_path}: {e}", file=sys.stderr)
+            archive_failures += 1
+            continue
         conn.execute(
             "UPDATE files SET current_path=?, status='archived', processed_at=? WHERE id=?",
             (str(dest), datetime.now().isoformat(), other_id)
@@ -1902,6 +2431,9 @@ def cmd_merge(args):
 
     print(f"Merge complete: {merged_count} files merged into {canonical_path.name}.")
     print(f"Originals archived to Archive/_Merged-Originals/")
+    if archive_failures:
+        print(f"  ({archive_failures} original(s) could not be archived — see warnings above; "
+              f"left in place, not lost.)")
     export_csv()
 
 
@@ -2039,9 +2571,8 @@ _VIEWER_HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 <script>
 // ---------- Data ----------
-const PROPOSALS = __PROPOSALS_JSON__;
 const VOCAB = __VOCAB_JSON__;
-const APPROVED_PATH = "__APPROVED_PATH__";
+const PROPOSALS = __PROPOSALS_JSON__;
 const PAGE_SIZE = 25;
 
 // per-row state: { status, seg1, seg2, seg3, newName }
@@ -2049,8 +2580,10 @@ const PAGE_SIZE = 25;
 // rejected = I got it wrong, reclassify using context
 // inbox    = user needs to open it manually (EPS etc), confirmed _Inbox
 const rowState = {};
+const PROPOSAL_BY_ID = {};
 
 PROPOSALS.forEach(p => {
+  PROPOSAL_BY_ID[p.id] = p;
   rowState[p.id] = {
     status:  'unset',
     seg1:    p.seg1 || '_Inbox',
@@ -2063,7 +2596,15 @@ PROPOSALS.forEach(p => {
 // ---------- Path helpers ----------
 function destPath(id) {
   const st = rowState[id];
-  return [st.seg1, st.seg2, st.seg3].filter(Boolean).join('/');
+  return [st.seg1, st.seg2, st.seg3].map(slugify).filter(Boolean).join('/');
+}
+
+function isStagingPath(path) {
+  // Single shared predicate for "this destination is a staging root, not a real
+  // routed folder" — empty or any underscore-prefixed root (_Inbox, _To Delete,
+  // _Duplicates, ...). Used by inferCategory AND the inbox row-styling so they
+  // can never disagree.
+  return !path || path.startsWith('_');
 }
 
 function inferCategory(path) {
@@ -2071,7 +2612,7 @@ function inferCategory(path) {
   // destination path (e.g. WORK/Ishan/finance -> WORK). Staging roots (_Inbox,
   // Archive) return themselves. (This is a registry column only; routing is by
   // para_subfolder. The old fixed Areas/Resources/Projects vocab was wrong.)
-  if (!path || path.startsWith('_')) return path || '_Inbox';
+  if (isStagingPath(path)) return path || '_Inbox';
   return path.split('/')[0];
 }
 
@@ -2083,7 +2624,7 @@ function buildRow(p, globalIdx) {
   return `
 <tr id="row-${p.id}" class="${trClass}">
   <td class="num">${globalIdx + 1}</td>
-  <td class="from" title="${escHtml(p.current_path)}">${escHtml(p.current_path.split('/').slice(-2,-1)[0] || '')}</td>
+  <td class="from" title="${escHtml(p.current_path || '')}">${escHtml((p.current_path || '').split('/').slice(-2,-1)[0] || '')}</td>
   <td class="orig" title="${escHtml(p.filename)}">${escHtml(p.filename)}</td>
   <td class="arrow">→</td>
   <td class="dest-cell">
@@ -2121,20 +2662,17 @@ function buildRow(p, globalIdx) {
 </tr>`;
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c =>
-    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-function buildGroupHeader(path, count, firstIdx, isInbox) {
+function buildGroupHeader(path, ids, isInbox) {
   const cls = 'group-header' + (isInbox ? ' inbox' : '');
-  const safePath = escapeHtml(path || '(no destination)');
+  const safePath = escHtml(path || '(no destination)');
+  const count = ids.length;
+  const idsAttr = escHtml(JSON.stringify(ids));
   return `
 <tr class="${cls}">
   <td colspan="7">
     → <span class="group-path">${safePath}</span>
     <span class="group-count">(${count} file${count === 1 ? '' : 's'})</span>
-    <button class="approve-group-btn" onclick="approveGroup(${firstIdx}, ${count})">Approve group</button>
+    <button class="approve-group-btn" onclick='approveGroup(${idsAttr})'>Approve group</button>
   </td>
 </tr>`;
 }
@@ -2150,9 +2688,10 @@ function buildPage(pageIdx) {
     const groupPath = slice[i].para_subfolder || '';
     let j = i;
     while (j < slice.length && (slice[j].para_subfolder || '') === groupPath) j++;
-    const groupCount = j - i;
-    const isInbox = !groupPath || groupPath.startsWith('_Inbox');
-    body += buildGroupHeader(groupPath, groupCount, start + i, isInbox);
+    const isInbox = isStagingPath(groupPath);
+    const groupIds = [];
+    for (let k = i; k < j; k++) groupIds.push(slice[k].id);
+    body += buildGroupHeader(groupPath, groupIds, isInbox);
     for (let k = i; k < j; k++) {
       body += buildRow(slice[k], start + k);
     }
@@ -2177,11 +2716,14 @@ function buildPage(pageIdx) {
 </div>`;
 }
 
-function approveGroup(startIdx, count) {
-  for (let k = 0; k < count; k++) {
-    const p = PROPOSALS[startIdx + k];
-    if (p) setStatus(p.id, 'approved');
-  }
+function approveGroup(ids) {
+  (ids || []).forEach(id => {
+    if (rowState[id]) {
+      rowState[id].status = 'approved';
+      refreshRow(id);
+    }
+  });
+  updateAll();
 }
 
 function init() {
@@ -2229,7 +2771,7 @@ function updateAll() {
   for (let i = 0; i < numPages; i++) {
     const start = i * PAGE_SIZE;
     const slice = PROPOSALS.slice(start, start + PAGE_SIZE);
-    const pageReviewed = slice.filter(p => ['approved','rejected','inbox','delete'].includes(rowState[p.id].status)).length;
+    const pageReviewed = slice.filter(p => ['approved','rejected','inbox','delete','flagged'].includes(rowState[p.id].status)).length;
     totalApproved += pageReviewed;
     const tab = document.getElementById(`tab-${i}`);
     if (tab) tab.textContent = `${i+1}  ${pageReviewed}/${slice.length}`;
@@ -2262,20 +2804,28 @@ function addToDatalist(pos, val) {
 }
 
 function slugify(s) {
-  return s.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+  // Normalise a path segment: trim, collapse internal whitespace, and strip any
+  // embedded '/' so a single segment can never change the destination depth.
+  return String(s == null ? '' : s)
+    .replace(/\//g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
 }
 
 function onSeg(id) {
   const st = rowState[id];
-  const oldSeg1 = st.seg1 || '';
-  st.seg1 = (document.getElementById(`s1-${id}`) || {value: ''}).value.trim();
-  st.seg2 = (document.getElementById(`s2-${id}`) || {value: ''}).value.trim();
-  st.seg3 = (document.getElementById(`s3-${id}`) || {value: ''}).value.trim();
+  st.seg1 = slugify((document.getElementById(`s1-${id}`) || {value: ''}).value);
+  st.seg2 = slugify((document.getElementById(`s2-${id}`) || {value: ''}).value);
+  st.seg3 = slugify((document.getElementById(`s3-${id}`) || {value: ''}).value);
   addToDatalist(1, st.seg1);
   addToDatalist(2, st.seg2);
   addToDatalist(3, st.seg3);
 }
-function onNameChange(id, val) { rowState[id].newName = val; }
+function onNameChange(id, val) {
+  const trimmed = String(val == null ? '' : val).trim();
+  const orig = (PROPOSAL_BY_ID[id] || {}).filename || '';
+  rowState[id].newName = trimmed || orig;
+}
 
 function approveAll(pageIdx) {
   const start = pageIdx * PAGE_SIZE;
@@ -2305,6 +2855,7 @@ function refreshRow(id) {
 function submitAll() {
   const output = [];
   const flaggedIds = [];
+  const skippedIds = [];
   let unset = 0;
   PROPOSALS.forEach(p => {
     const st = rowState[p.id];
@@ -2371,13 +2922,14 @@ function submitAll() {
       flaggedIds.push(p.id);
     } else {
       unset++;
+      skippedIds.push(p.id);
     }
   });
 
   fetch('/submit', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ approved: output, flagged: flaggedIds }),
+    body: JSON.stringify({ approved: output, flagged: flaggedIds, skipped: skippedIds }),
   })
   .then(r => r.json())
   .then(resp => {
@@ -2434,7 +2986,6 @@ class _SilentHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
             proposals = self.__class__._proposals
-            approved_path_str = str(APPROVED_JSON_PATH).replace("\\", "\\\\")
 
             # Enrich proposals with derived keys for the viewer
             viewer_proposals = []
@@ -2447,9 +2998,11 @@ class _SilentHandler(BaseHTTPRequestHandler):
                 viewer_proposals.append(vp)
 
             html = _VIEWER_HTML_TEMPLATE
-            html = html.replace("__PROPOSALS_JSON__", json.dumps(viewer_proposals))
+            # Substitute the non-data placeholder first; do the proposal-data
+            # replacement LAST so proposal text containing a literal placeholder
+            # token can't be clobbered by a later replace().
             html = html.replace("__VOCAB_JSON__", json.dumps(self.__class__._vocab))
-            html = html.replace("__APPROVED_PATH__", approved_path_str)
+            html = html.replace("__PROPOSALS_JSON__", json.dumps(viewer_proposals))
             body = html.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -2462,7 +3015,23 @@ class _SilentHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/submit":
-            length = int(self.headers.get("Content-Length", 0))
+            # Parse Content-Length defensively: a malformed header must not crash
+            # the handler, and an oversized body must not be read unbounded.
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except (TypeError, ValueError):
+                self.send_response(400)
+                self.end_headers()
+                return
+            if length < 0:
+                self.send_response(400)
+                self.end_headers()
+                return
+            MAX_BODY = 64 * 1024 * 1024  # 64 MB cap
+            if length > MAX_BODY:
+                self.send_response(413)
+                self.end_headers()
+                return
             raw = self.rfile.read(length)
             try:
                 payload = json.loads(raw)
@@ -2475,19 +3044,44 @@ class _SilentHandler(BaseHTTPRequestHandler):
             if isinstance(payload, list):
                 approved = payload
                 flagged_ids = []
+                skipped_ids = []
             else:
                 approved = payload.get("approved", [])
                 flagged_ids = payload.get("flagged", [])
+                skipped_ids = payload.get("skipped", [])
+
+            # Reject an empty submission rather than overwriting prior approvals
+            # with nothing — an accidental/duplicate POST must not truncate output.
+            if not approved and not flagged_ids:
+                resp = json.dumps({"ok": False, "error": "empty submission"}).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(resp)))
+                self.end_headers()
+                self.wfile.write(resp)
+                return
 
             APPROVED_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(APPROVED_JSON_PATH, "w") as f:
-                json.dump(approved, f, indent=2)
-            # Persist the EXACT flagged-ID set to a sidecar (always, even when empty)
-            # so process-return has the precise flagged list if the registry write
-            # below fails — never inferred by set-difference (which catches unreviewed
-            # 'unset' rows too, not just flagged ones).
-            with open(APPROVED_JSON_PATH.parent / "proposals_flagged.json", "w") as f:
-                json.dump(flagged_ids, f, indent=2)
+            if approved:
+                _atomic_write(APPROVED_JSON_PATH, json.dumps(approved, indent=2))
+            # Persist the EXACT flagged-ID set to a sidecar so process-return has the
+            # precise flagged list if the registry write below fails — never inferred
+            # by set-difference (which catches unreviewed 'unset' rows too). Only
+            # written when there is content, so a flag-less submit can't clobber it.
+            if flagged_ids:
+                _atomic_write(
+                    APPROVED_JSON_PATH.parent / "proposals_flagged.json",
+                    json.dumps(flagged_ids, indent=2),
+                )
+
+            # Surface deliberately-unreviewed ('unset') rows explicitly so downstream
+            # knows which files were skipped rather than silently dropping them.
+            if skipped_ids:
+                print(
+                    f"{len(skipped_ids)} unreviewed files skipped (not written to "
+                    f"proposals_approved.json): ids {skipped_ids}",
+                    flush=True,
+                )
 
             # Learn new path segments from approved destinations
             db_path = self.__class__._db_path
@@ -2622,7 +3216,16 @@ def cmd_generate_viewer(args):
     _SilentHandler._db_path = str(REGISTRY_DB) if REGISTRY_DB.exists() else None
     _SilentHandler._vocab = {str(k): v for k, v in vocab.items()}
 
-    server = HTTPServer(("127.0.0.1", port), _SilentHandler)
+    import errno as _errno
+    try:
+        server = HTTPServer(("127.0.0.1", port), _SilentHandler)
+    except OSError as e:
+        if e.errno == _errno.EADDRINUSE:
+            sys.exit(
+                f"Error: port {port} is already in use. "
+                f"Try another --port (e.g. --port {port + 1})."
+            )
+        raise
     server.timeout = 1.0
 
     server_thread = threading.Thread(target=_serve_until, args=(server, shutdown_event), daemon=True)
@@ -2647,7 +3250,12 @@ def cmd_generate_viewer(args):
 def _serve_until(server: HTTPServer, stop_event: threading.Event):
     """Run the server, checking stop_event each timeout cycle."""
     while not stop_event.is_set():
-        server.handle_request()
+        try:
+            server.handle_request()
+        except Exception as e:
+            # A single handler exception must not kill the serve loop, or the
+            # viewer would die mid-review and lose unsubmitted approvals.
+            print(f"Warning: request handler error: {e}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -2661,6 +3269,10 @@ def cmd_cleanup(args):
 
     removed = 0
 
+    # Staging subdirs inside Archive — they hold active data and must survive empty
+    # batches. Hoisted out of the walk loop (a constant set literal, not per-iteration).
+    _ARCHIVE_STAGING = {"_To Delete", "_Duplicates", "_Merged-Originals"}
+
     # Walk bottom-up so children are processed before parents
     for root, dirs, files in os.walk(drive, topdown=False):
         root_path = Path(root)
@@ -2673,8 +3285,7 @@ def cmd_cleanup(args):
         if root_path.parent == drive and root_path.name in PARA_ROOTS:
             continue
 
-        # Skip staging subdirs inside Archive — they hold active data and must survive empty batches
-        _ARCHIVE_STAGING = {"_To Delete", "_Duplicates", "_Merged-Originals"}
+        # Skip staging subdirs inside Archive
         if root_path.parent == drive / "Archive" and root_path.name in _ARCHIVE_STAGING:
             continue
 
@@ -2846,6 +3457,13 @@ def cmd_reconcile(args):
     root = Path(_EFFECTIVE_ROOT)
     now = datetime.now().isoformat()
 
+    # At most one per-file decision flag may be supplied at a time (each acts on one
+    # report entry; combining them is almost certainly a mistake).
+    _supplied = [a for a in ("restore", "accept", "prune") if getattr(args, a, None) is not None]
+    if len(_supplied) > 1:
+        sys.exit("Supply at most one of --restore / --accept / --prune at a time "
+                 f"(got: {', '.join('--' + a for a in _supplied)}).")
+
     # Per-file decision mode — driven from the prior dry-run's reconcile-report.json.
     for _act in ("restore", "accept", "prune"):
         _id = getattr(args, _act, None)
@@ -2867,6 +3485,21 @@ def cmd_reconcile(args):
         entry = next((m for m in rep.get("misplaced_files", []) if m.get("id") == _id), None)
         if not entry:
             conn.close(); sys.exit(f"id {_id} is not a reported misplaced file — re-run reconcile.")
+        # Re-query the live registry row and verify it still matches the snapshot the
+        # report was computed from. If the row changed since the dry-run (path/para
+        # edited, file re-scanned), the report is stale — skip and tell the user to
+        # re-run reconcile rather than acting on outdated data.
+        live = conn.execute(
+            "SELECT current_path, para_subfolder FROM files WHERE id=?", (_id,)).fetchone()
+        if live is None:
+            conn.close(); sys.exit(f"id {_id} no longer exists in the registry — re-run reconcile.")
+        live_cp = live["current_path"] or ""
+        live_para = live["para_subfolder"] or ""
+        if (live_cp != (entry.get("row_current_path") or "") or
+                live_para != (entry.get("row_para") or "")):
+            conn.close()
+            sys.exit(f"id {_id}'s registry row changed since the report was generated "
+                     f"(current_path/para no longer match) — re-run reconcile, then decide.")
         fix_from = Path(entry["fix_from"]); fix_to = Path(entry["fix_to"])
         if _act == "restore":
             if not fix_from.exists():
@@ -2881,22 +3514,35 @@ def cmd_reconcile(args):
             return
         # accept: keep the file where it is; update the registry (current_path + para) to match
         actual = entry["fix_from"]
+        resolve_error = False
         try:
             new_para = str(Path(actual).resolve().parent.relative_to(root.resolve()))
         except Exception:
             new_para = ""
+            resolve_error = True
         if new_para == ".":
             new_para = ""   # file sits directly at root — no subfolder
-        # An 'organized' row with an empty para self-flags forever (reconcile reports
-        # 'organized_without_destination' every run). A root-level accepted file isn't
-        # really organized into the taxonomy, so send it back to 'pending' for
-        # reclassification rather than leaving it in a permanent flag loop.
-        new_status = "organized" if new_para else "pending"
+        # Validate the recomputed destination's FIRST segment is an active grouping. A
+        # file found in Archive/.git/etc. is outside the taxonomy: recording such a path
+        # as 'organized' causes a re-flag loop every run. Send those to 'pending' instead.
+        first_seg = new_para.split("/")[0] if new_para else ""
+        in_tree = bool(new_para) and first_seg in _active_groupings()
+        if resolve_error:
+            # A genuine resolve failure (couldn't compute the path) is NOT the same as a
+            # correctly-placed file outside the tree — don't silently downgrade; bail.
+            conn.close()
+            sys.exit(f"could not resolve id {_id}'s location relative to the root "
+                     f"({actual}) — re-run reconcile.")
+        # An 'organized' row with an empty/non-grouping para self-flags forever
+        # (reconcile reports it every run). Only mark 'organized' when the file truly
+        # lands inside an active grouping; otherwise 'pending' for reclassification.
+        new_status = "organized" if in_tree else "pending"
         conn.execute(
             "UPDATE files SET current_path=?, para_subfolder=?, status=?, processed_at=? WHERE id=?",
             (actual, new_para, new_status, now, _id))
         conn.commit(); conn.close(); export_csv()
-        print(f"Accepted id {_id}'s location: {actual}  (registry updated → status={new_status}; file not moved)")
+        note = "" if in_tree else "  (outside the active groupings → pending, not organized)"
+        print(f"Accepted id {_id}'s location: {actual}  (registry updated → status={new_status}; file not moved){note}")
         return
 
     apply = getattr(args, "apply", False)
@@ -2930,29 +3576,51 @@ def cmd_reconcile(args):
             report["misplaced_files"].append(
                 {"id": row["id"], "filename": Path(cp).name, "issue": "para_mismatch",
                  "fix_from": cp, "fix_to": os.path.join(expected_dir, Path(cp).name),
-                 "para_subfolder": para, "suggestion": _relocate_suggestion(cp, root)})
+                 "para_subfolder": para, "suggestion": _relocate_suggestion(cp, root),
+                 # snapshot of the registry row this entry was computed from — used to
+                 # detect a stale report before acting on it.
+                 "row_current_path": cp, "row_para": row["para_subfolder"] or ""})
 
     # Resolve rows whose recorded file is missing: relocated outside the tool (the common
     # "structure got ruined" case — a file dragged elsewhere in Finder), or genuinely gone?
     if missing_rows:
+        # Build a name->paths index, but PRUNE external/atomic/dot/staging subtrees while
+        # walking (mirror _coverage_gaps' os.walk approach) so the resolver can never pull
+        # a file out of a shared/external folder and propose relocating a tool-managed row
+        # into it. rglob would descend into node_modules/.git/venvs/shared mounts.
+        locked_atomic = _locked_atomic_names(root)
         index = {}
-        for p in root.rglob("*"):
-            if p.is_file():
-                index.setdefault(p.name, []).append(p)
+        for cur, subdirs, files in os.walk(root):
+            cp_dir = Path(cur)
+            subdirs[:] = [d for d in subdirs
+                          if not d.startswith((".", "_", "x"))
+                          and d not in locked_atomic
+                          and not _atomic_marker(cp_dir / d)
+                          and not _is_external(cp_dir / d)]
+            for fn in files:
+                index.setdefault(fn, []).append(cp_dir / fn)
         for row in missing_rows:
             cp = row["current_path"]
             base = Path(cp).name
             cands = [p for p in index.get(base, [])
                      if os.path.normpath(str(p)) != os.path.normpath(cp)]
             if row["file_size"]:                       # disambiguate same-named files by size
-                sized = [p for p in cands if p.stat().st_size == row["file_size"]]
+                sized = []
+                for p in cands:
+                    try:
+                        if p.stat().st_size == row["file_size"]:
+                            sized.append(p)
+                    except OSError:
+                        continue   # un-stattable (permission-denied / cloud placeholder) — skip
                 if sized:
                     cands = sized
             if cands:
                 report["misplaced_files"].append(
                     {"id": row["id"], "filename": base, "issue": "relocated_outside_tool",
                      "fix_from": str(cands[0]), "fix_to": cp,
-                     "suggestion": _relocate_suggestion(str(cands[0]), root)})
+                     "suggestion": _relocate_suggestion(str(cands[0]), root),
+                     # snapshot of the registry row — fix_to IS the recorded current_path.
+                     "row_current_path": cp, "row_para": row["para_subfolder"] or ""})
             else:
                 report["bad_registry_rows"].append(
                     {"id": row["id"], "issue": "missing_on_disk", "current_path": cp,
@@ -2981,7 +3649,7 @@ def cmd_reconcile(args):
     yaml_text, struct_rules, semantic_only = _emit_organize_yaml(root)
     yaml_path = root / ".organizer" / "organize-rules.yaml"
     yaml_path.parent.mkdir(parents=True, exist_ok=True)
-    yaml_path.write_text(yaml_text)
+    _atomic_write(yaml_path, yaml_text)
 
     # Apply: move each misplaced file (para-mismatch or relocated) into its correct place
     if apply:
@@ -3008,7 +3676,7 @@ def cmd_reconcile(args):
     conn.close()
 
     report_path = root / ".organizer" / "reconcile-report.json"
-    report_path.write_text(json.dumps(report, indent=2))
+    _atomic_write(report_path, json.dumps(report, indent=2))
     n_mis, n_bad, n_man = (len(report["misplaced_files"]), len(report["bad_registry_rows"]),
                            len(report["mangled_folders"]))
     print(f"reconcile — {'APPLIED fixes' if apply else 'DRY-RUN (report only)'}")
@@ -3159,14 +3827,14 @@ def _locked_atomic_names(root: "Path | None" = None) -> set:
     locked=true) per entities.json — folders scan/bootstrap/coverage treat as a
     single opaque leaf, never descending into them. Single source for the set."""
     return {name for name, m in _read_entities(root).items()
-            if isinstance(m, dict) and (m.get("locked") or m.get("entity_type") == "atomic")}
+            if isinstance(m, dict) and (m.get("locked") is True or m.get("entity_type") == "atomic")}
 
 
 def _write_entities(root: Path, data: dict) -> None:
     """Persist entity metadata. Used by the viewer/bootstrap write-back."""
     p = Path(root) / ".organizer" / "entities.json"
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    _atomic_write(p, json.dumps(data, ensure_ascii=False, indent=2))
 
 
 def _signal_from_description(desc: str, folder: str) -> str:
@@ -3297,11 +3965,21 @@ def _aggregate_rules(root: "Path") -> list:
     except Exception:
         pass
 
+    def _prefix_usage(area: str) -> int:
+        # Files routed to the area itself OR anywhere beneath it.
+        return sum(c for d, c in usage.items() if d == area or d.startswith(area + "/"))
+
     out = []
     for name, ent in agg.items():
         dests = {o["dest"] for o in ent["occurrences"]}
-        ucount = sum(usage.get(d, 0) for d in dests)
         meta = entities_meta.get(name, {})
+        # Area entities count usage as a PREFIX-SUM (everything routed under the area),
+        # consistent with the synthetic-area card below; non-area entities count the
+        # files routed to their exact destination(s).
+        if name.upper() in groupings:
+            ucount = _prefix_usage(name)
+        else:
+            ucount = sum(usage.get(d, 0) for d in dests)
         proj = projects.get(name, {})
         has_tag = bool(proj.get("filename_tag"))
         explicit = meta.get("entity_type")
@@ -3313,7 +3991,7 @@ def _aggregate_rules(root: "Path") -> list:
         ent.update({
             "entity_type": etype,
             "type_inferred": inferred,
-            "locked": bool(meta.get("locked", False)),
+            "locked": meta.get("locked") is True,
             "aliases": meta.get("aliases", []),
             "relation": meta.get("relation"),
             "policy": meta.get("policy"),
@@ -3331,11 +4009,11 @@ def _aggregate_rules(root: "Path") -> list:
     for name, meta in entities_meta.items():
         if name in agg:
             continue
-        if meta.get("entity_type") == "atomic" or meta.get("locked"):
+        if meta.get("entity_type") == "atomic" or meta.get("locked") is True:
             out.append({
                 "entity": name, "occurrences": [],
                 "entity_type": meta.get("entity_type", "atomic"),
-                "type_inferred": False, "locked": bool(meta.get("locked", True)),
+                "type_inferred": False, "locked": meta.get("locked", True) is True,
                 "aliases": meta.get("aliases", []), "relation": meta.get("relation"),
                 "policy": meta.get("policy"), "notes": meta.get("notes"),
                 "review": meta.get("review"),
@@ -3355,13 +4033,13 @@ def _aggregate_rules(root: "Path") -> list:
                     e["type_inferred"] = False
             continue
         m = entities_meta.get(area, {})
-        area_usage = sum(c for d, c in usage.items() if d == area or d.startswith(area + "/"))
+        area_usage = _prefix_usage(area)
         out.append({
             "entity": area,
             "occurrences": [{"parent": "", "folderName": area, "dest": area,
                              "description": "", "signal": "", "rules_file": ".tidy-rules.json"}],
             "entity_type": "area", "type_inferred": False,
-            "locked": bool(m.get("locked", False)),
+            "locked": m.get("locked") is True,
             "aliases": m.get("aliases", []), "relation": m.get("relation"),
             "policy": m.get("policy"), "notes": m.get("notes"),
             "review": m.get("review"),
@@ -3457,6 +4135,9 @@ def _coverage_gaps(root: Path, dest_set: set) -> list:
     groupings = _active_groupings()
     locked_atomic = _locked_atomic_names(root)
     skip = {".organizer", "logseq-journals", "Archive", "_Inbox"}
+    # Normalise destinations (forward-slash, case-folded) so a real folder isn't
+    # reported as a gap merely because of separator/case differences vs the rule dest.
+    norm_dest_set = {str(d).replace(os.sep, "/").strip("/").casefold() for d in dest_set}
     for top in sorted(p for p in root.iterdir() if p.is_dir()):
         if top.name in skip or top.name.startswith("x") or top.name not in groupings:
             continue
@@ -3475,7 +4156,7 @@ def _coverage_gaps(root: Path, dest_set: set) -> list:
                 rel = str(cp.relative_to(root))
             except Exception:
                 continue
-            if rel in dest_set:
+            if rel.replace(os.sep, "/").strip("/").casefold() in norm_dest_set:
                 continue
             try:
                 has_files = any(f.is_file() and not should_skip(f) for f in cp.iterdir())
@@ -3526,7 +4207,7 @@ def _edit_rule_across_occurrences(root: Path, entity: str, occurrences: list,
                 if new_description is not None:
                     leaf = r["folderName"].split("/")[-1]
                     desc = new_description.strip()
-                    if not desc.endswith(f"in {leaf}"):
+                    if not desc.endswith(f" in {leaf}"):
                         desc = f"{desc} in {leaf}"
                     r["description"] = desc
                     touched = True
@@ -3536,7 +4217,7 @@ def _edit_rule_across_occurrences(root: Path, entity: str, occurrences: list,
                 if fn not in seen:
                     leaf = fn.split("/")[-1]
                     desc = new_description.strip()
-                    if not desc.endswith(f"in {leaf}"):
+                    if not desc.endswith(f" in {leaf}"):
                         desc = f"{desc} in {leaf}"
                     new_rules.append({"folderName": fn, "description": desc})
                     touched = True
@@ -3546,7 +4227,7 @@ def _edit_rule_across_occurrences(root: Path, entity: str, occurrences: list,
             else:
                 data = new_rules
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+            _atomic_write(path, json.dumps(data, indent=2, ensure_ascii=False))
             changed += 1
     return changed
 
@@ -3556,37 +4237,70 @@ def _rename_entity(root: Path, entity: str, occurrences: list, new_name: str,
     """Rename an entity (rule folderName leaf) across all its occurrences, and rename
     the on-disk folder + update the registry. dry-run unless apply=True."""
     plan, did = [], {"rules": 0, "folders": 0, "rows": 0}
-    conn = get_db() if apply else None
+    # Build the per-occurrence plan first (dry-run is just this).
+    for occ in occurrences:
+        old_dest = occ["dest"]
+        parent = occ["parent"]
+        new_dest = (f"{parent}/{new_name}" if parent else new_name).strip("/")
+        plan.append({"from": old_dest, "to": new_dest, "rules_file": occ["rules_file"],
+                     "folderName": occ["folderName"]})
+    if not apply:
+        return {"entity": entity, "new_name": new_name, "apply": apply, "plan": plan,
+                "applied": did}
+
+    # PRE-SCAN: refuse the whole rename if ANY target already exists on disk or in the
+    # registry, before mutating anything (no partial renames, no collisions).
+    conn = get_db()
     try:
-        for occ in occurrences:
-            old_dest = occ["dest"]
-            parent = occ["parent"]
-            new_dest = (f"{parent}/{new_name}" if parent else new_name).strip("/")
-            plan.append({"from": old_dest, "to": new_dest, "rules_file": occ["rules_file"]})
-            if not apply:
-                continue
+        for step in plan:
+            new_dest = step["to"]
+            dst = root / new_dest
+            if dst.exists():
+                return {"entity": entity, "new_name": new_name, "apply": apply,
+                        "plan": plan, "applied": did,
+                        "error": f"target already exists on disk: {dst} — aborted (no changes made)"}
+            clash = conn.execute(
+                "SELECT COUNT(*) FROM files WHERE para_subfolder = ? OR para_subfolder LIKE ?",
+                (new_dest, new_dest + "/%")).fetchone()[0]
+            if clash:
+                return {"entity": entity, "new_name": new_name, "apply": apply,
+                        "plan": plan, "applied": did,
+                        "error": f"target destination already in registry: {new_dest} "
+                                 f"({clash} row(s)) — aborted (no changes made)"}
+
+        for step in plan:
+            old_dest, new_dest = step["from"], step["to"]
+            rules_file, folder_name = step["rules_file"], step["folderName"]
             # rule rewrite
-            rf = root / occ["rules_file"]
+            rf = root / rules_file
             if rf.exists():
                 try:
                     data = json.loads(rf.read_text())
                     rules = data.get("rules", []) if isinstance(data, dict) else data
                     for r in rules:
-                        if isinstance(r, dict) and r.get("folderName") == occ["folderName"]:
+                        if isinstance(r, dict) and r.get("folderName") == folder_name:
                             r["folderName"] = new_name
                             d = r.get("description", "")
-                            old_leaf = occ["folderName"].split("/")[-1]
-                            if d.endswith(f"in {old_leaf}"):
-                                r["description"] = d[: -len(f"in {old_leaf}")] + f"in {new_name}"
+                            old_leaf = folder_name.split("/")[-1]
+                            if d.endswith(f" in {old_leaf}"):
+                                r["description"] = d[: -len(f" in {old_leaf}")] + f" in {new_name}"
                             did["rules"] += 1
                     if isinstance(data, dict):
                         data["rules"] = rules
-                    rf.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+                    _atomic_write(rf, json.dumps(data, indent=2, ensure_ascii=False))
                 except Exception:
                     pass
-            # folder move on disk
+            # folder move on disk — if the destination already exists (a collision the
+            # pre-scan can't catch if it appeared mid-run), ABORT this occurrence: do
+            # NOT rewrite the registry to point at a folder files were never moved into.
             src, dst = root / old_dest, root / new_dest
-            if src.exists() and not dst.exists():
+            if src.exists():
+                if dst.exists():
+                    conn.rollback(); conn.close()
+                    return {"entity": entity, "new_name": new_name, "apply": apply,
+                            "plan": plan, "applied": did,
+                            "error": f"collision: {dst} appeared before the move — "
+                                     f"aborted and rolled back (no changes committed)"}
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(src), str(dst))
                 did["folders"] += 1
@@ -3609,23 +4323,72 @@ def _rename_entity(root: Path, entity: str, occurrences: list, new_name: str,
                 else:
                     continue
                 cp = row["current_path"] or ""
-                new_cp = (dst_str + cp[len(src_str):]) if cp.startswith(src_str) else cp
+                # Only rewrite current_path when it is exactly src or a child of src
+                # (boundary-anchored), so a sibling sharing the prefix — "WORK/Acme"
+                # vs "WORK/Acme Corp" — is never corrupted.
+                if cp == src_str or cp.startswith(src_str + os.sep):
+                    new_cp = dst_str + cp[len(src_str):]
+                else:
+                    new_cp = cp
                 conn.execute(
                     "UPDATE files SET para_subfolder=?, current_path=? WHERE id=?",
                     (new_para, new_cp, row["id"]))
                 did["rows"] += 1
-            conn.commit()
+        # Commit once, atomically, after ALL occurrences succeed.
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return {"entity": entity, "new_name": new_name, "apply": apply, "plan": plan,
+                "applied": did, "error": f"rename failed, rolled back: {e}"}
     finally:
-        if conn is not None:
+        try:
             conn.close()
+        except Exception:
+            pass
     return {"entity": entity, "new_name": new_name, "apply": apply, "plan": plan, "applied": did}
 
 
 def _merge_entities(root: Path, src_entity: dict, dst_name: str) -> dict:
     """Fold a (misspelled/duplicate) entity into another: add the source name + its
     aliases as aliases of the destination, then delete the source's routing rules so
-    future files route to the destination. Existing on-disk files are reported as a
-    follow-up move plan (not moved here)."""
+    future files route to the destination. REFUSED (no-op, returns an error) while the
+    source still holds files on disk or registry rows route to it — deleting its rules
+    then would orphan those files; the user must reconcile/promote them first."""
+    # SAFETY: deleting the source's rules without moving its on-disk files would orphan
+    # those files (no rule routes into the source folder any more, yet the files still
+    # sit there). Refuse the merge while any source occurrence still holds files on disk
+    # OR still has registry rows routed to it — the user must reconcile/promote first.
+    occ_dests = [o["dest"] for o in src_entity["occurrences"]]
+    holding = []
+    for dest in occ_dests:
+        folder = root / dest
+        try:
+            if folder.is_dir() and any(f.is_file() for f in folder.rglob("*")):
+                holding.append(dest)
+                continue
+        except OSError:
+            holding.append(dest)   # unreadable → treat as holding (refuse safely)
+            continue
+    routed = 0
+    if occ_dests:
+        try:
+            conn = get_db()
+            for dest in occ_dests:
+                routed += conn.execute(
+                    "SELECT COUNT(*) FROM files WHERE para_subfolder = ? OR para_subfolder LIKE ?",
+                    (dest, dest + "/%")).fetchone()[0]
+            conn.close()
+        except Exception:
+            pass
+    if holding or routed:
+        return {"merged": None, "into": dst_name, "error": (
+            f"REFUSED merge of '{src_entity['entity']}' into '{dst_name}': source still "
+            f"holds files"
+            + (f" on disk ({', '.join(holding)})" if holding else "")
+            + (f" and {routed} registry row(s) route to it" if routed else "")
+            + ". Reconcile or promote those files first, then merge.")}
+
     ents = _read_entities(root)
     dst = ents.setdefault(dst_name, {})
     aliases = set(dst.get("aliases", []))
@@ -3637,10 +4400,9 @@ def _merge_entities(root: Path, src_entity: dict, dst_name: str) -> dict:
     _write_entities(root, ents)
     deleted = _edit_rule_across_occurrences(root, src_entity["entity"],
                                             src_entity["occurrences"], delete=True)
-    move_plan = [{"from": o["dest"], "to_under": dst_name} for o in src_entity["occurrences"]]
     return {"merged": src_entity["entity"], "into": dst_name, "rules_deleted": deleted,
-            "alias_added": True, "file_move_plan": move_plan,
-            "note": "Future routing folds in; move existing files via reconcile if desired."}
+            "alias_added": True,
+            "note": "Future routing folds in (source held no files; safe to drop rules)."}
 
 
 def _apply_area_changes(root: Path, add: list, rename: list, remove: list) -> dict:
@@ -3655,6 +4417,35 @@ def _apply_area_changes(root: Path, add: list, rename: list, remove: list) -> di
             cfg = json.loads(cfg_path.read_text())
         except Exception:
             cfg = {}
+
+    def _area_has_files(au: str) -> bool:
+        """True if the on-disk folder for area `au` has any contents. Unreadable
+        (permission/cloud) folders are treated as HAS-contents so removal/rename is
+        refused safely rather than proceeding on an unverifiable empty assumption."""
+        folder = root / au
+        if not folder.exists():
+            return False
+        try:
+            return any(folder.iterdir())
+        except OSError:
+            return True
+
+    def _registry_rows_under(au: str) -> int:
+        try:
+            conn = get_db()
+            n = conn.execute(
+                "SELECT COUNT(*) FROM files WHERE para_subfolder = ? OR para_subfolder LIKE ?",
+                (au, au + "/%")).fetchone()[0]
+            conn.close()
+            return n
+        except Exception:
+            return 0
+
+    # CONFIG-FREEZING CAVEAT: the very first area edit persists the *current* derived
+    # _active_groupings() set into config.json "areas". Only the keys the user actually
+    # changed are mutated below, but writing the "areas" list at all freezes the set
+    # (subsequent template changes won't flow through). This is intentional: an explicit
+    # area edit is the user taking ownership of the set.
     areas = [a.upper() for a in (cfg.get("areas") or sorted(_active_groupings()))]
     notes = []
     for a in add or []:
@@ -3664,26 +4455,36 @@ def _apply_area_changes(root: Path, add: list, rename: list, remove: list) -> di
             notes.append(f"added area {au}")
     for r in rename or []:
         old, new = str(r.get("old", "")).upper(), str(r.get("new", "")).upper()
-        if old in areas and new:
-            areas[areas.index(old)] = new
-            notes.append(f"renamed area {old} -> {new} (on-disk folder rename is a separate structural step)")
+        if old not in areas or not new:
+            continue
+        if new in areas:
+            notes.append(f"REFUSED rename {old} -> {new}: target area name already exists")
+            continue
+        # Like remove, refuse the rename while files/rules/the OLD folder still exist
+        # under the old name — the config would then point at a name with no folder
+        # while real files remain under the old folder (orphaning them).
+        if _area_has_files(old):
+            notes.append(f"REFUSED rename {old} -> {new}: old folder still has contents "
+                         f"(move/reconcile its files first)")
+            continue
+        rows = _registry_rows_under(old)
+        if rows:
+            notes.append(f"REFUSED rename {old} -> {new}: {rows} registry row(s) still route under {old}")
+            continue
+        if _has_rules(root / old, root):
+            notes.append(f"REFUSED rename {old} -> {new}: old folder still has a .tidy-rules.json")
+            continue
+        areas[areas.index(old)] = new
+        notes.append(f"renamed area {old} -> {new} (on-disk folder rename is a separate structural step)")
     for a in remove or []:
         au = str(a).upper()
-        folder = root / au
-        if folder.exists() and any(folder.iterdir()):
+        if _area_has_files(au):
             notes.append(f"REFUSED remove {au}: folder still has contents")
             continue
         # Also refuse while the registry still routes files under the area, even if
         # the on-disk folder is empty/absent (e.g. files classified but not yet
         # executed) — removing the area would strand those rows with a dead destination.
-        try:
-            conn = get_db()
-            n = conn.execute(
-                "SELECT COUNT(*) FROM files WHERE para_subfolder = ? OR para_subfolder LIKE ?",
-                (au, au + "/%")).fetchone()[0]
-            conn.close()
-        except Exception:
-            n = 0
+        n = _registry_rows_under(au)
         if n:
             notes.append(f"REFUSED remove {au}: {n} registry row(s) still route under it")
             continue
@@ -3692,7 +4493,7 @@ def _apply_area_changes(root: Path, add: list, rename: list, remove: list) -> di
             notes.append(f"removed area {au}")
     cfg["areas"] = areas
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False))
+    _atomic_write(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False))
     return {"areas": areas, "notes": notes}
 
 
@@ -3826,8 +4627,8 @@ function renderAreas(){
    c.innerHTML=`${esc(a)} <button title="rename" onclick="renameArea('${jsq(a)}')">✎</button><button title="remove" onclick="removeArea('${jsq(a)}')">✕</button>`;el.appendChild(c);});
  const add=document.createElement('button');add.className='btn sm ghost';add.textContent='+ area';add.onclick=addArea;el.appendChild(add);
 }
-function addArea(){const n=prompt('New area name (will be ALL-CAPS):');if(n){changes.areas.add.push(n.toUpperCase());DATA.areas.push(n.toUpperCase());renderAreas();markDirty();}}
-function renameArea(a){const n=prompt('Rename '+a+' to:',a);if(n){changes.areas.rename.push({old:a,new:n.toUpperCase()});const i=DATA.areas.indexOf(a);DATA.areas[i]=n.toUpperCase();renderAreas();markDirty();}}
+function addArea(){const n=prompt('New area name (will be ALL-CAPS):');if(n){const u=n.toUpperCase();if(DATA.areas.indexOf(u)>=0)return;changes.areas.add.push(u);DATA.areas.push(u);renderAreas();markDirty();}}
+function renameArea(a){const n=prompt('Rename '+a+' to:',a);if(n){const i=DATA.areas.indexOf(a);if(i<0)return;changes.areas.rename.push({old:a,new:n.toUpperCase()});DATA.areas[i]=n.toUpperCase();renderAreas();markDirty();}}
 function removeArea(a){if(confirm('Remove area '+a+'? (refused if it still has files)')){changes.areas.remove.push(a);DATA.areas=DATA.areas.filter(x=>x!=a);renderAreas();markDirty();}}
 
 let selected=new Set();
@@ -3851,8 +4652,8 @@ function card(e){
   </div>
   ${occ}
   ${conf.length?`<div class="conflict">⚠ overlaps: ${conf.map(c=>esc(c.with)+' ['+c.shared.join(',')+']').join('; ')}</div>`:''}
-  <label class="sub">signal (applies to all ${e.occurrences.length} folder(s))</label>
-  <textarea onchange="signalEdit('${jsq(e.entity)}',this.value)">${esc(e.occurrences[0]?.signal||'')}</textarea>
+  ${e.occurrences.length?`<label class="sub">signal (applies to all ${e.occurrences.length} folder(s))</label>
+  <textarea onchange="signalEdit('${jsq(e.entity)}',this.value)">${esc(e.occurrences[0]?.signal||'')}</textarea>`:''}
   <div class="row">
    <button class="btn sm ghost" onclick="planMove('${jsq(e.entity)}')" title="dry-run a move up/down a level">move a level…</button>
    <button class="btn sm ghost" onclick="renameEntity('${jsq(e.entity)}')" title="rename this entity (rule + folder + registry)">rename</button>
@@ -3883,14 +4684,14 @@ function signalEdit(e,v){changes.rule_edits[e]={entity:e,description:v};markDirt
 function delEntity(e){if(confirm('Delete the routing rule for "'+e+'" everywhere? (files/folders are NOT deleted)')){changes.deletes[e]=true;markDirty();render();}}
 function rethinkEntity(e){changes.rethink[e]=true;markDirty();render();}
 function renameEntity(e){const n=prompt('Rename "'+e+'" to (renames the rule, the on-disk folder, and registry rows):',e);if(n&&n!=e){changes.renames[e]={entity:e,new_name:n};markDirty();render();}}
-function mergeEntity(e){const d=prompt('Fold "'+e+'" INTO which entity? (its name becomes an alias of that one, its rule is removed)');if(d){changes.merges[e]={src:e,dst:d};markDirty();render();}}
+function mergeEntity(e){const d=prompt('Fold "'+e+'" INTO which entity? (its name becomes an alias of that one, its rule is removed)');if(d&&d!==e){changes.merges[e]={src:e,dst:d};markDirty();render();}}
 // bulk
 function toggleSel(e,on){on?selected.add(e):selected.delete(e);renderBulk();}
 function renderBulk(){const b=document.getElementById('bulkbar');if(!selected.size){b.style.display='none';return;}
  b.style.display='flex';b.querySelector('#bulkn').textContent=selected.size+' selected';}
 function bulkType(v){if(!v)return;selected.forEach(e=>metaEdit(e,'entity_type',v));render();}
 function bulkRethink(){selected.forEach(e=>changes.rethink[e]=true);markDirty();render();}
-function bulkDelete(){if(confirm('Delete rules for '+selected.size+' selected entities?')){selected.forEach(e=>changes.deletes[e]=true);markDirty();render();}}
+function bulkDelete(){if(confirm('Delete rules for '+selected.size+' selected entities?')){selected.forEach(e=>changes.deletes[e]=true);selected.clear();markDirty();render();}}
 function bulkClear(){selected.clear();render();}
 async function testFile(){const fn=document.getElementById('testfile').value;if(!fn)return;
  const r=await fetch('/test',{method:'POST',body:JSON.stringify({filename:fn})});const j=await r.json();
@@ -3917,8 +4718,11 @@ function preview(){const l=pendingList();const dlg=document.getElementById('diff
 function payload(extra){return Object.assign({entities:changes.entities,rule_edits:Object.values(changes.rule_edits),deletes:Object.keys(changes.deletes),rethink:Object.keys(changes.rethink),renames:Object.values(changes.renames),merges:Object.values(changes.merges),areas:changes.areas},extra||{});}
 function clearChanges(){changes={entities:{},rule_edits:{},deletes:{},rethink:{},renames:{},merges:{},areas:{add:[],rename:[],remove:[]}};selected.clear();}
 async function apply(){const r=await fetch('/apply',{method:'POST',body:JSON.stringify(payload())});const j=await r.json();
- if(j.data){DATA=j.data;clearChanges();const d=document.getElementById('diff');if(d.open)d.close();render();
-   document.getElementById('dirty').textContent='applied ✓ — kept open';}}
+ if(r.ok&&j.ok){const d=document.getElementById('diff');if(d.open)d.close();
+   if(j.data)DATA=j.data;
+   clearChanges();render();
+   document.getElementById('dirty').textContent='applied ✓ — kept open';}
+ else{document.getElementById('dirty').textContent='apply failed: '+((j&&j.error)||('HTTP '+r.status));}}
 async function save(){const r=await fetch('/save',{method:'POST',body:JSON.stringify(payload())});const j=await r.json();
  document.body.innerHTML='<main style="padding:20px"><h1>Saved</h1><pre>'+esc(JSON.stringify(j.results,null,2))+'</pre><p>You can close this tab.</p></main>';}
 render();
@@ -3967,11 +4771,19 @@ class _RulesHandler(BaseHTTPRequestHandler):
             "cluster_order": _CLUSTER_ORDER,
             "cluster_label": _CLUSTER_LABEL,
         }
-        html = _RULES_VIEWER_HTML.replace("__DATA__", json.dumps(payload))
+        data_js = json.dumps(payload).replace("</", "<\\/")
+        html = _RULES_VIEWER_HTML.replace("__DATA__", data_js)
         self._send(200, html, "text/html; charset=utf-8")
 
+    _MAX_BODY = 8 * 1024 * 1024  # cap request body at 8 MiB
+
     def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            self._send(400, {"error": "bad content-length"}); return
+        if length < 0 or length > self._MAX_BODY:
+            self._send(400, {"error": "body too large"}); return
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
         except json.JSONDecodeError:
@@ -4070,7 +4882,13 @@ class _RulesHandler(BaseHTTPRequestHandler):
                 }
             self._send(200, resp)
             if not keepalive and self.server is not None:
-                threading.Timer(0.5, self.server._stop_event.set).start()
+                # Flush the response to the client BEFORE signalling shutdown, so the
+                # stop event can't race the client's read of the save confirmation.
+                try:
+                    self.wfile.flush()
+                except (OSError, ValueError):
+                    pass
+                self.server._stop_event.set()
             return
 
         self._send(404, {"error": "not found"})
@@ -4171,7 +4989,9 @@ def _detect_atomic_units(root: Path) -> list:
             if marker:
                 try:
                     rel = str(dp.relative_to(root))
-                    fc = sum(1 for _ in dp.rglob("*") if _.is_file())
+                    # Count direct children only — a full rglob would recurse huge
+                    # node_modules/.git trees of a locked unit just to report a count.
+                    fc = sum(1 for c in dp.iterdir() if c.is_file())
                 except (PermissionError, OSError):
                     rel, fc = str(dp), 0
                 out.append({"folder": rel, "name": d, "marker": marker,
@@ -4250,7 +5070,6 @@ def _bootstrap_apply(root: Path, proposed: dict) -> dict:
     .tidy-rules.json (folderName=leaf), and entity metadata into entities.json."""
     root = Path(root)
     res = {"rules_written": 0, "entities": 0}
-    root_resolved = root.resolve()
     for rule in proposed.get("rules", []):
         parent_rel = rule.get("parent", "") or ""
         folder = rule.get("folderName")
@@ -4258,19 +5077,20 @@ def _bootstrap_apply(root: Path, proposed: dict) -> dict:
         if not folder:
             continue
         # Reject path-traversal / absolute parents — the proposals file is Claude-authored
-        # and untrusted; a `../` or absolute `parent` would write a rules file outside the
-        # drive root.
-        if os.path.isabs(parent_rel) or os.path.isabs(folder):
+        # and untrusted; a `../`, absolute, or symlink-escaping `parent` would write a rules
+        # file outside the drive root. _safe_dest validates AND returns the resolved write
+        # target, so the validation target is identical to the write target.
+        if os.path.isabs(folder):
             res.setdefault("rejected", []).append({"parent": parent_rel, "folderName": folder, "why": "absolute path"})
             continue
-        pf_parent = (root / parent_rel).resolve()
-        if pf_parent != root_resolved and root_resolved not in pf_parent.parents:
+        sub = os.path.join(parent_rel, ".tidy-rules.json") if parent_rel else ".tidy-rules.json"
+        pf = _safe_dest(root, sub)
+        if pf is None:
             res.setdefault("rejected", []).append({"parent": parent_rel, "folderName": folder, "why": "escapes root"})
             continue
         leaf = folder.split("/")[-1]
         if desc and not desc.endswith(f"in {leaf}"):
             desc = f"{desc} in {leaf}"
-        pf = (root / parent_rel / ".tidy-rules.json") if parent_rel else (root / ".tidy-rules.json")
         data = {"rules": []}
         if pf.exists():
             try:
@@ -4283,12 +5103,14 @@ def _bootstrap_apply(root: Path, proposed: dict) -> dict:
             existing["description"] = desc or existing.get("description", "")
         else:
             rules.append({"folderName": folder, "description": desc})
+        # Always normalise to {"rules": [...]} on write — a previously bare-list file
+        # would otherwise be rewritten as a bare list, dropping any sibling keys.
         if isinstance(data, dict):
             data["rules"] = rules
         else:
-            data = rules
+            data = {"rules": rules}
         pf.parent.mkdir(parents=True, exist_ok=True)
-        pf.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+        _atomic_write(pf, json.dumps(data, indent=2, ensure_ascii=False))
         res["rules_written"] += 1
     ent = proposed.get("entities") or {}
     if ent:
@@ -4335,7 +5157,11 @@ def cmd_bootstrap(args):
         path = Path(args.apply)
         if not path.exists():
             sys.exit(f"Error: proposals file not found: {path}")
-        proposed = json.loads(path.read_text())
+        try:
+            proposed = json.loads(path.read_text())
+        except (ValueError, OSError) as e:
+            sys.exit(f"Error: could not parse proposals file {path}: {e}. It must be a JSON "
+                     f"object with 'rules'/'entities' keys. See SKILL.md bootstrap step 4 for the shape.")
         if not isinstance(proposed, dict):
             sys.exit(f"Error: proposals file must be a JSON object with 'rules'/'entities' keys, "
                      f"got a {type(proposed).__name__}. See SKILL.md bootstrap step 4 for the shape.")
@@ -4390,7 +5216,7 @@ def main():
     p_scan.add_argument("--limit-gb", default="20", help="Max cumulative GB per batch (default 20)")
 
     p_propose = sub.add_parser("propose")
-    p_propose.add_argument("--limit", default="250")
+    p_propose.add_argument("--limit", type=int, default=250)
     p_propose.add_argument("--no-auto-classify", action="store_true", dest="no_auto_classify",
                            help="Disable the W1 deterministic fast-path; send every file to classification")
     p_propose.add_argument("--auto-classify", action="store_true", dest="auto_classify",
@@ -4432,7 +5258,7 @@ def main():
 
     p_viewer = sub.add_parser("generate-viewer")
     p_viewer.add_argument("--proposals", required=True, help="Path to proposals JSON file")
-    p_viewer.add_argument("--port", default="5002", help="Local port (default 5002)")
+    p_viewer.add_argument("--port", type=int, default=5002, help="Local port (default 5002)")
 
     p_cleanup = sub.add_parser("cleanup")
     p_cleanup.add_argument("path", nargs="?", help="root path")
@@ -4450,7 +5276,7 @@ def main():
 
     p_rv = sub.add_parser("rules-viewer",
                           help="Launch the browser rules viewer/editor (clustered cards, CRUD, area mgmt, test-a-file)")
-    p_rv.add_argument("--port", default="5003", help="Local port (default 5003)")
+    p_rv.add_argument("--port", type=int, default=5003, help="Local port (default 5003)")
     p_rv.add_argument("--no-open", action="store_true", dest="no_open",
                       help="Do not auto-open a browser (for headless testing)")
 
