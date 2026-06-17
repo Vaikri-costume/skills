@@ -97,7 +97,7 @@ Name the file changed and summarise the edit in one line. Example: `FIX (q2_reco
 ```
 STRENGTHEN (added at <file>:<line-range>: "<quoted first 80 chars>")
 ```
-Name the file, the line range where the new text landed, and the first 80 characters of the added text. Example: `STRENGTHEN (added at SKILL.md:147-149: "Note: this list is exhaustive — the executor must treat values outside this set as a contract violation.")`. 
+Name the file, the line range where the new text landed, and the first 80 characters of the added text. Example: `STRENGTHEN (added at SKILL.md:147-149: "Note: this list is exhaustive — the executor must treat values outside this set as a contract violation.")`. (This is the **applied**-STRENGTHEN form. In `--verify-only` mode nothing is applied, so the row instead uses the `would-STRENGTHEN (<file>: <one-line summary>)` form — no line-range or quoted text — per SKILL.md Step 6.) 
 
 To capture the exact `<line-range>`: re-read the file after the edit; quote the first 80 chars of the new text. Approximate anchors (`~line N`) are not acceptable — see ledger-format.md "Exact line numbers in STRENGTHEN".
 
@@ -144,4 +144,4 @@ When grading "did the trace converge," watch the regression trace (should approa
 
 Between rounds, the orchestrator may spot-check that each STRENGTHEN anchor (file + line range) still contains the quoted text. If a previous round's STRENGTHEN was overwritten by a later FIX, the cluster needs re-strengthening.
 
-Step 7's mandatory Step 0 (verify every STRENGTHEN anchor) makes this systematic at end-of-round: re-read the named file at the named line range and confirm the quoted first-80-chars text is present. If any anchor is missing, re-apply to a stable location (one the same round's remaining clusters do not touch — check unaddressed clusters' Target file/line references before deciding where to land).
+Step 7's mandatory anchor-check (entry-order item 2, "verify every STRENGTHEN anchor landed") makes this systematic at end-of-round: re-read the named file at the named line range and confirm the quoted first-80-chars text is present. If any anchor is missing, re-apply to a stable location (one the same round's remaining clusters do not touch — check unaddressed clusters' Target file/line references before deciding where to land), then **hand-edit that ledger row's Address anchor** to the new location (the one in-place ledger edit in the workflow — `append_ledger.py` only appends; preserve the single-line, pipe-safe constraint). See SKILL.md Step 7 item 2.

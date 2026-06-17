@@ -33,16 +33,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
-ADDRESS_KINDS = ("FIX", "STRENGTHEN", "USER-PAUSE", "would-FIX", "would-STRENGTHEN", "would-USER-PAUSE")
-# A data row: | Runtime | Round | Phase | Cluster | Root cause | Address | Flags |
-# Phase is OPTIONAL so 6-column pre-Phase back-compat rows still parse (per recovery-protocol.md
-# "Pre-Phase-column ledgers" — matching ledger_state.py / render_ledger.py, which also accept 6-col).
-# Group 3 (phase) is None on a 6-col row and defaults to TRACE in _round_rows.
-ROW_RE = re.compile(r"^\|\s*([0-9T:\-]+)\s*\|\s*(\d+)\s*\|\s*(?:([A-Z\-]+)\s*\|\s*)?(C\d+)\s*\|(.*)\|(.*)\|(.*)\|\s*$")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ledger_common as lc  # noqa: E402  (single source of truth for the ledger format/vocab/parse)
 
 
 def _reject_unsafe(field_name: str, value: str) -> list[str]:
@@ -66,50 +63,49 @@ def cmd_append(args) -> int:
     errs = []
     for fname, val in (("root-cause", args.root_cause), ("address", args.address), ("flags", args.flags)):
         errs.extend(_reject_unsafe(fname, val))
-    # Address sanity: should start with a known kind (cheap guard against malformed addresses).
-    if not any(args.address.strip().startswith(k) for k in ADDRESS_KINDS):
-        errs.append(f"address should start with one of {ADDRESS_KINDS}: {args.address!r}")
+    # Address sanity: should start with a known kind at a token boundary (cheap guard against malformed addresses).
+    if not lc.address_kind_ok(args.address):
+        errs.append(f"address should start with one of {lc.ADDRESS_KINDS} (at a token boundary): {args.address!r}")
+    # Phase sanity: reject an out-of-set phase (typo guard) — render_ledger.py would silently fallback-color it.
+    if args.phase not in lc.KNOWN_PHASES:
+        errs.append(f"phase should be one of {lc.KNOWN_PHASES}: {args.phase!r}")
+    # Cluster sanity: render_ledger.py requires the Cluster cell match `^C\d+$` and silently drops a row that
+    # doesn't (so a typo like `c1`/`Cluster1` would append fine but vanish from the render + the renderer's
+    # count). Reject it here so the typo fails loudly at write time, matching the renderer's acceptance set.
+    if not lc.CLUSTER_RE.match(args.cluster):
+        errs.append(f"cluster must match ^C\\d+$ (e.g. C1): {args.cluster!r}")
     if errs:
         for e in errs:
             print(f"REJECTED: {e}", file=sys.stderr)
         return 1
 
     row = f"| {args.runtime} | {args.round} | {args.phase} | {args.cluster} | {args.root_cause} | {args.address} | {args.flags} |"
-    text = ledger.read_text()
+    text = ledger.read_text(encoding="utf-8")
     if not text.endswith("\n"):
         text += "\n"
-    ledger.write_text(text + row + "\n")
+    ledger.write_text(text + row + "\n", encoding="utf-8")
     print(json.dumps({"appended": row, "ledger": str(ledger)}, indent=2))
     return 0
 
 
 def _round_rows(ledger: Path, rnd: int) -> list[dict]:
-    rows = []
-    for line in ledger.read_text().splitlines():
-        m = ROW_RE.match(line)
-        if not m:
-            continue
-        if int(m.group(2)) != rnd:
-            continue
-        rows.append({
-            "runtime": m.group(1).strip(),
-            "round": int(m.group(2)),
-            "phase": (m.group(3).strip() if m.group(3) else "TRACE"),
-            "cluster": m.group(4).strip(),
-            "root_cause": m.group(5).strip(),
-            "address": m.group(6).strip(),
-            "flags": [f.strip() for f in m.group(7).split(",") if f.strip()],
-        })
-    return rows
+    return lc.round_rows(ledger.read_text(encoding="utf-8"), rnd)
 
 
 def _tally(rows: list[dict]) -> dict:
     raw_flags = sum(len(r["flags"]) for r in rows)
     clusters = len(rows)
-    fix = sum(1 for r in rows if r["address"].startswith(("FIX", "would-FIX")))
-    strg = sum(1 for r in rows if r["address"].startswith(("STRENGTHEN", "would-STRENGTHEN")))
-    pause = sum(1 for r in rows if r["address"].startswith(("USER-PAUSE", "would-USER-PAUSE")))
-    return {"raw_flags": raw_flags, "clusters": clusters, "fix": fix, "strengthen": strg, "user_pause": pause}
+    counts = {"fix": 0, "strengthen": 0, "user_pause": 0}
+    for r in rows:
+        base = lc.address_base_kind(r["address"])
+        if base == "FIX":
+            counts["fix"] += 1
+        elif base == "STRENGTHEN":
+            counts["strengthen"] += 1
+        elif base == "USER-PAUSE":
+            counts["user_pause"] += 1
+    return {"raw_flags": raw_flags, "clusters": clusters,
+            "fix": counts["fix"], "strengthen": counts["strengthen"], "user_pause": counts["user_pause"]}
 
 
 def cmd_close_round(args) -> int:
@@ -117,14 +113,23 @@ def cmd_close_round(args) -> int:
     if not ledger.is_file():
         print(f"ERROR: ledger not found: {ledger}", file=sys.stderr)
         return 2
-    rows = _round_rows(ledger, args.round)
+    text = ledger.read_text(encoding="utf-8")  # read once (H1): derive rows from this text, no second read
+    rows = lc.round_rows(text, args.round)
     t = _tally(rows)
     comment = (f"<!-- Round {args.round} total: raw flags {t['raw_flags']} — clusters {t['clusters']} — "
                f"addresses: {t['fix']} FIX + {t['strengthen']} STRENGTHEN + {t['user_pause']} USER-PAUSE -->")
-    text = ledger.read_text()
-    if not text.endswith("\n"):
-        text += "\n"
-    ledger.write_text(text + comment + "\n")
+    # Idempotency (review-finding 2): close-round runs "once per round", but a rule-2 mid-addressing resume or an
+    # accidental double-invocation must not append a SECOND summary for this round (a stale duplicate
+    # would mask the clean/not-clean signal ledger_state.py reads). Replace an existing Round-N summary
+    # in place; only append when none exists yet.
+    existing_re = re.compile(rf"^<!--\s*Round\s+{re.escape(str(args.round))}\s+total:.*?-->[ \t]*$", re.MULTILINE)
+    if existing_re.search(text):
+        text = existing_re.sub(lambda _m: comment, text, count=1)
+        ledger.write_text(text, encoding="utf-8")
+    else:
+        if not text.endswith("\n"):
+            text += "\n"
+        ledger.write_text(text + comment + "\n", encoding="utf-8")
     print(json.dumps({"round": args.round, "summary": comment, **t}, indent=2))
     return 0
 
@@ -165,7 +170,7 @@ def main() -> int:
     a = sub.add_parser("append")
     a.add_argument("ledger")
     a.add_argument("--runtime", required=True)
-    a.add_argument("--round", required=True)
+    a.add_argument("--round", type=int, required=True)
     a.add_argument("--phase", default="TRACE")
     a.add_argument("--cluster", required=True)
     a.add_argument("--root-cause", required=True)

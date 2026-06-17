@@ -44,32 +44,45 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ledger_common as lc  # noqa: E402  (single source of truth for the PRE-FLIGHT line format)
+
 ISSUE_RE = re.compile(r"^ISSUE\s+\[", re.MULTILINE)
-PREFLIGHT_RE = re.compile(r"^\s*PRE-FLIGHT\s+.+:\s*\d+\s+lines", re.MULTILINE)
 ABORTED_RE = re.compile(r"^ABORTED\b\s*(.*)$", re.MULTILINE)
 NO_ISSUES_RE = re.compile(r"^No issues found\s*$", re.MULTILINE)
 COUNT_RE = re.compile(r"^No of issues found::\s*(\d+)\s*$", re.MULTILINE)
 
 
 def check(report: str, direction: str | None) -> dict:
-    aborted_m = ABORTED_RE.search(report)
-    aborted = aborted_m is not None
-    aborted_detail = aborted_m.group(0).strip() if aborted_m else None
-
-    preflight_count = len(PREFLIGHT_RE.findall(report))
-    has_preflight = preflight_count > 0
-
-    no_issues = NO_ISSUES_RE.search(report) is not None
-    count_m = COUNT_RE.search(report)
-    declared_count = int(count_m.group(1)) if count_m else (0 if no_issues else None)
-    has_trailing_summary = no_issues or (count_m is not None)
-
     actual_block_count = len(ISSUE_RE.findall(report))
     authoritative_count = actual_block_count
+
+    aborted_m = ABORTED_RE.search(report)
+    # A genuine abort emits NO ISSUE blocks — the agent aborts at the pre-flight gate, before producing issues.
+    # A report that HAS ISSUE blocks but merely QUOTES "ABORTED" (e.g. when tracing skill-tracer on itself, whose
+    # prompt-template.md instructs agents to emit "ABORTED — missing files: ..." — a line a cold agent may quote in
+    # a Target:) is NOT an abort. Treating it as one would discard the real findings and loop forever re-dispatching
+    # a direction that keeps reproducing the quoted line. So require zero ISSUE blocks for a real abort.
+    aborted = aborted_m is not None and actual_block_count == 0
+    aborted_detail = aborted_m.group(0).strip() if aborted else None
+
+    preflight_count = sum(1 for ln in report.splitlines() if lc.PREFLIGHT_RE.match(ln))
+    has_preflight = preflight_count > 0
+
+    # The trailing summary must be the report's LAST non-empty line (prompt-template: "conclude with exactly one
+    # trailing line"). Matching anywhere (search) would let a mid-report narration like "No issues found so far" in
+    # a truncated/garbled report pass as a valid summary; anchor to the tail so a real truncation is still caught.
+    _nonempty = [ln for ln in report.splitlines() if ln.strip()]
+    _last = _nonempty[-1] if _nonempty else ""
+    no_issues = NO_ISSUES_RE.match(_last) is not None
+    count_m = COUNT_RE.match(_last)
+    declared_count = int(count_m.group(1)) if count_m else (0 if no_issues else None)
+    has_trailing_summary = no_issues or (count_m is not None)
 
     # count_mismatch is informational only.
     count_mismatch = (declared_count is not None) and (declared_count != actual_block_count)

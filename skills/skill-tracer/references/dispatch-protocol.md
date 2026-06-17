@@ -37,49 +37,17 @@ python3 ~/.claude/skills/skill-tracer/scripts/stage_cold_prompts.py \
 
 The `--spec` JSON is the only per-round composition work; the stager handles the rest. Exit 0 = all three staged + verified.
 
-### Fallback: inline Bash+Python loop (equivalent, if you prefer not to write a spec file)
-
-Compose all three prompts in one loop and write them in one go:
-
-```bash
-mkdir -p /tmp/skill-tracer-prompts && python3 << 'PYEOF'
-from pathlib import Path
-
-TEMPLATE = (Path.home() / ".claude/skills/skill-tracer/references/prompt-template.md").read_text()
-SKILL_PATH = "<absolute-path-to-target-SKILL.md>"
-SKILL_NAME = "<target-skill-name>"
-RUN_TIMESTAMP = "<RUN_TIMESTAMP>"  # YYYY-MM-DDTHH-MM derived from current invocation's Runtime per "RUN_TIMESTAMP format" above
-
-FILE_LIST = "<one-absolute-path-per-line-from-Step-2-enumeration>"
-GLOSSARY = "<5-15 one-line definitions per Step 3 Glossary precedence procedure, or the literal word 'none'>"
-DISPATCH_SET = ["forward", "backward", "executor"]  # constant — skill-tracer's three cold directions
-
-for direction in DISPATCH_SET:
-    inlined = (Path.home() / f".claude/skills/skill-tracer/references/{direction}.md").read_text()
-    prompt = (TEMPLATE
-        .replace("[DIRECTION]", direction)
-        .replace("[SKILL_NAME]", SKILL_NAME)
-        .replace("[SKILL_PATH]", SKILL_PATH)
-        .replace("[FILE_LIST]", FILE_LIST)
-        .replace("[GLOSSARY]", GLOSSARY)
-        .replace("[INLINED_TRACE_DEFINITION]", inlined))
-    out = Path(f"/tmp/skill-tracer-prompts/{direction}-{RUN_TIMESTAMP}.txt")
-    out.write_text(prompt)
-    print(f"Staged {out.name} ({len(prompt)} chars)")
-PYEOF
-```
-
-Built-in verification: the loop's `print` lines report each file's character count, providing the `ls` cross-check inline (one tool call output covers what would otherwise be: three Write calls + 1 ls call).
+`stage_cold_prompts.py` is the **single** staging mechanism — there is no inline-loop alternative. (An earlier inline Bash+Python loop was removed: it lacked the script's unfilled-slot guard, so it could silently stage a half-filled prompt, and its existence forced every failure/recovery clause to branch on "whichever stager you used." The spec-file write is trivial; the script owning the substitution + RUN_TIMESTAMP derivation + the all-files-present / no-unfilled-slot checks is the one mechanism.)
 
 `<dispatch-set>` is the constant `[forward, backward, executor]` every round, so exactly three files are staged each time (see `references/glossary.md` "`<dispatch-set>`" entry).
 
 ### Failure handling
 
-If one or more prompt files is missing after staging: re-run the Python loop until all are present. Write errors deterministically; a silent miss indicates a path-permission or disk issue and warrants a one-line note to the user before retrying.
+If one or more prompt files is missing after staging — `stage_cold_prompts.py`'s exit-1 `missing` case (the JSON `missing` list is non-empty, a write raised OSError): re-run the stager until all are present. Write errors deterministically; a silent miss indicates a path-permission or disk issue and warrants a one-line note to the user before retrying. (Distinguish from exit-1 *unfilled* — below — by reading the JSON: a non-empty `missing` list is this case, a non-empty `unfilled` list is the next.)
 
-If `stage_cold_prompts.py` exits 1 with an `unfilled` slot list (every file present, but a `[SLOT]` token remained after substitution): a slot value was missing from the spec — do NOT dispatch, since a half-filled prompt would mislead the cold agent. Fill the missing slot and re-run the stager (the `[INLINED_TRACE_DEFINITION]` slot — an unreadable `references/<direction>.md` — is the usual culprit). The `--allow-unfilled` flag exists only for deliberate partial staging and must not be used for a real dispatch.
+If `stage_cold_prompts.py` exits 1 with an `unfilled` slot list (every file present, but a `[SLOT]` token remained after substitution): a slot value was missing from the spec — do NOT dispatch, since a half-filled prompt would mislead the cold agent. Fill the missing slot and re-run the stager (the `[INLINED_TRACE_DEFINITION]` slot — an unreadable `references/<direction>.md` — is the usual culprit). The `--allow-unfilled` flag exists only for deliberate partial staging and must not be used for a real dispatch — so a conforming skill-tracer dispatch never passes it, and the exit-0-with-non-empty-`unfilled` state (reachable only via `--allow-unfilled`) does not arise in this skill; a leftover slot always surfaces as exit 1.
 
-If `stage_cold_prompts.py` exits **2** (usage error — `--template` or `--spec` not found, or the spec is not valid JSON / not a non-empty list of `{label, slots}`): the *invocation* is malformed, not the content. Check that the `--template` and `--spec` paths exist and the spec is a valid JSON array, fix the invocation, and re-run. Do NOT dispatch.
+If `stage_cold_prompts.py` exits **2** (usage error — `--template` or `--spec` not found, the spec is not valid JSON / not a non-empty list, **or a spec *entry* is malformed: a missing `label` or a non-dict `slots`** — `ERROR: each spec entry needs a 'label' and a 'slots' object`): the *invocation* is malformed, not the content. Check that the `--template` and `--spec` paths exist, the spec is a valid JSON array, and every entry has a string `label` and an object `slots`; fix the invocation and re-run. Do NOT dispatch.
 
 Do not abort the round and do not advance to dispatch with a partial set — partial dispatch would issue Agent calls referencing scratchpad files that the agent's `Read` would fail on, producing an `ABORTED — missing files` return from a file that exists on disk but not at the named scratchpad path.
 

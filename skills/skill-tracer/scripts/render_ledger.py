@@ -3,8 +3,9 @@
 
 Pure-stdlib (argparse, collections, html, json, os, pathlib, re, subprocess, sys — no third-party dependencies). Reads
 ~/.claude/skill-tracer-audit-ledger/<skill>.md and writes HTML to a file
-(default: <ledger-path>.html; or to --output path). Prints "Wrote HTML to
-<path>" to stdout on success.
+(default: the ledger path with its `.md` suffix REPLACED by `.html` — e.g.
+`skill-tracer.md` → `skill-tracer.html`, not `…md.html`; or to --output path).
+Prints "Wrote HTML to <path>" to stdout on success.
 
 The rendered page shows:
 - Round-on-round cluster count (visual line chart, ASCII-art style for portability;
@@ -12,8 +13,8 @@ The rendered page shows:
 - Cluster fan-out (one row per cluster with flag IDs visualized as chips)
 - Regression trace (clusters whose Root cause is marked `regression`,
   highlighted in red with a [regression] text badge)
-- Phase swimlane (TRACE only — correctness phase) — Phase column visualized
-  as colored band on each row
+- Phase swimlane (TRACE / REVIEW / SIMPLIFY — each phase a configured color) — Phase
+  column visualized as a colored band on each row
 
 Usage:
     python3 render_ledger.py <ledger-path> [--output <html-path>] [--open]
@@ -37,16 +38,23 @@ from pathlib import Path
 # This renderer is SHARED between skill-tracer and skill-publisher. The only real
 # differences are the phase-color map, the regression-tag patterns, the closed set
 # of valid in-flight action keywords, and the round/run column word — all of which
-# are configurable below. Everything else (table parse, chart, HTML) is identical,
-# so the file is vendored byte-for-byte to skill-publisher with only the DEFAULT_*
-# values overridden at call time via --config (see skill-publisher's ledger-render
-# config). Auto-detection of the "Round" vs "Run" column word means most callers
-# don't even need --config for the column.
+# are configurable below. The parse/chart/HTML LOGIC is identical, so the file is
+# vendored byte-for-byte to skill-publisher with only the DEFAULT_* values overridden
+# at call time via --config (see skill-publisher's ledger-render config). Auto-detection
+# of the "Round" vs "Run" column word means most callers don't even need --config for it.
+# CAVEAT (review-finding 7): only that config is data-driven — user-facing PROSE (docstring, the
+# not-found error message) stays tracer-branded, so the vendored publisher copy ships
+# tracer-worded help/errors. That is cosmetic (the rendered ledger HTML is correct), not
+# a behavioral divergence; "shared + config-driven" covers behavior, not help text.
 
-# skill-tracer is correctness-only — only the TRACE phase exists. Publisher passes
-# its own {POLISH,AUDIT,TIER,PACKAGE,PR} map via --config.
+# skill-tracer phases: TRACE (cold-trace clusters) and REVIEW (round-1 code-review pass,
+# SKILL.md Step 2.5). TRACE must stay FIRST — a phaseless back-compat row defaults to
+# next(iter(PHASE_COLORS)) (see parse_ledger). Publisher passes its own
+# {POLISH,AUDIT,TIER,PACKAGE,PR} map via --config.
 DEFAULT_PHASE_COLORS = {
     "TRACE": "#e6f3ff",
+    "REVIEW": "#fff0e6",
+    "SIMPLIFY": "#eef7e6",
 }
 # Root-cause regression markers (checked against the Root cause column ONLY — per
 # address-decision.md the orchestrator prefixes a regression cluster's Root cause
@@ -93,9 +101,14 @@ def parse_ledger(text):
         if m:
             raw = m.group(1).strip()
             result["in_flight"] = raw
-            # Validate: format is `<Runtime> <action> round-N|run-N` with action in closed list
+            # Validate: format is `<Runtime> <action> round-N|run-N` with action in closed list.
             parts = raw.split()
-            if len(parts) >= 2 and parts[1] not in VALID_ACTIONS:
+            if len(parts) < 2:
+                # review-finding 15: a truncated marker (e.g. just a runtime, no action) must NOT render as
+                # valid — ledger_state.py reports action_valid:false for it, so the HTML audit
+                # view should flag it too rather than show it clean.
+                result["in_flight"] = f"{raw}  ⚠ INCOMPLETE MARKER (expected '<Runtime> <action> round-N')"
+            elif parts[1] not in VALID_ACTIONS:
                 result["in_flight"] = f"{raw}  ⚠ INVALID ACTION '{parts[1]}' (valid: {sorted(VALID_ACTIONS)})"
             continue
 
@@ -123,6 +136,12 @@ def parse_ledger(text):
         # Data row
         if in_table and line.startswith("|") and line.endswith("|"):
             cells = [c.strip() for c in line.strip("|").split("|")]
+            # 6-col pre-Phase back-compat row under a 7-col header: insert the default Phase so this
+            # renderer accepts it exactly as ledger_common.parse_row does (Phase optional → default),
+            # rather than dropping it on a strict column-count mismatch. Keeps the renderer's accepted
+            # row set aligned with ledger_state.py / append_ledger.py on a mid-migration ledger.
+            if "Phase" in column_names and len(cells) == len(column_names) - 1:
+                cells.insert(column_names.index("Phase"), next(iter(PHASE_COLORS), "TRACE"))
             if len(cells) != len(column_names):
                 # Skip malformed rows; could be content with embedded |
                 continue
@@ -130,6 +149,13 @@ def parse_ledger(text):
             # Normalize the round/run column into a canonical "_round" key so the
             # rest of the renderer is column-word-agnostic (tracer "Round" / publisher "Run").
             row["_round"] = row.get("Round", row.get("Run", ""))
+            # Require a REAL data row — a `C<n>` Cluster cell and an integer round — so the
+            # renderer's acceptance set matches ledger_state.py / append_ledger.py (which require
+            # `C\d+`). A non-`C` cluster or a blank/non-numeric round is a malformed or hand-edited
+            # line; counting it would invent a phantom round (e.g. a blank round → round 0) and make
+            # the rendered cluster count disagree with the auditability/clean-signal parsers.
+            if not re.match(r"^C\d+$", row.get("Cluster", "")) or not str(row["_round"]).strip().isdigit():
+                continue
             # Normalize: add Phase if column absent (pre-migration ledgers). Default to
             # the first configured phase (TRACE for tracer; first of publisher's set).
             if "Phase" not in row:
@@ -167,10 +193,13 @@ def ascii_line_chart(per_round_counts):
         threshold = max_count * h / height
         row = ""
         for c in counts:
-            row += "█ " if c >= threshold else "  "
+            row += "█  " if c >= threshold else "   "
         lines.append(f"{int(threshold):4d} | {row}")
-    lines.append("     +" + "-" * (len(counts) * 2 + 1))
-    lines.append("     " + "".join(f"R{r} " if r < 10 else f"R{r}" for r in rounds))
+    lines.append("     +" + "-" * (len(counts) * 3 + 1))
+    # review-finding 3: 3-char columns + left-aligned round numbers (no "R" prefix) so multi-digit rounds
+    # (R>=10, exactly when the 10-round gate fires) stay aligned under their bars and don't run
+    # together ("R10R11"). The 7-space lead matches the "{:4d} | " bar-row prefix width.
+    lines.append("       " + "".join(f"{r:<3}" for r in rounds))
     return "\n".join(lines)
 
 
@@ -373,11 +402,11 @@ def main():
 
     ledger_path = Path(args.ledger_path).expanduser()
     if not ledger_path.is_file():
-        print(f"Error: ledger not found at {ledger_path}\nLedgers are written to ~/.claude/skill-tracer-audit-ledger/<skill-name>.md (tracer) or ~/.claude/skill-publisher-ledger/<skill>.md (publisher) by a run.\nCheck the skill name and ensure at least one round has completed.", file=sys.stderr)
+        print(f"Error: ledger not found at {ledger_path}\nThe ledger is written by a run; check the path and ensure at least one round has completed.", file=sys.stderr)
         sys.exit(1)
 
     try:
-        text = ledger_path.read_text()
+        text = ledger_path.read_text(encoding="utf-8")
     except OSError as e:
         print(f"Error: failed to read ledger at {ledger_path}: {e}", file=sys.stderr)
         sys.exit(2)
@@ -390,12 +419,14 @@ def main():
         ledger = parse_ledger(text)
         html_output = render_html(ledger, ledger_path, round_label=round_label)
     except Exception as e:
-        print(f"Error: failed to parse/render ledger {ledger_path}: {e}", file=sys.stderr)
+        # Include the exception type so a programming bug (KeyError/AttributeError/…) is
+        # distinguishable from a genuinely malformed ledger, rather than masked as "parse/render".
+        print(f"Error: failed to parse/render ledger {ledger_path}: {type(e).__name__}: {e}", file=sys.stderr)
         sys.exit(3)
 
-    output_path = Path(args.output) if args.output else ledger_path.with_suffix(".html")
+    output_path = Path(args.output).expanduser() if args.output else ledger_path.with_suffix(".html")
     try:
-        output_path.write_text(html_output)
+        output_path.write_text(html_output, encoding="utf-8")
     except OSError as e:
         print(f"Error: failed to write HTML to {output_path}: {e}\nCheck output directory permissions and disk space.", file=sys.stderr)
         sys.exit(4)
