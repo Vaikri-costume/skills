@@ -20,6 +20,7 @@ What skill-publisher checks before a skill is release-ready, and how it addresse
 | 4 Tier | MCP-dependency declared (MCP skills only) | skill calling `mcp__<server>__*` declares the required server in README install + `metadata.mcp-server`; non-MCP skills skip |
 | 6 README | Install + sibling sections filled | no remaining placeholder text in README |
 | 7 Version | Version bumped + changelog appended | HISTORY.md has a new entry (unless degraded mode) |
+| 9 PR | Ship tag `<skill>-v<version>` created + pushed | `github_pr.py` returns a `tag` field with no `tag_warning` (best-effort — a `tag_warning` is surfaced, not a ship-blocker) |
 
 A skill is ship-ready when every applicable row passes. Personal-tier skills skip **all** Step-4 rows — including the frontmatter-validity gate — because a personal skill isn't distributed, so the publisher does no ship-time portability/structural/attribution/security/Cowork checking for it (the builder, skill-creator-ccvw, already validated structure at scaffold time). (Note: `portability_lint.py` itself *would* report the registration-correctness checks — name kebab-case + folder-match, reserved-prefix, `SKILL.md` spelling, XML-tag-shaped frontmatter, plan-code-leakage — as failing at every tier including `personal` if run; the publisher simply chooses not to run it for personal. At every **shared** tier those checks block and must pass.)
 

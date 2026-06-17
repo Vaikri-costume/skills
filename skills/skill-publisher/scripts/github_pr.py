@@ -7,6 +7,7 @@ Pure-stdlib (subprocess + argparse + json). Wraps git + the `gh` CLI to:
   3. copy the polished skill into the repo at the right path
   4. commit + push
   5. gh pr create with a structured body
+  6. tag the ship commit <name>-v<version> + push it (best-effort, idempotent)
 
 Safety: never pushes to a default branch; always confirms before push (the
 orchestrator passes --confirmed only after showing the user the diff). --dry-run
@@ -154,9 +155,30 @@ def main():
         if not re.match(r"https?://", pr_url):
             print(json.dumps({"error": f"gh pr create returned no URL", "stdout": pr_out}), file=sys.stderr)
             sys.exit(4)
+
+        # Tag the ship commit so the NEXT ship has a <last-ship-tag> to diff from
+        # (changelog-format.md's `git log <last-ship-tag>..HEAD`). Best-effort: the PR
+        # already succeeded, so a tag hiccup must not flip the overall result — it is
+        # reported via `tag_warning`, never an exit code. Idempotent: skip if the tag
+        # already exists (the exit-5 recovery re-run must not choke). The tag points at
+        # the ship commit; valid for merge-commit upstreams (the commit is preserved on
+        # the default branch) — see github-pr-workflow.md's squash/rebase caveat.
+        tag = f"{name}-v{args.version}"
+        result = {"pr_url": pr_url, "branch": branch, "version": args.version, "tag": tag}
+        rc, _, _ = run(["git", "rev-parse", "-q", "--verify", f"refs/tags/{tag}"], cwd=clone_dir, check=False)
+        if rc == 0:
+            result["tag_warning"] = f"tag {tag} already exists; left as-is"
+        else:
+            rc, _, terr = run(["git", "tag", "-a", tag, "-m", commit_msg, "HEAD"], cwd=clone_dir, check=False)
+            if rc != 0:
+                result["tag_warning"] = f"tag create failed: {terr.strip()}"
+            else:
+                rc, _, perr = run(["git", "push", "origin", f"refs/tags/{tag}"], cwd=clone_dir, check=False)
+                if rc != 0:
+                    result["tag_warning"] = f"tag push failed: {perr.strip()}"
         # executor: carry pr_url into Step 10's verify_ship.py --pr-url; the artifact
         # path captured from package_skill.py in Step 8 is passed as --artifact (not via this script).
-        print(json.dumps({"pr_url": pr_url, "branch": branch, "version": args.version}, indent=2))
+        print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
