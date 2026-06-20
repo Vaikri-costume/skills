@@ -8,7 +8,6 @@ Consult this file when invoking any of the commands below, hitting their errors,
 
 - [status](#status)
 - [download-batch](#download-batch) — legacy; `scan` does this inline now
-- [mark-unapproved](#mark-unapproved) — run once at the start of organising a new drive
 - [flagged](#flagged) — peek-and-reclassify items the user `?`-marked
 - [reconcile](#reconcile) — maintenance: detect/repair structure drift
 - [duplicates](#duplicates) — final pass: SHA256 groups
@@ -45,20 +44,6 @@ Behaviour: detects online-only (placeholder) files via xattr and triggers the cl
 Report: files queued (with total GB), already local, skipped. If triggered count is 0 — all locally available files are already downloaded; proceed directly to scan without waiting.
 
 If the script exits with `Error: root path not found: <path>`, confirm the drive is mounted and the sync app is running.
-
----
-
-## mark-unapproved
-
-```bash
-python3 ~/.claude/drive-organizer/organizer.py mark-unapproved
-```
-
-Prefixes every root-level folder that has no known rules with `x`, deferring it from scan. A folder is "known" if it has a `.tidy-rules.json` file inside it, or if it appears as a destination in the root `.tidy-rules.json`. Staging folders (`_Inbox`, `Archive`) are always left untouched. Already x-prefixed folders are left alone.
-
-Run this **once before the first scan** to quarantine all legacy/unknown folders — they will be skipped until you're ready to process them (see x-folder transition in the batch cycle section of SKILL.md).
-
-**This is the pre-migration bulk tool, run once.** Post-migration to the nested grouping structure (the active groupings — by default ENTERTAINMENT/PERSONAL/WORK/EDUCATION/RESOURCES), the utility retires: only the groupings + Archive + _Inbox + logseq-journals should exist at root, so a *new* unknown root folder that appears later is a one-off anomaly — do **not** re-run `mark-unapproved` (it would x-prefix everything again); instead handle it case-by-case via the mid-batch flow in SKILL.md ("Handling unknown folders → Mid-batch"): ask the user about that one folder and create its `.tidy-rules.json`. Bulk `mark-unapproved` = first-time cleanup; individual flagging = steady state.
 
 ---
 
