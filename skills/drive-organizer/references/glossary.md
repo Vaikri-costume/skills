@@ -29,6 +29,10 @@ See also: [`~/.claude/skills/skill-creator-ccvw/references/ccvw-glossary.md`](..
 | registry | The SQLite `registry.db` (authoritative) + auto-mirrored `registry.csv` at `[root]/.organizer/` tracking every file's state |
 | `.tidy-rules.json` | The per-folder classification memory — a list of `{description, folderName}` rules that grows lazily via the learning loop |
 | `subfolder-templates.json` | The shipped source-of-truth describing the *shape* of the tree (which children each parent type expects) |
+| model_capabilities | A `config.json` block (`{peek, vision}`, both default true) declaring whether the running model can open file CONTENTS (peek) and see IMAGES (vision). Resolved per-run (flag `--no-peek`/`--no-vision` > config > default), emitted on propose's stderr, and filled into the classify-prompt's `[CAPABILITIES]` slot so agents degrade gracefully instead of assuming a vision model |
+| capability degradation | The graceful-degradation ladder: peek off ⇒ classify from `content_peek` + name/path only; vision off ⇒ route images by name/path + `exif` metadata. No file is ever dropped — it falls to `_Inbox/` only when nothing matches |
+| exif (subcommand) | Prints an image's routing metadata (date/camera/dimensions) as JSON for the vision-off path; Pillow-optional, degrades to the filename date, never errors |
+| merge-category | A diff-only taxonomy edit: the model emits a small JSON diff (`{name, description, parent?}`) and Python merges it into the per-user templates override, instead of the model rewriting the whole nested templates file |
 
 ## When to update this glossary
 

@@ -38,7 +38,9 @@ The cascading-Q routing model in SKILL.md handles the *destination cascade* (Q1 
 
 **Camera RAW extensions**: `.nef` Nikon, `.raf` Fuji, `.arw` Sony, `.cr2`/`.cr3` Canon, `.dng`, `.orf` Olympus, `.rw2` Panasonic
 
-RAW files can't be vision-read (Claude can't decode proprietary RAW formats). Skip the Read tool for RAW always — classify by parent folder + filename alone, treat the same as you would treat the JPEG/HEIC version.
+**Capability gate (model-agnostic).** Before considering vision at all, check the capabilities the orchestrator declared in the classification prompt's `[CAPABILITIES]` block. If **vision is OFF** (the running model can't see images), skip every "Use vision" path below: route each image by parent folder + filename + rules, and when routing needs a date call `organizer.py exif <path>` (returns date / camera / dimensions as JSON; Pillow-optional, degrades to the filename date, never opens pixels). Emit no `vision_desc`. The rest of this section applies only when vision is ON.
+
+RAW files can't be vision-read (Claude can't decode proprietary RAW formats) regardless of capability. Skip the Read tool for RAW always — classify by parent folder + filename alone, treat the same as you would treat the JPEG/HEIC version.
 
 **First, decide whether vision is actually needed.** Most images can be classified from path + filename alone, and vision (Read tool on the image) is expensive. Observation from previous batches: of ~84 images in one batch, ~75 had path/filename signal strong enough to skip vision entirely — they got Read calls anyway, which was wasted time. Group images by `current_path` parent folder and inspect filenames before classifying. Skip vision when ANY of these are true:
 
@@ -59,7 +61,7 @@ When vision IS needed:
 2. Write a 1-sentence subject description → `vision_desc`
 
 Either way:
-3. Extract date from filename pattern `\d+-PHOTO-(\d{4}-\d{2}-\d{2})`; fall back to file mtime
+3. Extract date from filename pattern `\d+-PHOTO-(\d{4}-\d{2}-\d{2})`; if the filename has no date, call `organizer.py exif <path>` (embedded EXIF capture date, with a filename-date fallback baked in); finally fall back to file mtime
 4. Generate new filename per the grouping-specific convention in SKILL.md (PERSONAL → `YYYYMMDD_<Issuer>_<Type>_<descriptive>.ext`; WORK project → `YYYYMMDD_<Company>_<ProjectTag>_<descriptive>.ext`; etc.)
 5. Classify via the cascading Q model:
    - **Primary signal for images is the parent folder in `current_path`** — it's almost always the project indicator. Walk the cascade from root → grouping → project.

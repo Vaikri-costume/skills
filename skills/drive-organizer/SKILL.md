@@ -1,8 +1,8 @@
 ---
 name: drive-organizer
-description: "Cascading-Q file organiser that sorts any drive (cloud-synced, external, or local) into configurable top-level groupings (e.g. ENTERTAINMENT, PERSONAL, WORK, EDUCATION, RESOURCES). Invoke whenever the user runs /drive-organizer or a subcommand (status, scan, propose, generate-viewer, process-return, execute, cleanup, reconcile, duplicates, variants, merge, flagged, csv-export), or asks to organise, sort, or tidy files, process a batch into folders, detect duplicates or variant files (e.g. plain vs highlighted PDF), reconcile a drifted folder structure, or run a rolling download-and-organise workflow. Routing follows four cascading questions — top-level grouping, thing inside, functional area, leaf type — driven by per-folder .tidy-rules.json rules that grow lazily via a learning loop. Works on any drive via a configured root (set once per machine); a Python backend keeps a SQLite registry plus an auto-mirrored CSV so duplicates are caught across batches and state stays auditable."
+description: "Cascading-Q file organiser that sorts any drive (cloud-synced, external, or local) into configurable top-level groupings (e.g. ENTERTAINMENT, PERSONAL, WORK, EDUCATION, RESOURCES). Invoke whenever the user runs /drive-organizer or a subcommand (status, scan, propose, generate-viewer, process-return, execute, cleanup, reconcile, duplicates, variants, merge, flagged, exif, merge-category, csv-export), or asks to organise, sort, or tidy files, process a batch into folders, detect duplicates or variant files (e.g. plain vs highlighted PDF), reconcile a drifted folder structure, or run a rolling download-and-organise workflow. Routing follows four cascading questions — top-level grouping, thing inside, functional area, leaf type — driven by per-folder .tidy-rules.json rules that grow lazily via a learning loop. Works on any drive via a configured root (set once per machine); a Python backend keeps a SQLite registry plus an auto-mirrored CSV so duplicates are caught across batches and state stays auditable."
 license: MIT
-compatibility: "Python 3.9+ (standard library). Optional: mutagen (audio metadata), PyMuPDF (PDF annotation merge), organize-tool (reconcile drift-check + dedup cross-check). macOS-oriented — uses xattr for cloud-placeholder detection; the browser approval viewer needs a local display. Runs in Claude Code and Cowork."
+compatibility: "Python 3.9+ (standard library). Optional: mutagen (audio metadata), PyMuPDF (PDF annotation merge), organize-tool (reconcile drift-check + dedup cross-check), Pillow (image EXIF metadata). macOS-oriented — uses xattr for cloud-placeholder detection; the browser approval viewer needs a local display. Runs in Claude Code and Cowork."
 allowed-tools:
   - Bash
   - Read
@@ -12,7 +12,7 @@ metadata:
   tier: claude-users
   created: "2026-05-18"
   created-by: Vaikri-costume
-  parent-version: "1.3.1"
+  parent-version: "2.0.0"
   intended-audience: claude-users
 ---
 
@@ -170,11 +170,13 @@ Read the output (check in this order):
 
 ### Lower-frequency subcommands → `references/subcommands.md`
 
-Detailed documentation for `status`, `download-batch`, `flagged`, `reconcile`, `duplicates`, `variants`, `merge`, and `csv-export` lives in **`references/subcommands.md`**. Consult that reference when invoking any of them. One-line summaries:
+Detailed documentation for `status`, `download-batch`, `flagged`, `reconcile`, `duplicates`, `variants`, `merge`, `exif`, `merge-category`, and `csv-export` lives in **`references/subcommands.md`**. Consult that reference when invoking any of them. One-line summaries:
 
 | Subcommand | What it does |
 |---|---|
 | `status` | Show active root + registry counts by status. Run at session start to confirm which drive is configured |
+| `exif` | Print an image's routing metadata (date/camera/dimensions) as JSON for vision-off routing. Pillow-optional, degrades to the filename date, never errors |
+| `merge-category` | Add one taxonomy category from a small JSON `--diff` into the per-user templates override (Python owns the merge, so a model never rewrites the whole nested file) |
 | `download-batch` | Legacy — `scan` does this inline. Manual top-up for pre-warming a chunk of the drive |
 | `flagged` | List files marked `?` in the viewer. Peek + reclassify each, add back to next batch |
 | `reconcile` | Maintenance — detect drift (misplaced files, bad registry rows, mangled root folders); dry-run by default with a per-file `restore`/`accept` suggestion (intent never guessed), `--restore`/`--accept`/`--prune ID` to decide each, `--apply` to bulk-restore. Run when the structure has "drifted/got ruined" |
@@ -223,12 +225,18 @@ python3 ~/.claude/drive-organizer/organizer.py propose --limit 250
 | Toggle | config.json key | Per-run flag | Effect |
 |---|---|---|---|
 | Auto-classify fast-path | `auto_classify` (default `true`) | `--no-auto-classify` / `--auto-classify` | W1 deterministic routing of unambiguous files before classification |
-| Vision | `vision` (default `true`) | `--no-vision` | Off ⇒ images are routed by name/path/rule only, never opened (vision is the slow part) |
 | Skip file types | `skip_types` (e.g. `[".mov", ".raw"]`) | `--skip-types .mov,.raw` | Those extensions are never opened — routed by name/path/rule only |
 | Skip large files | `skip_over_mb` (e.g. `200`) | `--skip-over-mb 200` | Files over N MB are never opened — routed by name/path/rule only |
 | Confidence auto-approval | `auto_approve` (default `false`) | `--auto-approve` | W5: high-confidence auto-routed files marked `auto_approved` — orchestrator may skip the viewer (still audited in `<root>/.organizer/auto-routed.csv`) |
 
 A toggled-off / blocked file is never dropped: the W1 matcher gives it a deterministic destination when one exists, otherwise it reaches the classifier as `route_by_name_only` (or falls to `_Inbox/`).
+
+#### Model capabilities — graceful degradation (model-agnostic)
+
+The backend assumes nothing about which model runs it. Two capabilities — declared in `<root>/.organizer/config.json` under `model_capabilities` (both default `true`; precedence **flag > config > default**) — gate how classification agents inspect files. `propose` resolves them and prints a `Model capabilities: peek=… vision=…` stderr line; fill the `[CAPABILITIES]` slot of `references/classify-prompt.md` from it (slot list under "Fan out classification" below). Like the cost toggles above, degradation never drops a file — a model with neither capability routes by name/path/rules/EXIF, falling to `_Inbox/` only when nothing matches:
+
+- **`peek`** — open file CONTENTS (`model_capabilities.peek`, flag `--no-peek`). Off ⇒ agents classify from the pre-extracted `content_peek` + name/path + rules only; never open a file.
+- **`vision`** — see IMAGES (`model_capabilities.vision`, legacy top-level `vision`; flag `--no-vision`). Off ⇒ route images by name/path/rule + `organizer.py exif <path>` metadata; pixels never opened.
 
 If the script prints `"No pending files. Run 'scan' first or all files are already classified."`, this batch is fully classified — free disk and move to the next batch.
 
@@ -259,9 +267,10 @@ cat <root>/.tidy-rules.json                                                # Q1 
 
 **Fan out classification — one sub-agent per `classify_batch` (mine-sources pattern).** Rather than classify every file inline, dispatch one Agent per batch of 25 so each works a small set with a fresh context and raw file content stays out of the orchestrator. **Use the canonical template `references/classify-prompt.md`** — stage one filled copy per `classify_batch` so every batch is briefed identically, then dispatch:
 
-- Fill the template's slots: `[BATCH_JSON]` = that batch's records (`{id, filename, current_path, is_image, route_by_name_only, content_peek?}` — **paths, never file contents**); `[GROUPINGS]` = the active grouping names — read them from `organizer.py rules --json` → the top-level `areas` array (that is the *resolved* active set from `_active_groupings()`, which honours a `config.json "areas"` override; do NOT read `templates` `Q1_groupings` here — it misses the override and its entries may be strings or dicts); `[ROOT]`, `[TEMPLATES_CMD]`, `[PROJECT_METADATA_PATH]`, `[ENTITIES_PATH]`, `[FILE_TYPE_ROUTING_PATH]`, `[TIDY_BUILTIN_PATH]`, `[FILENAME_CONVENTIONS_PATH]`, `[GLOSSARY_PATH]` = the absolute paths/commands. The template keeps the prompt light by **pointing** the agent at those (it reads them itself) and inlining only the batch + rules + output contract.
-- The agent opens each file itself (Read / vision) unless `route_by_name_only`, applies the cascading-Q logic, respects entity aliases/negatives, and returns one verdict per file: `{id, para_subfolder, new_filename, reason, signal, confidence, vision_desc?}` — **verdicts only, not file content**. (`reason` is the human-readable rationale the viewer shows; `para_category` is NOT in the verdict — execute derives it from `para_subfolder`. The `signal` + `confidence` fields feed W5: shared signals become rules. Note `confidence` is **advisory** — the backend's `auto_approved` flag is set only on W1 fast-path entries (it never reads a classifier verdict's `confidence`); so a `confidence: high` verdict does not auto-approve by itself. If `auto_approve` is on and you choose to let high-confidence verdicts skip the viewer, that is *your* orchestration decision — mark them yourself and keep the CSV audit.)
+- Fill the template's slots: `[BATCH_JSON]` = that batch's records (`{id, filename, current_path, is_image, route_by_name_only, content_peek?}` — **paths, never file contents**); `[GROUPINGS]` = the active grouping names — read them from `organizer.py rules --json` → the top-level `areas` array (that is the *resolved* active set from `_active_groupings()`, which honours a `config.json "areas"` override; do NOT read `templates` `Q1_groupings` here — it misses the override and its entries may be strings or dicts); `[ROOT]`, `[TEMPLATES_CMD]`, `[PROJECT_METADATA_PATH]`, `[ENTITIES_PATH]`, `[FILE_TYPE_ROUTING_PATH]`, `[TIDY_BUILTIN_PATH]`, `[FILENAME_CONVENTIONS_PATH]`, `[GLOSSARY_PATH]` = the absolute paths/commands; `[CAPABILITIES]` = the declared model capabilities — copy them from propose's `Model capabilities: peek=… vision=…` stderr line so each agent inspects files only by permitted means (see "Model capabilities" above). The template keeps the prompt light by **pointing** the agent at those (it reads them itself) and inlining only the batch + rules + output contract.
+- The agent opens each file itself (Read / vision) — subject to the declared `[CAPABILITIES]` (see "Model capabilities" above) and unless `route_by_name_only` — applies the cascading-Q logic, respects entity aliases/negatives, and returns one verdict per file: `{id, para_subfolder, new_filename, reason, signal, confidence, vision_desc?}` — **verdicts only, not file content**. (`reason` is the human-readable rationale the viewer shows; `para_category` is NOT in the verdict — execute derives it from `para_subfolder`. The `signal` + `confidence` fields feed W5: shared signals become rules. Note `confidence` is **advisory** — the backend's `auto_approved` flag is set only on W1 fast-path entries (it never reads a classifier verdict's `confidence`); so a `confidence: high` verdict does not auto-approve by itself. If `auto_approve` is on and you choose to let high-confidence verdicts skip the viewer, that is *your* orchestration decision — mark them yourself and keep the CSV audit.)
 - Merge every batch's verdicts together with the unchanged `auto_routed` entries into `~/.claude/drive-organizer/proposals_classified.json`.
+- **Reliability — retry once, then route:** if a batch's agent errors or returns malformed JSON, re-dispatch it ONCE with the identical prompt; if it still fails, route that batch's files to `_Inbox/` (surfaced in the viewer for manual placement) rather than dropping them or aborting, and log the bounced batch index.
 
 **Inbox arbiter sweep — periodic `_Inbox/` reclamation (one arbiter per 25, ~4 at the trigger).** `_Inbox/` is where files with no fit land. Because the rule set grows as you organise, files inboxed earlier often become placeable later. **When the registry's `_Inbox/` population reaches ~100 files** (check `organizer.py inbox-list` → `count`), run a reclamation sweep over **all** of them (not just this round's):
 
