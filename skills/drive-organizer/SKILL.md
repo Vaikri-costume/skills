@@ -1,8 +1,8 @@
 ---
 name: drive-organizer
-description: "Cascading-Q file organiser that sorts any drive (cloud-synced, external, or local) into configurable top-level groupings (e.g. ENTERTAINMENT, PERSONAL, WORK, EDUCATION, RESOURCES). Invoke whenever the user runs /drive-organizer or a subcommand (status, scan, propose, generate-viewer, process-return, execute, cleanup, reconcile, duplicates, variants, merge, flagged, exif, merge-category, csv-export), or asks to organise, sort, or tidy files, process a batch into folders, detect duplicates or variant files (e.g. plain vs highlighted PDF), reconcile a drifted folder structure, or run a rolling download-and-organise workflow. Routing follows four cascading questions — top-level grouping, thing inside, functional area, leaf type — driven by per-folder .tidy-rules.json rules that grow lazily via a learning loop. Works on any drive via a configured root (set once per machine); a Python backend keeps a SQLite registry plus an auto-mirrored CSV so duplicates are caught across batches and state stays auditable."
+description: "Cascading-Q file organiser that sorts any drive (cloud-synced, external, or local) into configurable top-level groupings (e.g. ENTERTAINMENT, PERSONAL, WORK, EDUCATION, RESOURCES). Invoke whenever the user runs /drive-organizer or a subcommand (status, scan, propose, generate-viewer, process-return, execute, cleanup, reconcile, duplicates, variants, merge, flagged, exif, merge-category, csv-export), or asks to organise, sort, or tidy a drive, process a batch into folders, detect duplicates or variant files (e.g. plain vs highlighted PDF), reconcile a drifted folder structure, or run a rolling download-and-organise workflow. Routing follows four cascading questions — top-level grouping, thing inside, functional area, leaf type — driven by per-folder .tidy-rules.json rules that grow lazily via a learning loop. Works on any drive via a configured root (set once per machine); a Python backend keeps a SQLite registry plus an auto-mirrored CSV so duplicates are caught across batches and state stays auditable."
 license: MIT
-compatibility: "Python 3.9+ (standard library). Optional: mutagen (audio metadata), PyMuPDF (PDF annotation merge), organize-tool (reconcile drift-check + dedup cross-check), Pillow (image EXIF metadata). macOS-oriented — uses xattr for cloud-placeholder detection; the browser approval viewer needs a local display. Runs in Claude Code and Cowork."
+compatibility: "Python 3.9+ (standard library). Optional: mutagen (audio metadata), PyMuPDF (PDF annotation merge), organize-tool (reconcile drift-check + dedup cross-check), Pillow (image EXIF metadata). Cross-platform cloud-placeholder detection: macOS verified, Windows/Linux best-effort (mechanism per references/subcommands.md). The browser approval viewer needs a local display. Runs in Claude Code and Cowork."
 allowed-tools:
   - Bash
   - Read
@@ -12,7 +12,7 @@ metadata:
   tier: claude-users
   created: "2026-05-18"
   created-by: Vaikri-costume
-  parent-version: "2.0.0"
+  parent-version: "2.1.0"
   intended-audience: claude-users
 ---
 
@@ -20,7 +20,7 @@ metadata:
 
 Organises the user's files into a top-level grouping nested structure with prefix-propagation one level deep — see "Naming conventions" below. The **default** five groupings are `ENTERTAINMENT/`, `PERSONAL/`, `WORK/`, `EDUCATION/`, `RESOURCES/`, but the active set is **data-driven, not fixed at five**: the backend reads it via `_active_groupings()` from the merged templates' `Q1_groupings` or an optional `<root>/.organizer/config.json` `"areas": [...]` override (a user may have more, fewer, or differently-named areas). Everything that depends on the grouping set — `_normalize_grouping`, reconcile's known-roots, the grouping invariant — reads that same dynamic set. The Python backend (`organizer.py`) handles all file I/O and database work; the registry lives at `<root>/.organizer/` as `registry.db` (SQLite, authoritative) plus `registry.csv` (auto-mirrored by the backend after every mutation — the user can open it in Numbers/Excel to audit state). This skill handles vision analysis, classification decisions, and the interactive approval loop.
 
-**Placeholders in commands**: `<root>` and `[root]` in any command below stand for the **active configured root** — the absolute path `status` prints as the active root (set once via `--root`, typically `~/Library/CloudStorage/OneDrive-Personal`). Run `status` once at session start, capture that path, and substitute it everywhere `<root>`/`[root]` appears before running a command. Likewise `$SKILL_DIR` = the skill's install dir (see First-time setup).
+**Placeholders in commands**: `<root>` and `[root]` in any command below stand for the **active configured root** — the absolute path `status` prints as the active root (set once via `--root`; defaults to this OS's OneDrive sync folder). Run `status` once at session start, capture that path, and substitute it everywhere `<root>`/`[root]` appears before running a command. Likewise `$SKILL_DIR` = the skill's install dir (see First-time setup).
 
 **User profile (optional)**: if `[root]/.organizer/config.json` defines a `profile` (a note on the user's roles/context), let it guide edge-case classification. With no profile set, classify from file content and folder context alone.
 
@@ -257,7 +257,7 @@ Most files terminate at Q3 or Q4; some go deeper (Q5 inside a per-person Financi
 python3 ~/.claude/drive-organizer/organizer.py templates                   # merged templates (shipped skeleton + your override)
 cat <root>/.tidy-rules.json                                                # Q1 routing
 ```
-(`<root>` is shown by `status` — typically `~/Library/CloudStorage/OneDrive-Personal`.)
+(`<root>` is whatever `status` prints as the active root.)
 
 **Read the propose output — three lanes.** `propose` now pre-sorts the batch so you only classify what actually needs it:
 

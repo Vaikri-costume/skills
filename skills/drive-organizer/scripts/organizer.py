@@ -37,7 +37,26 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 REGISTRY_DB = Path.home() / ".claude" / "drive-organizer" / "registry.db"  # overridden at startup
-DEFAULT_ONEDRIVE = Path.home() / "Library" / "CloudStorage" / "OneDrive-Personal"
+
+
+def _default_root() -> Path:
+    """Best-effort default drive root per OS (override with --root; saved to config).
+    macOS and Windows have a standard OneDrive sync location; Linux has no convention, so
+    we guess ~/OneDrive and rely on the 'root not found' guard + --root to correct it. The
+    name DEFAULT_ONEDRIVE is historical — any cloud or local drive works via --root."""
+    home = Path.home()
+    if sys.platform == "darwin":
+        return home / "Library" / "CloudStorage" / "OneDrive-Personal"
+    if sys.platform == "win32":
+        # The OneDrive client exports %OneDrive%; fall back to %USERPROFILE%\OneDrive.
+        env = os.environ.get("OneDrive") or os.environ.get("OneDriveConsumer")
+        return Path(env) if env else home / "OneDrive"
+    # Linux / other: no standard cloud-sync path. Guess ~/OneDrive (e.g. abraunegg/onedrive,
+    # onedriver); the user overrides with --root when the drive lives elsewhere.
+    return home / "OneDrive"
+
+
+DEFAULT_ONEDRIVE = _default_root()
 CONFIG_PATH = Path.home() / ".claude" / "drive-organizer" / "config.json"
 _EFFECTIVE_ROOT = DEFAULT_ONEDRIVE  # set in main() from --root / config / DEFAULT
 
@@ -1093,8 +1112,26 @@ def _is_placeholder(path: Path) -> bool:
         offline = getattr(_stat, "FILE_ATTRIBUTE_OFFLINE", _WIN_OFFLINE)
         return bool(attrs & (recall | offline))
 
-    # Linux / other: no provider signal available — treat as local.
+    # Linux / other: no reliable provider signal — treat as local (False). A size-vs-blocks
+    # heuristic (st_blocks==0) was considered and rejected: it is the exact signal the macOS
+    # branch above documents as unsafe — sparse, reflinked, and transparently-compressed
+    # (btrfs/ZFS) files legitimately report zero blocks while fully local. The false positive
+    # is NOT benign: the scan poll loop re-checks _is_placeholder, so a local zero-block file
+    # never clears, stalls the full download timeout, and is then skipped (dropped from the
+    # batch). The dominant Linux OneDrive client (abraunegg/onedrive) full-syncs, so always-
+    # local is correct for it; FUSE placeholder clients (onedriver) can be added with a test box.
     return False
+
+
+def _cloud_platform_note() -> str:
+    """One-line best-effort/unverified notice for non-macOS platforms — cloud-placeholder
+    detection is verified only on macOS (the >25GB gate runs there). Empty on macOS."""
+    if sys.platform == "darwin":
+        return ""
+    plat = "Windows" if sys.platform == "win32" else "Linux/other"
+    return (f"Note: cloud-placeholder detection on {plat} is best-effort and unverified. "
+            f"If files aren't materialising, pass --root <your synced folder> and make sure "
+            f"your sync client downloads on read.")
 
 
 def cmd_download_batch(args):
@@ -1296,6 +1333,9 @@ def cmd_scan(args):
     drive = Path(args.path).expanduser() if args.path else _EFFECTIVE_ROOT
     if not drive.exists():
         sys.exit(f"Error: root path not found: {drive}")
+    _note = _cloud_platform_note()
+    if _note:
+        print(_note, file=sys.stderr)
 
     file_limit = getattr(args, "limit", None) or 250
     gb_limit = float(getattr(args, "limit_gb", None) or 20.0)
@@ -3831,6 +3871,9 @@ def cmd_status(args):
 
     print(f"Root:     {_EFFECTIVE_ROOT}")
     print(f"Registry: {REGISTRY_DB}")
+    _note = _cloud_platform_note()
+    if _note:
+        print(_note, file=sys.stderr)
     print(f"Total files: {total}  |  Batches: {batches}")
     print()
     for row in rows:
@@ -5276,7 +5319,8 @@ def main():
     parser.add_argument(
         "--root", default=None, metavar="PATH",
         help="Root folder to organise; registry lives at <root>/.organizer/ "
-             "(default: ~/Library/CloudStorage/OneDrive-Personal)"
+             "(default: this OS's OneDrive sync folder, resolved by _default_root(); see "
+             "README for the per-OS paths. Pass any drive or folder path to override)"
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
