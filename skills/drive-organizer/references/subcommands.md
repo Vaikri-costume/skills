@@ -41,7 +41,7 @@ python3 ~/.claude/drive-organizer/organizer.py download-batch --limit-gb 20
 
 **Legacy.** The current `scan` command triggers downloads inline as part of its priority walk (priorities P2/P4/P6 download cloud-only files automatically), so this standalone command is rarely needed. Kept for manual top-ups when you want to pre-warm a chunk of the drive before scanning.
 
-Behaviour: detects online-only (placeholder) files via xattr and triggers the cloud provider to download them locally, stopping at the cumulative size cap. Skips already-local files, files already organised in the registry, and system files.
+Behaviour: detects online-only (placeholder) files via the OS's cloud-placeholder signal — macOS xattr/dataless markers (verified), Windows `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS`/`OFFLINE` (unverified), Linux treats files as local (no reliable placeholder signal) — and triggers the cloud provider to download them locally by reading the first byte (`open().read(1)`, the universal recall mechanism), stopping at the cumulative size cap. Skips already-local files, files already organised in the registry, and system files.
 
 Report: files queued (with total GB), already local, skipped. If triggered count is 0 — all locally available files are already downloaded; proceed directly to scan without waiting.
 
