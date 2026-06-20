@@ -1,7 +1,7 @@
 ---
-version: "2.1.0"
+version: "2.2.0"
 category: C
-parent-version: "2.0.0"
+parent-version: "2.1.0"
 author:
   primary: "Vaikri-costume"
   history:
@@ -23,6 +23,25 @@ inspirations:
 # History — drive-organizer
 
 ## Changelog
+
+### 2.2.0 — 2026-06-20
+- **Platform-agnostic cloud handling (Windows + Linux).** The default drive root is now resolved
+  per-OS (`_default_root()` dispatches on `sys.platform`): macOS `~/Library/CloudStorage/OneDrive-Personal`,
+  Windows `%OneDrive%` / `%USERPROFILE%\OneDrive`, Linux `~/OneDrive` (best-effort guess; override
+  with `--root`). Cloud-placeholder detection already dispatched per-OS (macOS xattr/dataless verified;
+  Windows `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS`/`OFFLINE`, unverified); Linux treats files as local
+  (a size-vs-blocks heuristic was rejected — sparse/compressed/reflinked files report zero blocks while
+  fully local, and the scan poll loop would strand them). The download trigger (`open().read(1)`) is
+  inherently cross-platform.
+- **"Unverified on this OS" notice** — `status` and `scan` print a one-line best-effort note on
+  Windows/Linux (cloud detection is verified only on macOS; falls back to treating files as local).
+- Dropped the "macOS-oriented" framing from `compatibility`; `--root` help, README, and
+  `references/subcommands.md` now describe the per-OS defaults + cross-platform detection. Verified
+  on the >25GB four-loop gate (macOS); Windows/Linux ship best-effort, unverified. Minor bump.
+- Ship-time refinements (CCVW audit + polish): scoped the invocation trigger from "organise, sort,
+  or tidy files" to "organise, sort, or tidy a drive" for shared-tier composability; trimmed the
+  always-loaded `compatibility` frontmatter (per-OS mechanism detail now lives in
+  `references/subcommands.md`).
 
 ### 2.1.0 — 2026-06-20
 - **Model-agnostic classification with graceful degradation.** The backend no longer assumes a

@@ -29,7 +29,7 @@ It deliberately prioritises, and a fix that trades any of these away should be s
 
 ## How to install
 
-**Claude Code:** copy this folder to `~/.claude/skills/drive-organizer/`. On first run the skill installs its Python backend to `~/.claude/drive-organizer/organizer.py` automatically. Point it at your drive once: `python3 ~/.claude/drive-organizer/organizer.py --root /path/to/your/drive status` (defaults to `~/Library/CloudStorage/OneDrive-Personal` on macOS).
+**Claude Code:** copy this folder to `~/.claude/skills/drive-organizer/`. On first run the skill installs its Python backend to `~/.claude/drive-organizer/organizer.py` automatically. Point it at your drive once: `python3 ~/.claude/drive-organizer/organizer.py --root /path/to/your/drive status`. The default root is your OS's OneDrive sync folder — `~/Library/CloudStorage/OneDrive-Personal` (macOS), `%USERPROFILE%\OneDrive` (Windows), or `~/OneDrive` (Linux); override with `--root` to point at any cloud or local drive. Cloud-placeholder detection is verified on macOS; Windows/Linux are best-effort.
 
 **Cowork / Claude Desktop:** zip the `drive-organizer/` folder and add it via **Settings → Capabilities → Skills**.
 
@@ -52,7 +52,7 @@ Example:
 
 ## Quick start
 
-1. **Set your drive root once:** `python3 ~/.claude/drive-organizer/organizer.py --root /path/to/drive status` (macOS OneDrive is the default if you skip this).
+1. **Set your drive root once:** `python3 ~/.claude/drive-organizer/organizer.py --root /path/to/drive status` (your OS's OneDrive sync folder is the default if you skip this — see install notes above).
 2. **Scan a batch:** `/drive-organizer` (or `scan`) — hashes up to 250 files / 20 GB, pulling cloud-only files down as needed.
 3. **Review in the browser:** say "launch the viewer" — approve / reject / flag / inbox / delete each proposed move, and edit any destination or filename inline.
 4. **Apply + repeat:** the skill executes approved moves, *learns rules from your edits*, removes empty folders, and refills the next batch. Repeat until the drive is sorted.
