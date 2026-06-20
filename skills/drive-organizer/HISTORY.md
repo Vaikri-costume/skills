@@ -1,9 +1,19 @@
 ---
-version: "2.0.0"
+version: "2.1.0"
 category: C
-parent-version: "1.3.1"
+parent-version: "2.0.0"
 author:
   primary: "Vaikri-costume"
+  history:
+    # Original work by Vaikri-costume (not a fork); this records the canonical home
+    # repo so skill-publisher Step 9 auto-resolves the upstream to PR back to.
+    - role: "original"
+      name: "Vaikri-costume"
+      skill: "drive-organizer"
+      version: "1.0.0"
+      date: "2026-06-11"
+      license: "MIT"
+      source: "https://github.com/Vaikri-costume/skills"
 inspirations:
   - skill: "claude-code-cowork-skills-file-organizer"
     by: "smithjoshua"
@@ -13,6 +23,40 @@ inspirations:
 # History — drive-organizer
 
 ## Changelog
+
+### 2.1.0 — 2026-06-20
+- **Model-agnostic classification with graceful degradation.** The backend no longer assumes a
+  vision-capable model. A new `model_capabilities` config block (`{peek, vision}`, both default
+  `true`) plus `--no-peek` / `--no-vision` run flags (precedence: flag > config > default)
+  declare whether the running model can open file CONTENTS and see IMAGES. `propose` resolves
+  both and emits a `Model capabilities: peek=… vision=…` line on stderr; the orchestrator fills
+  the new `[CAPABILITIES]` slot in `references/classify-prompt.md` so every classification agent
+  degrades gracefully: peek off ⇒ classify from `content_peek` + name/path only; vision off ⇒
+  route images by name/path + EXIF. No file is dropped — degradation falls to `_Inbox/` only
+  when nothing matches.
+- **New `exif` subcommand** — prints an image's routing metadata (date / camera / dimensions) as
+  JSON for the vision-off path. Pillow-optional: degrades to the filename-derived date when
+  Pillow or embedded EXIF is absent, and never errors (always prints a JSON object).
+- **New `merge-category` subcommand** — adds one taxonomy category from a small JSON `--diff`
+  (`{name, description, parent?}`) into the per-user templates override; Python owns the merge so
+  a model never rewrites the whole nested templates file. Atomic write; shipped skeleton untouched.
+- **Reliability — retry once, then route.** A classification batch that errors or returns
+  malformed JSON is re-dispatched once; if it still fails, its files route to `_Inbox/` (surfaced
+  in the viewer) rather than being dropped or aborting the run.
+- **Bugfix (found in code review, pre-existing):** `_category_names()` read `compound_children`
+  values as bare lists, but the templates store the `{"children": [...]}` dict shape — so compound
+  children (Bills, Invoices, MOUs, Mood Boards, …) were never recognized as categories. Now reads
+  the dict shape (tolerating a bare list too). This is also what makes `merge-category`'s `parent`
+  linkage take effect. Two new malformed-config guards (`merge-category` `compound_children`,
+  `propose` `model_capabilities`) degrade instead of crashing.
+- Docs: capability-aware `references/file-type-routing.md` (vision gate + EXIF date fallback),
+  `references/classify-prompt.md` `[CAPABILITIES]` ladder, `references/subcommands.md` `exif` +
+  `merge-category` entries, glossary terms (`model_capabilities`, capability degradation, `exif`,
+  `merge-category`). Minor bump — fully backward-compatible (all new behaviour defaults to the
+  prior vision-on path).
+- **Packaging:** added an MIT `LICENSE` file at the skill root and completed the attribution
+  provenance — `author.history[]` now records the canonical home repo (`Vaikri-costume/skills`)
+  so future ships auto-resolve the upstream.
 
 ### 2.0.0 — 2026-06-17
 - **BREAKING — scan priority is now rules-based; the x-folder quarantine + `mark-unapproved` are removed.**
