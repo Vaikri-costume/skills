@@ -1,6 +1,6 @@
 ---
 name: drive-organizer
-description: "Cascading-Q file organiser that sorts any drive (cloud-synced, external, or local) into five top-level groupings — ENTERTAINMENT, PERSONAL, WORK, EDUCATION, RESOURCES. Invoke whenever the user runs /drive-organizer or a subcommand (status, scan, propose, generate-viewer, process-return, execute, cleanup, reconcile, duplicates, variants, merge, mark-unapproved, flagged, csv-export), or asks to organise, sort, or tidy files, process a batch into folders, detect duplicates or variant files (e.g. plain vs highlighted PDF), reconcile a drifted folder structure, or run a rolling download-and-organise workflow. Routing follows four cascading questions — top-level grouping, thing inside, functional area, leaf type — driven by per-folder .tidy-rules.json rules that grow lazily via a learning loop. Works on any drive via a configured root (set once per machine); a Python backend keeps a SQLite registry plus an auto-mirrored CSV so duplicates are caught across batches and state stays auditable."
+description: "Cascading-Q file organiser that sorts any drive (cloud-synced, external, or local) into configurable top-level groupings (e.g. ENTERTAINMENT, PERSONAL, WORK, EDUCATION, RESOURCES). Invoke whenever the user runs /drive-organizer or a subcommand (status, scan, propose, generate-viewer, process-return, execute, cleanup, reconcile, duplicates, variants, merge, flagged, csv-export), or asks to organise, sort, or tidy files, process a batch into folders, detect duplicates or variant files (e.g. plain vs highlighted PDF), reconcile a drifted folder structure, or run a rolling download-and-organise workflow. Routing follows four cascading questions — top-level grouping, thing inside, functional area, leaf type — driven by per-folder .tidy-rules.json rules that grow lazily via a learning loop. Works on any drive via a configured root (set once per machine); a Python backend keeps a SQLite registry plus an auto-mirrored CSV so duplicates are caught across batches and state stays auditable."
 license: MIT
 compatibility: "Python 3.9+ (standard library). Optional: mutagen (audio metadata), PyMuPDF (PDF annotation merge), organize-tool (reconcile drift-check + dedup cross-check). macOS-oriented — uses xattr for cloud-placeholder detection; the browser approval viewer needs a local display. Runs in Claude Code and Cowork."
 allowed-tools:
@@ -12,7 +12,7 @@ metadata:
   tier: claude-users
   created: "2026-05-18"
   created-by: Vaikri-costume
-  parent-version: "1.3.0"
+  parent-version: "1.3.1"
   intended-audience: claude-users
 ---
 
@@ -24,7 +24,7 @@ Organises the user's files into a top-level grouping nested structure with prefi
 
 **User profile (optional)**: if `[root]/.organizer/config.json` defines a `profile` (a note on the user's roles/context), let it guide edge-case classification. With no profile set, classify from file content and folder context alone.
 
-**Terminology**: unfamiliar terms below — x-folder, cascading-Q, atomic-unit folder, `content_peek`, `.tidy-rules.json`, per-user override, active-groupings — are defined in `references/glossary.md`. Read it first if any term is unclear.
+**Terminology**: unfamiliar terms below — cascading-Q, atomic-unit folder, `content_peek`, `.tidy-rules.json`, per-user override, active groupings — are defined in `references/glossary.md`. Read it first if any term is unclear.
 
 ## First-time setup
 
@@ -109,21 +109,19 @@ When the user asks to see the folder tree ("show me the folder tree", "what's th
 ## Full batch cycle
 
 ```
-0. mark-unapproved  — (first time only) x-prefix every existing unknown root folder
-                       to quarantine legacy chaos before the batch loop starts
 1. scan             — fill 250-file / 20GB batch by priority order:
-                       P1  downloaded files in known folders
-                       P2  cloud-only files in known folders (trigger downloads to local)
+                       P1  downloaded files in folders WITH rules
+                       P2  cloud-only files in folders WITH rules (trigger downloads to local)
                        P3  loose downloaded files at the drive root (no parent folder)
                        P4  loose cloud-only files at the drive root (trigger downloads)
-                       P5  downloaded files in x-folders
-                       P6  cloud-only files in x-folders (trigger downloads)
+                       P5  downloaded files in folders WITHOUT rules
+                       P6  cloud-only files in folders WITHOUT rules (trigger downloads)
                        Stop once cumulative size hits 20GB OR file count hits 250.
 2. propose          — backend prints raw pending-file records to stdout; Claude classifies + writes proposals_classified.json
 3. generate-viewer  — serve browser UI; user reviews and submits
 4. process-return   — handle approved/rejected/inbox/flagged; reclassify rejected; peek flagged
 5. execute          — move files, update registry (which auto-mirrors to registry.csv)
-6. cleanup          — remove empty folders (including emptied x-folders); free disk via sync app
+6. cleanup          — remove empty folders; free disk via sync app
 7. repeat from 1
 8. (after all batches done) duplicates → variants → merge
 ```
@@ -134,11 +132,9 @@ The registry remembers everything across batches — original names, paths, hash
 
 **Important:** `duplicates`, `variants`, and `merge` are **final-pass commands only**. During the batch loop, scan flags duplicates in the registry but nothing is moved or deleted.
 
-**x-folders:** Folders prefixed with `x` are deferred staging areas containing badly-classified or unsorted files. Once a folder has the `x` prefix it is **never renamed again** — the prefix sticks until cleanup deletes the folder for being empty. (The `mark-unapproved` step ADDS the prefix; that's the one moment renaming is allowed.) Scan includes x-folder files as lower priority — known folders fill the batch first, x-folders fill any remaining capacity. Files are proposed out through the normal flow.
+**Recovery (after a context compaction):** the SQLite registry at `<root>/.organizer/registry.db` is the authoritative state and survives context loss — no in-conversation marker is needed because state lives in the registry, not the chat. To resume an interrupted organise session, run `status` (active root + counts by status), then `scan` to pick up where the registry left off; the batch loop is idempotent, so re-running any step is safe.
 
-**Handling unknown folders (two flows):**
-- **Pre-scan, bulk:** Run `mark-unapproved` once before the first scan. Every legacy root folder without rules gets `x`-prefixed. This is the bulk-deferral move.
-- **Mid-batch, case-by-case:** If `scan` later reports `Folders with no rules` (a new folder appeared since `mark-unapproved` ran), ask the user about that specific folder and create a `.tidy-rules.json` for it before continuing to propose.
+**Handling unknown (unruled) folders:** A folder either has rules (its own `.tidy-rules.json`, or a matching entry in the root `.tidy-rules.json`) or it doesn't. Folders **without** rules are scanned at low priority (P5/P6, after ruled folders and loose root files); their files are classified through the normal flow, landing in `_Inbox/` when no rule matches. When `scan` reports `Folders with no rules`, you *may* ask the user about a folder and create a `.tidy-rules.json` to route its files — optional; they're processed either way.
 
 ---
 
@@ -165,7 +161,7 @@ python3 ~/.claude/drive-organizer/organizer.py scan --limit 250
 ```
 
 Read the output (check in this order):
-- **If scan reported `Folders with no rules`** → resolve those first (ask the user, create each folder's `.tidy-rules.json`) **before** propose — see the scan section. Don't skip to propose with unruled folders present.
+- **If scan reported `Folders with no rules`** → optional: add a `.tidy-rules.json` to each so its files route by rule instead of `_Inbox/`. Not a precondition for propose — they're scanned (low priority) and classified either way (see "Handling unknown (unruled) folders").
 - `Pending classify > 0` → go to **propose**.
 - `Pending classify = 0` **AND `Skipped` = 0 AND the run did not stop at a cap** ("→ All priorities drained within cap") → all batches are done; move to the final pass (`duplicates` → `variants` → `merge`).
 - `Pending classify = 0` **but `Skipped` > 0 or the run hit a cap** → work remains (downloads that failed, or files past the cap). Run `scan` again to pick them up. **Permanent-skip guard:** if two consecutive scans report the *same* `Skipped` count and add no new pending files, those files are persistently unavailable (online-only with no connectivity, zero-byte, or unreadable) — they will never drain. Stop re-scanning, tell the user which files keep skipping (the `skip <path>: …` stderr lines name them), and treat the drive as done *excluding* them.
@@ -174,13 +170,12 @@ Read the output (check in this order):
 
 ### Lower-frequency subcommands → `references/subcommands.md`
 
-Detailed documentation for `status`, `download-batch`, `mark-unapproved`, `flagged`, `reconcile`, `duplicates`, `variants`, `merge`, and `csv-export` lives in **`references/subcommands.md`**. Consult that reference when invoking any of them. One-line summaries:
+Detailed documentation for `status`, `download-batch`, `flagged`, `reconcile`, `duplicates`, `variants`, `merge`, and `csv-export` lives in **`references/subcommands.md`**. Consult that reference when invoking any of them. One-line summaries:
 
 | Subcommand | What it does |
 |---|---|
 | `status` | Show active root + registry counts by status. Run at session start to confirm which drive is configured |
 | `download-batch` | Legacy — `scan` does this inline. Manual top-up for pre-warming a chunk of the drive |
-| `mark-unapproved` | Run once at the start: x-prefix every unknown root folder to quarantine legacy chaos |
 | `flagged` | List files marked `?` in the viewer. Peek + reclassify each, add back to next batch |
 | `reconcile` | Maintenance — detect drift (misplaced files, bad registry rows, mangled root folders); dry-run by default with a per-file `restore`/`accept` suggestion (intent never guessed), `--restore`/`--accept`/`--prune ID` to decide each, `--apply` to bulk-restore. Run when the structure has "drifted/got ruined" |
 | `duplicates` | Final pass — show SHA256 groups (each with a `keeper_id`); co-locate extra copies beside the keeper as `<keeper-stem>_dupN`, one ID at a time |
@@ -198,18 +193,18 @@ python3 ~/.claude/drive-organizer/organizer.py scan --limit 250 --limit-gb 20
 
 Caps each batch at 250 files OR 20GB cumulative size (whichever hits first). `scan` walks files in this priority order, triggering cloud downloads inline when it reaches a cloud-only file inside the budget:
 
-1. **Known-folder, downloaded** — files already on local disk in folders that have a `.tidy-rules.json` or appear in the root `.tidy-rules.json`. No download needed.
-2. **Known-folder, cloud-only** — placeholder (online-only) files in known folders. Scan triggers the sync app to download each, then **polls until it materialises** (up to a 30s timeout, configurable via the `DRIVE_ORG_DL_TIMEOUT` env var) before hashing — so a slow download completes in this pass instead of being deferred to a re-scan.
+1. **Folder-with-rules, downloaded** — files already on local disk in folders that have a `.tidy-rules.json` or appear in the root `.tidy-rules.json`. No download needed.
+2. **Folder-with-rules, cloud-only** — placeholder (online-only) files in ruled folders. Scan triggers the sync app to download each, then **polls until it materialises** (up to a 30s timeout, configurable via the `DRIVE_ORG_DL_TIMEOUT` env var) before hashing — so a slow download completes in this pass instead of being deferred to a re-scan.
 3. **Loose root, downloaded** — files sitting directly at the drive root (not inside any folder) that are already local.
 4. **Loose root, cloud-only** — loose root files that need downloading first.
-5. **x-folder, downloaded** — files in x-prefixed quarantined folders that are already local.
-6. **x-folder, cloud-only** — files in x-folders that need downloading.
+5. **Folder-without-rules, downloaded** — files in folders that have no rules yet, already local.
+6. **Folder-without-rules, cloud-only** — files in unruled folders that need downloading.
 
-The rationale: organised folders earn their files first; the unknown chaos gets handled last. Once the 250/20GB cap is hit, the rest is deferred to the next batch.
+The rationale: rule-bearing folders earn their files first; folders with no rules get handled last. Once the 250/20GB cap is hit, the rest is deferred to the next batch.
 
 Report the seven counters: `New files`, `Hash-changed`, `Exact duplicates`, `Unchanged (skip-rehash)`, `Skipped`, `Pending classify`, `Total in registry`. Scan prints more besides — a `Batch size: N GB / N GB cap` line, `Downloads triggered`, a **per-phase timing line** (`download-wait` / `hashing` / `content-peek`), an `Eligible per priority` P1–P6 block, and a final stop-state line that is **literally** either `→ Cap reached in priority N (<label>)` or `→ All priorities drained within cap`. Surface the timing (e.g. mostly download-wait → network-bound; mostly hashing → large media) and the stop-state line (match those exact strings — the No-subcommand branch keys on them). For non-image files, scan extracts a `content_peek` (first ~300 chars of text) stored in the registry — used during `propose` to classify ambiguous files.
 
-**If scan reports "Folders with no rules":** these are root-level folders that have no `.tidy-rules.json` and no matching entry in the root `.tidy-rules.json`. For each one, ask the user what belongs in it. Then create a `.tidy-rules.json` inside the folder (and optionally add a rule to the root `.tidy-rules.json`). Do this before running propose — files in unknown folders will be classified as `_Inbox/` without rules to guide them.
+**If scan reports "Folders with no rules":** root-level folders with no `.tidy-rules.json` and no matching entry in the root `.tidy-rules.json`. Their files are scanned (P5/P6) and classified — `_Inbox/` when no rule matches. Optionally create a `.tidy-rules.json` inside (and a root rule) to route them better; not a precondition for propose. (See "Handling unknown (unruled) folders".)
 
 If the script exits with `Error: root path not found: <path>`, confirm the path exists and the drive is mounted.
 

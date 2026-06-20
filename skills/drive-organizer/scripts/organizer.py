@@ -19,6 +19,7 @@ from __future__ import annotations  # defer annotation eval so `X | None` works 
 import argparse
 import concurrent.futures as _futures
 import copy
+import functools
 import hashlib
 import json
 import os
@@ -139,6 +140,25 @@ def _save_config_root(root: Path):
 # Approved-folder detection (rules-based, no hardcoded prefixes)
 # ---------------------------------------------------------------------------
 
+@functools.lru_cache(maxsize=8)
+def _root_rule_top_names(root_rules_str: str, _mtime_ns: int) -> frozenset:
+    """Top-level folder names the root `.tidy-rules.json` routes into.
+
+    Cached by (path, mtime) so a scan/download walk that calls `_has_rules` for every
+    folder parses the root file once — not once per folder per pass. (The check used to
+    be an O(1) name-prefix test; keeping it cheap matters in the hot walk.) `_mtime_ns`
+    is only part of the cache key — it invalidates the entry when the file changes."""
+    try:
+        data = json.loads(Path(root_rules_str).read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"WARNING: could not parse {root_rules_str} ({e}); treating root as having "
+              f"no rules.", file=sys.stderr)
+        return frozenset()
+    return frozenset(fn.split("/")[0]
+                     for rule in data.get("rules", [])
+                     if (fn := rule.get("folderName", "")))
+
+
 def _has_rules(folder_path: Path, root: Path) -> bool:
     """
     Return True if this root-level folder is understood:
@@ -148,21 +168,11 @@ def _has_rules(folder_path: Path, root: Path) -> bool:
     if (folder_path / ".tidy-rules.json").exists():
         return True
     root_rules = root / ".tidy-rules.json"
-    if root_rules.exists():
-        try:
-            data = json.loads(root_rules.read_text(encoding="utf-8"))
-            folder_name = folder_path.name
-            for rule in data.get("rules", []):
-                fn = rule.get("folderName", "")
-                if not fn:  # skip rules with an empty folderName
-                    continue
-                top = fn.split("/")[0]
-                if top == folder_name:
-                    return True
-        except Exception as e:
-            print(f"WARNING: could not parse {root_rules} ({e}); "
-                  f"treating '{folder_path.name}' as having no rules.", file=sys.stderr)
-    return False
+    try:
+        mtime_ns = root_rules.stat().st_mtime_ns
+    except OSError:
+        return False  # no root rules file
+    return folder_path.name in _root_rule_top_names(str(root_rules), mtime_ns)
 
 
 def _is_external(folder_path: Path) -> bool:
@@ -400,7 +410,7 @@ def _enumerate_project_metadata(root: Path) -> list:
     for top in tops:
         if not top.is_dir() or top.name.startswith(('.', '_')):
             continue
-        if top.name.startswith('x') or top.name in SKIP:
+        if top.name in SKIP:
             continue
         if _is_external(top):
             continue
@@ -1037,7 +1047,8 @@ def cmd_download_batch(args):
     print(f"Scanning for online-only files (cap: {cap_gb:.0f} GB)...")
     print()
 
-    # Two-phase download: known folders first, x-folders second.
+    # Two-phase download: folders WITH rules first, folders WITHOUT rules second
+    # (matches scan's priority order — rule-bearing folders earn their downloads first).
     for phase in (1, 2):
         if at_cap:
             break
@@ -1048,8 +1059,8 @@ def cmd_download_batch(args):
             root_path = Path(root)
 
             # Never descend external (shared) or atomic-unit folders at any depth —
-            # same opacity contract as scan. Pruned first so the top-level x/hidden
-            # filters below operate on the already-cleaned dir list.
+            # same opacity contract as scan. Pruned first so the top-level hidden
+            # filter below operates on the already-cleaned dir list.
             dirs[:] = [d for d in dirs
                        if d not in _locked_atomic
                        and not _atomic_marker(root_path / d)
@@ -1063,14 +1074,11 @@ def cmd_download_batch(args):
                 continue
 
             if not top_level:
-                if phase == 1:
-                    dirs[:] = [d for d in dirs if not d.startswith("x") and not d.startswith(".")]
-                else:
-                    dirs[:] = [d for d in dirs if d.startswith("x")]
-                continue
-
-            if phase == 1 and top_level.startswith("x"):
-                dirs.clear()
+                # At the drive root: keep only the top-level folders for THIS phase —
+                # phase 1 descends rule-bearing folders, phase 2 the rest.
+                dirs[:] = [d for d in dirs
+                           if not d.startswith(".")
+                           and _has_rules(root_path / d, drive) == (phase == 1)]
                 continue
 
             for fname in sorted(files):
@@ -1153,8 +1161,8 @@ def _learn_dir_vocab(drive: Path, conn: sqlite3.Connection):
         depth = len(parts)
         if depth == 0:
             continue
-        # Skip x-prefixed top-level folders and hidden dirs
-        if parts[0].startswith("x") or parts[0].startswith("."):
+        # Skip hidden top-level dirs
+        if parts[0].startswith("."):
             dirs.clear()
             continue
         # Only register up to depth 3 (matches viewer's 3-segment path builder)
@@ -1234,9 +1242,9 @@ def cmd_scan(args):
     # one of six priority buckets. Cheap — only stat + xattr per file.
     # ------------------------------------------------------------------
     # Priority order:
-    #   1 = known folder, downloaded     2 = known folder, cloud (needs download)
+    #   1 = ruled folder, downloaded     2 = ruled folder, cloud (needs download)
     #   3 = loose root, downloaded       4 = loose root, cloud
-    #   5 = x-folder, downloaded         6 = x-folder, cloud
+    #   5 = no-rules folder, downloaded  6 = no-rules folder, cloud
     buckets: dict[int, list[tuple[Path, int, bool]]] = {p: [] for p in range(1, 7)}
 
     def eligible(filepath: Path) -> tuple[bool, int]:
@@ -1287,7 +1295,7 @@ def cmd_scan(args):
             # Locked atomic units are opaque too — skip the whole folder.
             if entry.name in _locked_atomic:
                 continue
-            is_xfolder = entry.name.startswith("x")
+            folder_has_rules = _has_rules(entry, drive)
             for root, subdirs, files in os.walk(entry):
                 root_path = Path(root)
                 # Prune NESTED external/atomic folders too, not just top-level ones:
@@ -1307,10 +1315,10 @@ def cmd_scan(args):
                     if not ok:
                         continue
                     placeholder = _is_placeholder(filepath)
-                    if is_xfolder:
-                        bucket = 6 if placeholder else 5
-                    else:
+                    if folder_has_rules:
                         bucket = 2 if placeholder else 1
+                    else:
+                        bucket = 6 if placeholder else 5
                     buckets[bucket].append((filepath, fsize, placeholder))
 
     # ------------------------------------------------------------------
@@ -1319,9 +1327,9 @@ def cmd_scan(args):
     # ------------------------------------------------------------------
     stopped_at_priority: int | None = None
     priority_labels = {
-        1: "known-folder downloaded", 2: "known-folder cloud",
-        3: "loose root downloaded",   4: "loose root cloud",
-        5: "x-folder downloaded",     6: "x-folder cloud",
+        1: "ruled-folder downloaded",    2: "ruled-folder cloud",
+        3: "loose root downloaded",      4: "loose root cloud",
+        5: "no-rules folder downloaded", 6: "no-rules folder cloud",
     }
 
     # W4 skip-rehash: index existing rows so an unchanged file (same path + size +
@@ -1530,14 +1538,16 @@ def cmd_scan(args):
     pending = conn.execute("SELECT COUNT(*) FROM files WHERE status='pending'").fetchone()[0]
     conn.close()
 
-    # Detect root-level folders that have no rules (not x-prefixed, not staging, no .tidy-rules.json)
+    # Detect root-level folders that have no rules (not staging, no .tidy-rules.json).
+    # These ARE still scanned — at low priority (buckets 5/6); the report just lets the
+    # user add rules to prioritise/route them instead of leaving their files to _Inbox.
     unknown_folders = []
     for entry in sorted(drive.iterdir()):
         if not entry.is_dir():
             continue
-        if should_skip(entry) or entry.name.startswith(".") or entry.name.startswith("x"):
+        if should_skip(entry) or entry.name.startswith("."):
             continue
-        if entry.name in PARA_ROOTS:
+        if entry.name in PARA_ROOTS or _is_external(entry):
             continue
         if not _has_rules(entry, drive):
             unknown_folders.append(entry.name)
@@ -1566,7 +1576,7 @@ def cmd_scan(args):
         print(f"  Folders with no rules ({len(unknown_folders)}):")
         for name in unknown_folders:
             print(f"    - {name}")
-        print("  → Create .tidy-rules.json for these before running propose.")
+        print("  → Optional: add a .tidy-rules.json to route these by rule; they're scanned at low priority (P5/6) and classified either way.")
     export_csv()
 
 
@@ -1652,14 +1662,14 @@ def _auto_classify_entry(entry: dict, root: Path, index: list, dest_set: set) ->
     except Exception:
         rel_dir = None
 
-    # 1. Already in the organized tree (scan priority P1): a file sitting under an
-    #    active grouping, not in _Inbox / Archive / a loose root / an x-folder, is
-    #    already correctly placed — auto-route it to stay (just register it).
+    # 1. Already in the organized tree: a file under an active grouping (not in _Inbox /
+    #    Archive / a loose root) is already correctly placed — auto-route it to stay (just
+    #    register it). This is a placement check (is it under a grouping?), deliberately
+    #    distinct from the scan-priority has-rules check.
     if rel_dir is not None and rel_dir.parts:
         parts = rel_dir.parts
         in_tree = (parts[0] in groupings
-                   and "_Inbox" not in parts and "Archive" not in parts
-                   and not any(p.startswith("x") for p in parts))
+                   and "_Inbox" not in parts and "Archive" not in parts)
         if in_tree:
             return str(rel_dir), "already in ruled folder"
 
@@ -3593,7 +3603,7 @@ def cmd_reconcile(args):
         for cur, subdirs, files in os.walk(root):
             cp_dir = Path(cur)
             subdirs[:] = [d for d in subdirs
-                          if not d.startswith((".", "_", "x"))
+                          if not d.startswith((".", "_"))
                           and d not in locked_atomic
                           and not _atomic_marker(cp_dir / d)
                           and not _is_external(cp_dir / d)]
@@ -3629,7 +3639,7 @@ def cmd_reconcile(args):
     # Mangled folder tree — root-level folders that break the five-grouping invariant
     for child in sorted(p for p in root.iterdir() if p.is_dir()):
         name = child.name
-        if name in _reconcile_known_roots() or name.startswith("x"):
+        if name in _reconcile_known_roots():
             continue
         if _is_external(child):
             continue
@@ -3717,53 +3727,6 @@ def cmd_status(args):
     print()
     for row in rows:
         print(f"  {row['status']:15s}  {row['n']:6d}")
-
-
-# ---------------------------------------------------------------------------
-# mark-unapproved
-# ---------------------------------------------------------------------------
-
-def cmd_mark_unapproved(args):
-    drive = Path(args.path).expanduser() if args.path else _EFFECTIVE_ROOT
-    if not drive.exists():
-        sys.exit(f"Error: root path not found: {drive}")
-
-    marked = []
-    skipped_known = []
-
-    for entry in sorted(drive.iterdir()):
-        if not entry.is_dir():
-            continue
-        if should_skip(entry) or entry.name.startswith("."):
-            continue
-        if entry.name.startswith("x"):
-            continue  # already deferred — leave alone
-        if entry.name in PARA_ROOTS:
-            skipped_known.append(entry.name)
-            continue
-        if _has_rules(entry, drive):
-            skipped_known.append(entry.name)
-            continue
-        # No rules → defer with x prefix
-        new_name = "x" + entry.name
-        new_path = drive / new_name
-        if new_path.exists():
-            print(f"  skip (collision): {entry.name} → {new_name} already exists")
-            continue
-        entry.rename(new_path)
-        marked.append(entry.name)
-        print(f"  marked: {entry.name!r}  →  x{entry.name!r}")
-
-    print()
-    print(f"Marked {len(marked)} folder(s) as deferred (no .tidy-rules.json found).")
-    print(f"Folders with known rules left unchanged: {len(skipped_known)}")
-    if marked:
-        print()
-        print("Deferred (x-prefixed) folders are scanned at LOW priority and proposed out")
-        print("through the normal flow — the x-prefix is never removed (it stays until the")
-        print("folder empties and cleanup deletes it). To process one sooner:")
-        print("  1. Create a .tidy-rules.json inside it (scan then treats it as a known folder)")
-        print("  2. Re-run scan; approve its files out in the viewer as usual")
 
 
 # ---------------------------------------------------------------------------
@@ -4139,14 +4102,14 @@ def _coverage_gaps(root: Path, dest_set: set) -> list:
     # reported as a gap merely because of separator/case differences vs the rule dest.
     norm_dest_set = {str(d).replace(os.sep, "/").strip("/").casefold() for d in dest_set}
     for top in sorted(p for p in root.iterdir() if p.is_dir()):
-        if top.name in skip or top.name.startswith("x") or top.name not in groupings:
+        if top.name in skip or top.name not in groupings:
             continue
         # os.walk (not rglob) so external/atomic subtrees can be pruned before descent —
         # rglob would walk into shared folders and node_modules/.git/venvs.
         for cur, subdirs, files in os.walk(top):
             cp = Path(cur)
             subdirs[:] = [d for d in subdirs
-                          if not d.startswith((".", "_", "x"))
+                          if not d.startswith((".", "_"))
                           and d not in locked_atomic
                           and not _atomic_marker(cp / d)
                           and not _is_external(cp / d)]
@@ -5016,11 +4979,11 @@ def _bootstrap_candidates(root: Path, mode: str = "cold-start",
     candidates, drift = [], []
     for cur, dirs, files in os.walk(root):
         cp = Path(cur)
-        # prune: hidden, staging, x-folders, locked atomic, external, atomic units
+        # prune: hidden, staging, locked atomic, external, atomic units
         keep = []
         for d in dirs:
             dp = cp / d
-            if (d in skip or d.startswith("x") or d in locked_atomic
+            if (d.startswith(".") or d in skip or d in locked_atomic
                     or _atomic_marker(dp) or _is_external(dp)):
                 continue
             keep.append(d)
@@ -5029,7 +4992,7 @@ def _bootstrap_candidates(root: Path, mode: str = "cold-start",
             rel = "" if cp == root else str(cp.relative_to(root))
         except Exception:
             continue
-        if rel == "" or any(part in skip or part.startswith("x") for part in Path(rel).parts):
+        if rel == "" or any(part in skip for part in Path(rel).parts):
             continue
         real_files = [f for f in files if not should_skip(cp / f)]
         if not real_files:
@@ -5292,10 +5255,6 @@ def main():
     p_bs.add_argument("--limit", type=int, default=250, help="Max candidate folders (default 250)")
     p_bs.add_argument("--json", action="store_true", help="JSON output (for --detect-atomic)")
 
-    p_mark = sub.add_parser("mark-unapproved",
-                             help="Prefix non-approved root folders with 'x' to defer them")
-    p_mark.add_argument("path", nargs="?", help="root path")
-
     args = parser.parse_args()
 
     # Derive root: --root flag (saves to config) > saved config > DEFAULT_ONEDRIVE
@@ -5332,7 +5291,6 @@ def main():
         "generate-viewer":  cmd_generate_viewer,
         "cleanup":          cmd_cleanup,
         "csv-export":       cmd_csv_export,
-        "mark-unapproved":  cmd_mark_unapproved,
         "templates":        cmd_templates,
         "reconcile":        cmd_reconcile,
         "rules":            cmd_rules,

@@ -39,7 +39,7 @@ It deliberately prioritises, and a fix that trades any of these away should be s
 
 ## How to invoke
 
-- Slash command: `/drive-organizer` (no subcommand = backend check + status + scan), or a subcommand: `status`, `scan`, `propose`, `generate-viewer`, `process-return`, `execute`, `cleanup`, `reconcile`, `duplicates`, `variants`, `merge`, `mark-unapproved`, `flagged`, `csv-export`.
+- Slash command: `/drive-organizer` (no subcommand = backend check + status + scan), or a subcommand: `status`, `scan`, `propose`, `generate-viewer`, `process-return`, `execute`, `cleanup`, `reconcile`, `duplicates`, `variants`, `merge`, `flagged`, `csv-export`.
 - Natural language: "organise my drive", "sort these files into folders", "my folder structure got messed up — fix it", "find duplicate files", "show me the folder tree".
 
 Example:
@@ -58,7 +58,7 @@ Example:
 4. **Apply + repeat:** the skill executes approved moves, *learns rules from your edits*, removes empty folders, and refills the next batch. Repeat until the drive is sorted.
 5. **Maintain:** run `reconcile` if the structure ever drifts; do the final pass `duplicates` → `variants` → `merge` once organising is done.
 
-Other things you can do: `reconcile` (detect/repair drift), `duplicates --colocate`, `variants` + `merge` (combine annotated PDFs), `mark-unapproved` (quarantine legacy folders). Full reference: [`SKILL.md`](SKILL.md).
+Other things you can do: `reconcile` (detect/repair drift), `duplicates --colocate`, `variants` + `merge` (combine annotated PDFs). Full reference: [`SKILL.md`](SKILL.md).
 
 ## Sibling skills
 
@@ -66,6 +66,6 @@ Other things you can do: `reconcile` (detect/repair drift), `duplicates --coloca
 
 ## For developers
 
-> **v1.3.1 status:** Hardened by two whole-file code reviews — a 19-fix pass (1.3.0) and a 140-fix Phase-0 baseline review (1.3.1, incl. path-traversal/atomic-write/dedup/cross-platform fixes) — and verified on a >25 GB four-loop sandbox gate (all invariants passed). It has been through the multi-agent `simplify` polish, but **not yet a cold `/skill-tracer` run to convergence** — that full trace is planned. Treat it as code-reviewed and gate-verified, but not yet formally trace-converged.
+> **v2.0.0 status:** Breaking release — scan priority is now rules-based and the `mark-unapproved` / x-folder mechanism is removed (see [`HISTORY.md`](HISTORY.md)). Hardened across the 1.3.x line (a 19-fix pass + a 140-fix baseline review) and this release (a diff-scoped code review + the multi-agent `simplify` polish), and verified on a >25 GB four-loop sandbox gate (all invariants passed). **Not yet a cold `/skill-tracer` run to convergence** — that full trace is planned once the feature line is complete. Treat it as code-reviewed and gate-verified, but not yet formally trace-converged.
 
 The runtime workflow lives in [`SKILL.md`](SKILL.md). Provenance and changelog live in [`HISTORY.md`](HISTORY.md). To trace this skill for bugs: `/skill-tracer drive-organizer`. To ship a new version: `/skill-publisher drive-organizer`.

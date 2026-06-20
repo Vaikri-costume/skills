@@ -21,7 +21,6 @@ See also: [`~/.claude/skills/skill-creator-ccvw/references/ccvw-glossary.md`](..
 | flagged | A file marked `?` in the viewer (`status='flagged'`) — excluded from propose until peeked and reclassified |
 | learning loop | The propose/process-return mechanism that turns an approved edited destination into a new `.tidy-rules.json` rule |
 | `_Inbox/` | The staging leaf where files with no matching rule land, pending manual resolution |
-| mark-unapproved | The one-time pre-scan step that `x`-prefixes every unknown root folder to quarantine legacy chaos |
 | para_category / para_subfolder | Registry columns. `para_subfolder` = the full destination path relative to root (the only routing field). `para_category` = that path's top-level grouping segment (first segment, e.g. `WORK`), derived from the path — not a separate routing input |
 | per-user override | Per-machine config + template extensions at `[root]/.organizer/` that deep-merge over the shipped skeleton |
 | prefix propagation | The naming rule that carries a parent's name one level down (e.g. `PERSONAL/PERSONAL Financial/`) |
@@ -30,7 +29,6 @@ See also: [`~/.claude/skills/skill-creator-ccvw/references/ccvw-glossary.md`](..
 | registry | The SQLite `registry.db` (authoritative) + auto-mirrored `registry.csv` at `[root]/.organizer/` tracking every file's state |
 | `.tidy-rules.json` | The per-folder classification memory — a list of `{description, folderName}` rules that grows lazily via the learning loop |
 | `subfolder-templates.json` | The shipped source-of-truth describing the *shape* of the tree (which children each parent type expects) |
-| x-folder | A folder `x`-prefixed by mark-unapproved — deferred staging for unsorted/legacy files, scanned at lowest priority, never renamed again |
 
 ## When to update this glossary
 
