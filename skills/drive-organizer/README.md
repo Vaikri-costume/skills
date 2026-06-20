@@ -33,7 +33,7 @@ It deliberately prioritises, and a fix that trades any of these away should be s
 
 **Cowork / Claude Desktop:** zip the `drive-organizer/` folder and add it via **Settings → Capabilities → Skills**.
 
-**Requirements:** Python 3.9+ (standard library). Optional: `mutagen` (audio metadata), `PyMuPDF` (PDF annotation merge), `organize-tool` (reconcile drift cross-check) — `pip3 install --user --break-system-packages mutagen pymupdf organize-tool`.
+**Requirements:** Python 3.9+ (standard library). Optional: `mutagen` (audio metadata), `PyMuPDF` (PDF annotation merge), `organize-tool` (reconcile drift cross-check), `Pillow` (image EXIF metadata for vision-off routing) — `pip3 install --user --break-system-packages mutagen pymupdf organize-tool pillow`.
 
 (Not yet on a marketplace — install manually as above; a `claude plugins install` command will replace this once published.)
 

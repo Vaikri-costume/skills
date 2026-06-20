@@ -14,6 +14,8 @@ Consult this file when invoking any of the commands below, hitting their errors,
 - [variants](#variants) — final pass: fuzzy-name groups
 - [merge](#merge) — final pass: combine PDF annotations across versions
 - [csv-export](#csv-export) — refresh the registry's CSV mirror
+- [exif](#exif) — image routing metadata for vision-off models
+- [merge-category](#merge-category) — add one taxonomy category via a JSON diff
 - [folder-tree](#folder-tree-on-demand-view) — on-demand: render the organised tree (rules ∩ disk)
 - [cleanup recipes](#cleanup-per-sync-app-eviction-recipes) — per-sync-app eviction commands
 
@@ -180,6 +182,45 @@ python3 ~/.claude/drive-organizer/organizer.py csv-export
 Forces a manual refresh of `<root>/.organizer/registry.csv` from the SQLite registry. Every mutation already mirrors automatically (scan, execute, duplicates --colocate, merge, etc.) so this command is rarely needed — only run it if the CSV looks out of date, has been manually edited and you want to overwrite the changes, or has been deleted.
 
 The CSV is meant for human auditing (open in Numbers / Excel / a text editor); the SQLite `registry.db` is the authoritative source. Both live in `<root>/.organizer/`.
+
+---
+
+## exif
+
+```bash
+python3 ~/.claude/drive-organizer/organizer.py exif "<path to image>"
+```
+
+Prints routing-useful image metadata as a single JSON object — the **vision-off degradation path** (see SKILL.md "Model capabilities"). When the running model can't see images, a classification agent calls this to route a photo by its capture date instead of its pixels (e.g. matching a project's `production_period`).
+
+Output fields: `date` (`YYYY-MM-DD`), `camera` (Make + Model), `width`, `height`, plus `source` (`exif` | `filename` | `none`) and a `note`. It is deliberately **total** — it never errors and always prints an object:
+
+- Pillow is an **optional** dependency. With it installed, `date`/`camera`/dimensions come from embedded EXIF (`source: "exif"`). Install for richer metadata: `pip3 install --user --break-system-packages pillow`.
+- Without Pillow (or when the image carries no EXIF), it degrades to the filename-derived date via the same `-PHOTO-YYYY-MM-DD` pattern the image router uses (`source: "filename"`), and `note` explains the degrade.
+- A missing file or unreadable image still returns the JSON object with `source: "none"` and an explanatory `note` — callers never have to handle a non-zero exit.
+
+This subcommand only **reports** metadata; it does not move or rename anything.
+
+---
+
+## merge-category
+
+```bash
+python3 ~/.claude/drive-organizer/organizer.py merge-category \
+  --diff '{"name":"Grants","description":"grant / funding paperwork in Grants","parent":"Financials"}'
+```
+
+Adds **one** category to the user's taxonomy from a small JSON **diff**, instead of having a model rewrite the whole nested templates file (fragile under context accumulation — the model owns the *diff*, Python owns the *merge*). Writes into the **per-user override** at `<root>/.organizer/templates.json` (atomic write), which `templates` / `_load_templates` deep-merge over the shipped skeleton — the shipped `references/subfolder-templates.json` is never touched.
+
+`--diff` is a JSON object:
+
+| Key | Required | Effect |
+|---|---|---|
+| `name` | yes | The new subfolder name; written into the override's `subfolder_definitions` |
+| `description` | no | Signal-term gloss for the classifier (convention: "… in `<name>`"). Updates the existing description if the name already exists |
+| `parent` | no | A compound parent type (e.g. `Financials`); appends `name` to that parent's `compound_children[parent].children` so the cascade offers it as a valid child |
+
+Prints a JSON receipt: `{merged, override, action: "added"|"updated", linked_under}`. Invalid JSON, a non-object diff, a missing `name`, or an unparseable existing override all exit non-zero with a one-line error — so a bad diff fails loudly rather than corrupting the override. Use this when the learning loop discovers a genuinely new category that the templates don't yet define; for per-folder file→folder rules use the `.tidy-rules.json` learning loop instead.
 
 ---
 

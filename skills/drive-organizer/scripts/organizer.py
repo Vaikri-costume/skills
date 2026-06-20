@@ -348,6 +348,98 @@ def cmd_templates(args):
     print(json.dumps(_load_templates(), ensure_ascii=False, indent=2))
 
 
+def cmd_exif(args):
+    """Extract routing-useful image metadata (Feature 2 — used when the running model has no
+    vision: route an image by EXIF instead of pixels). ALWAYS prints a JSON object and never
+    errors out: Pillow is an optional dep, and without it (or without embedded EXIF) it
+    degrades to the filename-derived date. Routing-useful fields: `date` (match a project's
+    production_period), `camera`, dimensions."""
+    path = Path(args.path).expanduser()
+    out = {"path": str(path), "date": None, "camera": None,
+           "width": None, "height": None, "source": "none", "note": None}
+    if not path.exists():
+        out["note"] = "file not found"
+        print(json.dumps(out, ensure_ascii=False)); return
+    fdate = extract_photo_date(path.name)          # always-available, no-dep fallback
+    if fdate:
+        out["date"], out["source"] = fdate, "filename"
+    try:
+        from PIL import Image                       # optional dep — degrade gracefully if absent
+        with Image.open(path) as im:
+            out["width"], out["height"] = im.size
+            raw = im.getexif()
+            exif_ifd = {}
+            try:
+                exif_ifd = raw.get_ifd(0x8769)      # Exif sub-IFD: DateTimeOriginal lives here
+            except Exception:
+                pass
+            dt = exif_ifd.get(36867) or exif_ifd.get(36868) or raw.get(306)  # Orig/Digitized/DateTime
+            if dt:
+                out["date"] = str(dt)[:10].replace(":", "-")   # "YYYY:MM:DD …" → "YYYY-MM-DD"
+                out["source"] = "exif"
+            cam = " ".join(str(x).strip() for x in (raw.get(271), raw.get(272)) if x)  # Make, Model
+            if cam:
+                out["camera"] = cam
+    except ImportError:
+        out["note"] = "Pillow not installed — EXIF unavailable; using filename date if any (pip install pillow for richer metadata)"
+    except Exception as e:
+        out["note"] = f"EXIF read failed ({e}); using filename date if any"
+    print(json.dumps(out, ensure_ascii=False))
+
+
+def cmd_merge_category(args):
+    """Apply a diff-only taxonomy addition to the per-user templates override (Feature 2 —
+    the model emits a small JSON DIFF and Python owns the merge, instead of the model
+    rewriting the whole nested templates file, which is fragile under context accumulation).
+
+    Diff (JSON): {"name": "<new subfolder>", "description": "<signal terms> in <name>",
+                  "parent": "<optional compound-parent type, e.g. Financials>"}
+    Writes name→description into the override's `subfolder_definitions`, and (if `parent` names
+    a compound parent) appends `name` to that parent's `compound_children[parent].children`.
+    `_load_templates` deep-merges the override over the shipped skeleton, so the addition takes
+    effect on the next propose; the shipped skeleton is never touched."""
+    root = Path(_EFFECTIVE_ROOT)
+    try:
+        diff = json.loads(args.diff)
+    except Exception as e:
+        sys.exit(f'Error: --diff is not valid JSON ({e}). Expected '
+                 f'{{"name": "...", "description": "... in <name>", "parent": "<optional>"}}')
+    if not isinstance(diff, dict):
+        sys.exit("Error: --diff must be a JSON object.")
+    name = str(diff.get("name", "")).strip()
+    desc = str(diff.get("description", "")).strip()
+    parent = str(diff.get("parent", "")).strip()
+    if not name:
+        sys.exit("Error: diff.name (the new subfolder name) is required.")
+    override = root / ".organizer" / "templates.json"
+    override.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        data = json.loads(override.read_text(encoding="utf-8")) if override.exists() else {}
+    except Exception as e:
+        sys.exit(f"Error: could not parse {override} ({e}); fix or remove it before merging.")
+    if not isinstance(data, dict):
+        sys.exit(f"Error: {override} is not a JSON object.")
+    defs = data.setdefault("subfolder_definitions", {})
+    if not isinstance(defs, dict):
+        sys.exit(f"Error: {override} 'subfolder_definitions' is not an object.")
+    existed = name in defs
+    defs[name] = desc or defs.get(name, "")
+    linked = False
+    if parent:
+        cc = data.setdefault("compound_children", {})
+        if not isinstance(cc, dict):
+            sys.exit(f"Error: {override} 'compound_children' is not an object.")
+        pnode = cc.setdefault(parent, {})
+        if isinstance(pnode, dict):
+            kids = pnode.setdefault("children", [])
+            if isinstance(kids, list) and name not in kids:
+                kids.append(name); linked = True
+    _atomic_write(override, json.dumps(data, ensure_ascii=False, indent=2))
+    print(json.dumps({"merged": name, "override": str(override),
+                      "action": "updated" if existed else "added",
+                      "linked_under": parent if linked else None}, ensure_ascii=False))
+
+
 def _bubble_sort_proposals(proposals: list) -> list:
     """
     Sort proposals by destination so files going to the same leaf appear
@@ -1722,9 +1814,21 @@ def cmd_propose(args):
     # values, each overridable per-run. A "blocked-open" file is never opened: it's
     # routed deterministically by the W1 matcher, or sent to the classifier with a
     # route_by_name_only flag (filename + path only), or falls to _Inbox.
-    vision_on = cfg.get("vision", True)
+    # Model capabilities (Feature 2 — model-agnostic): can the running model open file
+    # CONTENTS (peek) and SEE images (vision)? Default both on; `config.json`
+    # "model_capabilities": {"peek": bool, "vision": bool} overrides; per-run --no-peek /
+    # --no-vision win (precedence: flag > config). `vision` also reads the legacy top-level
+    # "vision" key for back-compat. When a capability is off the skill DEGRADES rather than
+    # failing: peek off ⇒ agents classify from the pre-extracted content_peek, never opening
+    # files; vision off ⇒ images route by name/path/EXIF (`organizer.py exif`). See SKILL.md.
+    caps = cfg.get("model_capabilities")
+    caps = caps if isinstance(caps, dict) else {}   # a malformed (non-dict) value degrades to defaults, never crashes
+    vision_on = caps.get("vision", cfg.get("vision", True))
     if getattr(args, "no_vision", False):
         vision_on = False
+    peek_on = caps.get("peek", True)
+    if getattr(args, "no_peek", False):
+        peek_on = False
     skip_types = set(str(t).lower() for t in cfg.get("skip_types", []))
     if getattr(args, "skip_types", None):
         skip_types |= {t.strip().lower() for t in args.skip_types.split(",") if t.strip()}
@@ -1824,6 +1928,10 @@ def cmd_propose(args):
     print(f"To classify: {len(to_classify)} file(s) in {n_batches} batch(es) of {BATCH} "
           f"(fan-out one sub-agent per classify_batch){'; ' + str(name_only) + ' route-by-name-only (open blocked)' if name_only else ''}.",
           file=sys.stderr)
+    print(f"Model capabilities: peek={'on' if peek_on else 'off'}, vision={'on' if vision_on else 'off'}. "
+          f"Fill [CAPABILITIES] in references/classify-prompt.md from this: peek off ⇒ agents classify from the "
+          f"pre-extracted content_peek and NEVER open files; vision off ⇒ route images by name/path + "
+          f"`organizer.py exif <path>` metadata, never opening pixels.", file=sys.stderr)
 
     # Write project-metadata sidecar so Claude can look up filename_tag and
     # production_period for each known project when classifying.
@@ -3824,8 +3932,11 @@ def _category_names() -> set:
     if isinstance(cc, dict):
         names |= set(cc.keys())
         for v in cc.values():
-            if isinstance(v, list):
-                for x in v:
+            # Shipped/override shape is {"children": [...]}; tolerate a bare list too
+            # (older or hand-edited overrides) so neither form is silently dropped.
+            kids = v.get("children", []) if isinstance(v, dict) else v
+            if isinstance(kids, list):
+                for x in kids:
                     if isinstance(x, str):
                         names.add(x)
                     elif isinstance(x, dict) and "name" in x:
@@ -5186,6 +5297,8 @@ def main():
                            help="Force the W1 fast-path on for this run (overrides config)")
     p_propose.add_argument("--no-vision", action="store_true", dest="no_vision",
                            help="W1b cost toggle: never open images for vision; route them by name/path/rule only")
+    p_propose.add_argument("--no-peek", action="store_true", dest="no_peek",
+                           help="Model-agnostic: the running model cannot open file CONTENTS; agents classify from the pre-extracted content_peek + name/path only, never opening files")
     p_propose.add_argument("--skip-types", dest="skip_types", metavar="EXT,EXT",
                            help="W1b cost toggle: comma-separated extensions the classifier never opens (e.g. .mov,.raw)")
     p_propose.add_argument("--skip-over-mb", dest="skip_over_mb", type=float, metavar="N",
@@ -5228,6 +5341,15 @@ def main():
 
     sub.add_parser("csv-export", help="Refresh <root>/.organizer/registry.csv from the SQLite registry")
     sub.add_parser("templates", help="Print merged templates (shipped skeleton + per-user override) as JSON")
+
+    p_exif = sub.add_parser("exif",
+                            help="Image metadata (date/camera/dimensions) as JSON for vision-off routing; Pillow-optional, degrades to filename date, never errors")
+    p_exif.add_argument("path", help="Path to the image file")
+
+    p_merge_cat = sub.add_parser("merge-category",
+                                 help="Add a taxonomy category from a small JSON diff into the per-user templates override (Python owns the merge)")
+    p_merge_cat.add_argument("--diff", required=True,
+                             help='JSON: {"name": "<subfolder>", "description": "<signal terms> in <name>", "parent": "<optional compound parent>"}')
 
     sub.add_parser("inbox-list",
                    help="List files currently in _Inbox as JSON (count + records) for the arbiter sweep")
@@ -5292,6 +5414,8 @@ def main():
         "cleanup":          cmd_cleanup,
         "csv-export":       cmd_csv_export,
         "templates":        cmd_templates,
+        "exif":             cmd_exif,
+        "merge-category":   cmd_merge_category,
         "reconcile":        cmd_reconcile,
         "rules":            cmd_rules,
         "rules-viewer":     cmd_rules_viewer,
