@@ -1,7 +1,7 @@
 # Inbox Arbiter Prompt — drive-organizer
 <!-- The orchestrator fills every [SLOT] and dispatches ONE arbiter per ≤25-file batch.
      PATHS ONLY. This is a periodic _Inbox-reclamation sweep, NOT a per-round step — see
-     "When this runs" in SKILL.md (triggered when the registry's _Inbox population reaches
+     the "Inbox arbiter sweep" note in SKILL.md's propose section (triggered when the registry's _Inbox population reaches
      ~100 files; the sweep covers ALL _Inbox files, including ones inboxed in earlier rounds,
      because rules learned since then may now place them). Keep light: pointers, not inlines. -->
 

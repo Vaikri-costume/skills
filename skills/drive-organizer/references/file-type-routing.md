@@ -330,7 +330,7 @@ Same as conflict-suffixed — strip the trailing `-<month>` and treat the result
 
 Extensions: `.dxr`, `.cxt` Adobe Director; `.swf`, `.fla` Flash; `.pfm`, `.pfb` PostScript fonts; `.physicmaterial`, `.prefab`, `.unity` Unity game engine; `.inf` Windows installer info; `.au` Sun audio.
 
-These are project-internal files for obsolete or specialized software. **The file type itself doesn't determine routing** — these files are almost always part of an atomic-unit folder (Unity project, Director bundle, archived software dump). If the file appears loose at root, route to `_Inbox/`. **Path takes precedence over file type**: if the parent folder is marked `external: true` or is x-prefixed, the folder rule wins and the file is never touched, regardless of its extension.
+These are project-internal files for obsolete or specialized software. **The file type itself doesn't determine routing** — these files are almost always part of an atomic-unit folder (Unity project, Director bundle, archived software dump). If the file appears loose at root, route to `_Inbox/`. **Path takes precedence over file type**: if the parent folder is marked `external: true`, the folder rule wins and the file is never touched, regardless of its extension.
 
 ---
 

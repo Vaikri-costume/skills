@@ -1,7 +1,7 @@
 ---
-version: "1.3.1"
+version: "2.0.0"
 category: C
-parent-version: "1.3.0"
+parent-version: "1.3.1"
 author:
   primary: "Vaikri-costume"
 inspirations:
@@ -13,6 +13,24 @@ inspirations:
 # History — drive-organizer
 
 ## Changelog
+
+### 2.0.0 — 2026-06-17
+- **BREAKING — scan priority is now rules-based; the x-folder quarantine + `mark-unapproved` are removed.**
+  Previously, unknown root folders were `x`-prefixed (via the `mark-unapproved` subcommand) to defer them,
+  and scan bucketed by that `x` convention. Now a folder is simply scanned by **whether it has rules**: the
+  6-bucket priority is P1/P2 = folders **with** rules (downloaded / cloud), P3/P4 = loose root files,
+  P5/P6 = folders **without** rules. Unruled folders are scanned automatically at low priority and their
+  files classified through the normal flow (landing in `_Inbox/` only when no rule matches) — no manual
+  quarantine step.
+  - **Removed:** the `mark-unapproved` subcommand (and its function, CLI parser, and dispatch entry) and the
+    entire `x`-folder concept (every `startswith("x")` check across scan, download-batch, vocab-learning,
+    dedup keeper, reconcile, coverage-gaps, project-metadata, and bootstrap).
+  - **Migration:** drives that were previously `x`-prefixed need no migration to keep working — an
+    `xFoo` folder is now just an unruled folder (scanned at P5/P6); the `x` prefix is inert. (Renaming such
+    folders back is an optional cosmetic cleanup, not required.)
+  - Verified: >25 GB four-loop sandbox gate (all invariants passed) + a diff-scoped code review (1 HIGH +
+    2 MEDIUM + 2 LOW fixed, incl. a tuple-form `x`-prune in reconcile that would have falsely reported a
+    file in an `xml/`-named folder as missing-on-disk).
 
 ### 1.3.1 — 2026-06-17
 - **Phase-0 baseline hardening** — the clean diff baseline for the v2.x incremental delivery. A full
