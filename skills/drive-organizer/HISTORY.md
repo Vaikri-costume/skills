@@ -1,7 +1,7 @@
 ---
-version: "2.2.0"
+version: "2.3.0"
 category: C
-parent-version: "2.1.0"
+parent-version: "2.2.0"
 author:
   primary: "Vaikri-costume"
   history:
@@ -23,6 +23,22 @@ inspirations:
 # History — drive-organizer
 
 ## Changelog
+
+### 2.3.0 — 2026-06-20
+- **Automated eviction — `cleanup --evict`.** The new flag dehydrates the organised top-level
+  grouping folders (e.g. `WORK/`, `PERSONAL/` — never the `_Inbox/`/`Archive/` staging folders) to
+  online-only, freeing local disk while cloud copies stay (re-downloadable). Per-OS, best-effort:
+  macOS `brctl evict` (File-Provider/iCloud drives; OneDrive-on-macOS has no CLI → falls back to the
+  manual recipe), Windows `attrib +U -P … /s /d` (OneDrive Files-On-Demand, unverified), Linux/other
+  → manual recipe. Non-destructive of data and never errors the run: a per-folder failure, a missing
+  tool, or an unsupported OS degrades to the printed recipe. Without `--evict`, `cleanup` is unchanged
+  (empty-folder removal only). Minor bump.
+- Docs: `references/subcommands.md` "cleanup" + SKILL.md cleanup step document `--evict` and keep the
+  manual per-app recipe as the documented fallback.
+- Ship-time polish (publisher Run 8): trimmed always-loaded duplication — dropped the cloud-detection
+  mechanism cross-ref from the `compatibility` frontmatter, pulled the per-OS evict commands out of the
+  SKILL.md cleanup step (they live in `references/subcommands.md`), and deduped the `[CAPABILITIES]`
+  slot-fill instruction to a single home.
 
 ### 2.2.0 — 2026-06-20
 - **Platform-agnostic cloud handling (Windows + Linux).** The default drive root is now resolved
