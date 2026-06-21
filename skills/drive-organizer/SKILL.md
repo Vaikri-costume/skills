@@ -2,7 +2,7 @@
 name: drive-organizer
 description: "Cascading-Q file organiser that sorts any drive (cloud-synced, external, or local) into configurable top-level groupings (e.g. ENTERTAINMENT, PERSONAL, WORK, EDUCATION, RESOURCES). Invoke whenever the user runs /drive-organizer or a subcommand (status, scan, propose, generate-viewer, process-return, execute, cleanup, reconcile, duplicates, variants, merge, flagged, exif, merge-category, csv-export), or asks to organise, sort, or tidy a drive, process a batch into folders, detect duplicates or variant files (e.g. plain vs highlighted PDF), reconcile a drifted folder structure, or run a rolling download-and-organise workflow. Routing follows four cascading questions — top-level grouping, thing inside, functional area, leaf type — driven by per-folder .tidy-rules.json rules that grow lazily via a learning loop. Works on any drive via a configured root (set once per machine); a Python backend keeps a SQLite registry plus an auto-mirrored CSV so duplicates are caught across batches and state stays auditable."
 license: MIT
-compatibility: "Python 3.9+ (standard library). Optional: mutagen (audio metadata), PyMuPDF (PDF annotation merge), organize-tool (reconcile drift-check + dedup cross-check), Pillow (image EXIF metadata). Cross-platform cloud-placeholder detection: macOS verified, Windows/Linux best-effort (mechanism per references/subcommands.md). The browser approval viewer needs a local display. Runs in Claude Code and Cowork."
+compatibility: "Python 3.9+ (standard library). Optional: mutagen (audio metadata), PyMuPDF (PDF annotation merge), organize-tool (reconcile drift-check + dedup cross-check), Pillow (image EXIF metadata). Cross-platform cloud-placeholder detection: macOS verified, Windows/Linux best-effort. The browser approval viewer needs a local display. Runs in Claude Code and Cowork."
 allowed-tools:
   - Bash
   - Read
@@ -12,7 +12,7 @@ metadata:
   tier: claude-users
   created: "2026-05-18"
   created-by: Vaikri-costume
-  parent-version: "2.1.0"
+  parent-version: "2.2.0"
   intended-audience: claude-users
 ---
 
@@ -233,7 +233,7 @@ A toggled-off / blocked file is never dropped: the W1 matcher gives it a determi
 
 #### Model capabilities — graceful degradation (model-agnostic)
 
-The backend assumes nothing about which model runs it. Two capabilities — declared in `<root>/.organizer/config.json` under `model_capabilities` (both default `true`; precedence **flag > config > default**) — gate how classification agents inspect files. `propose` resolves them and prints a `Model capabilities: peek=… vision=…` stderr line; fill the `[CAPABILITIES]` slot of `references/classify-prompt.md` from it (slot list under "Fan out classification" below). Like the cost toggles above, degradation never drops a file — a model with neither capability routes by name/path/rules/EXIF, falling to `_Inbox/` only when nothing matches:
+The backend assumes nothing about which model runs it. Two capabilities — declared in `<root>/.organizer/config.json` under `model_capabilities` (both default `true`; precedence **flag > config > default**) — gate how classification agents inspect files. `propose` resolves them and prints a `Model capabilities: peek=… vision=…` stderr line that feeds the `[CAPABILITIES]` slot (filled per "Fan out classification" below). Like the cost toggles above, degradation never drops a file — a model with neither capability routes by name/path/rules/EXIF, falling to `_Inbox/` only when nothing matches:
 
 - **`peek`** — open file CONTENTS (`model_capabilities.peek`, flag `--no-peek`). Off ⇒ agents classify from the pre-extracted `content_peek` + name/path + rules only; never open a file.
 - **`vision`** — see IMAGES (`model_capabilities.vision`, legacy top-level `vision`; flag `--no-vision`). Off ⇒ route images by name/path/rule + `organizer.py exif <path>` metadata; pixels never opened.
@@ -457,7 +457,7 @@ If execute exits with `"Error: approved file not found: <path>"` — the viewer 
 python3 ~/.claude/drive-organizer/organizer.py cleanup
 ```
 
-Removes empty directories left behind after execute. The root-level staging folders (`_Inbox/`, `Archive/`) and the Archive subdirs (`Archive/_To Delete/`, `Archive/_Duplicates/`, `Archive/_Merged-Originals/`) are never deleted. Report how many folders were removed, then tell the user how to free local disk space by evicting the grouping folders this batch wrote to (e.g. `WORK/`, `PERSONAL/` — not the staging folders) via their sync app — the per-app eviction recipes (OneDrive / iCloud / Dropbox / Google Drive) are in `references/subcommands.md` "cleanup".
+Removes empty directories left behind after execute. The root-level staging folders (`_Inbox/`, `Archive/`) and the Archive subdirs (`Archive/_To Delete/`, `Archive/_Duplicates/`, `Archive/_Merged-Originals/`) are never deleted. Report how many folders were removed, then free local disk space by evicting the organised grouping folders (e.g. `WORK/`, `PERSONAL/` — not the staging folders) to online-only. Pass **`cleanup --evict`** to automate this per-OS (best-effort; falls back to the manual recipe on failure / unsupported OS); without it, tell the user the manual per-app recipe. Full behaviour + per-OS commands + recipes in `references/subcommands.md` "cleanup".
 
 If the script exits with `Error: root path not found: <path>`, confirm the drive is mounted and the sync app is running.
 
