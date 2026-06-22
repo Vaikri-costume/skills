@@ -58,14 +58,14 @@ Do not invent findings to fill the ledger. If nothing outside the categories sur
 
 ## Worked example — what a `SEC*` cluster looks like
 
-A confirmed security finding becomes a `SEC*` cluster in the TIER-phase ledger, with exact-quote evidence and an Address (per `ship-checklist.md`). Shape of the finding the orchestrator records:
+A confirmed security finding becomes a TIER-phase ledger cluster, with exact-quote evidence and an Address (per `ship-checklist.md`). Shape of the finding the orchestrator records:
 
 ```
-SEC-injection-vector: SKILL.md Step 4 instructs the orchestrator to invoke a shell command containing a user-supplied value without quoting or escaping. A value like `; rm -rf /` would execute as a separate command.
+Cluster C<n>: SKILL.md Step 4 instructs the orchestrator to invoke a shell command containing a user-supplied value without quoting or escaping. A value like `; rm -rf /` would execute as a separate command.
 File: <target-skill>/SKILL.md (the dispatch/shell-invocation site — this is an illustrative example; pin to the actual finding location when recording a real cluster)
 Evidence: "Run `bash -c \"find ~/.claude/skills/$SKILL_NAME -name SKILL.md\"` to locate the target skill's manifest."
 Why it's a risk: $SKILL_NAME is sourced from the user's natural-language invocation with no quoting, no character allowlist, no validation. A name containing shell metacharacters injects into the bash -c command.
 → Address: FIX (<target-skill>/SKILL.md: quote and allowlist-validate $SKILL_NAME before interpolation)
 ```
 
-The orchestrator writes the cluster to the ledger with `scripts/append_ledger.py` (Phase `TIER`, Cluster `SEC-injection-vector`, Address as above) — it rejects a literal `|` or embedded newline that would corrupt the row.
+The orchestrator writes the cluster to the ledger with `scripts/append_ledger.py` (Phase `TIER`, Cluster `C<n>` — the next sequential cluster number in this Run — Flags `SEC-injection-vector`, Address as above) — it rejects a literal `|` or embedded newline that would corrupt the row. `SEC-injection-vector` is a **Flag** identifier (in the Flags column), not a Cluster value; the Cluster column always takes the form `C<n>` (per `references/ledger-format.md` — the `SEC*` family is a TIER sub-family of flag IDs, same as `G-PORT*` / `G-ATTR*` / `G-COWORK*`).

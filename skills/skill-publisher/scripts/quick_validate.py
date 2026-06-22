@@ -2,22 +2,24 @@
 """
 Quick validation script for skills - minimal version
 
-VENDORED COPY — sync contract. Canonical source:
-  ~/.claude/skills/skill-creator-ccvw/scripts/quick_validate.py
-A deliberate copy so skill-publisher runs standalone (without skill-creator-ccvw
-installed). MUST stay behaviorally in sync with the canonical source — the build
-skill authors the spec these checks enforce, so a drifted copy would gate against
-a different standard than the builder wrote. Check drift:
-  diff ~/.claude/skills/skill-creator-ccvw/scripts/quick_validate.py \\
-       ~/.claude/skills/skill-publisher/scripts/quick_validate.py
-Re-copy from canonical when it changes. (Vendored 2026-05-30.)
+INDEPENDENT COPY — skill-publisher's own copy of a script skill-creator-ccvw also
+has, so the publisher runs standalone (without skill-creator-ccvw installed). The
+sync contract is RETIRED (2026-06-20): the two copies are no longer kept in sync
+and may freely diverge — edit this one for skill-publisher's needs without touching
+the other. (check_shared_sync.py remains only as a dormant manual drift-inspection
+tool; it is not run anywhere and nothing requires the copies to match.)
 """
 
 import sys
 import os
 import re
-import yaml
 from pathlib import Path
+
+try:
+    import yaml
+    _HAS_YAML = True
+except ImportError:
+    _HAS_YAML = False
 
 def validate_skill(skill_path):
     """Basic validation of a skill"""
@@ -29,7 +31,7 @@ def validate_skill(skill_path):
         return False, "SKILL.md not found"
 
     # Read and validate frontmatter
-    content = skill_md.read_text()
+    content = skill_md.read_text(encoding="utf-8")
     if not content.startswith('---'):
         return False, "No YAML frontmatter found"
 
@@ -41,6 +43,8 @@ def validate_skill(skill_path):
     frontmatter_text = match.group(1)
 
     # Parse YAML frontmatter
+    if not _HAS_YAML:
+        return False, "PyYAML not installed — cannot validate frontmatter (run: pip install pyyaml)"
     try:
         frontmatter = yaml.safe_load(frontmatter_text)
         if not isinstance(frontmatter, dict):

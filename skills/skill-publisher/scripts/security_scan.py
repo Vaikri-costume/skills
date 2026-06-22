@@ -91,7 +91,7 @@ def scan_file(path: Path, rel: str, prose: bool):
     (.py/.sh/.js/.ts + executables) produce real findings."""
     findings, prose_matches = [], []
     try:
-        text = path.read_text(errors="replace")
+        text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
         # Signal unreadability to the caller so it is surfaced, not silently
         # counted as a clean scan (the file was already tallied in `scanned`).
