@@ -34,10 +34,9 @@ inspirations:
 - Progressive-disclosure refactor of SKILL.md: 13 self-contained blocks of step mechanics moved out of SKILL.md into the reference files each step already loads (recovery-protocol, github-pr-workflow, ship-checklist, tier-transition-checks, ledger-format, changelog-format, audit-prompt, changelog-agent-prompt), leaving followable pointers — bringing SKILL.md from ~10,800 to ~8,350 words.
 - Polished SKILL.md + README.md prose (source-precedence and per-tier portability redundancies, small verbosity); added an explicit negative-trigger boundary to the description.
 - `recover_dispatch.py` now recovers either cold dispatch — the Step-3 audit or the Step-7 changelog proposal — selected by `--kind`, sharing one scan core.
+- The dormant shared-script drift-inspection tool was reworked from `check_vendored_sync.py` into `check_shared_sync.py` (part of the sync-contract retirement) — inspection-only, not in the ship flow, so no user-facing capability is removed.
 #### Fixed
 - Correctness and trace fixes across the scripts: explicit UTF-8 encoding on ledger/scan file I/O, an `append_ledger.py` row-regex widened to tolerate alphanumeric phase tokens, `skill-tracer`→`skill-publisher` docstring corrections, and stale `check_vendored_sync.py` references updated to `check_shared_sync.py`.
-#### Removed
-- `check_vendored_sync.py`, superseded by `check_shared_sync.py` (dormant shared-script drift-inspection).
 #### Security
 - `security_scan`: reworded an in-prose `eval (` reference so it no longer trips the scanner's own regex (a false-positive self-flag).
 
