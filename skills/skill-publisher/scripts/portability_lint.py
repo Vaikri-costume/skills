@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
 """CCVW portability lint — static scan of a skill against the portability-spec.
 
-VENDORED COPY — sync contract. Canonical source:
-  ~/.claude/skills/skill-creator-ccvw/scripts/portability_lint.py
-A deliberate copy so skill-publisher runs standalone (without skill-creator-ccvw
-installed). MUST stay behaviorally in sync with the canonical source — this lint
-ENFORCES skill-creator-ccvw's portability-spec, so a drifted copy would have the
-publisher enforce a different portability standard than the builder authored.
-Check drift:
-  diff ~/.claude/skills/skill-creator-ccvw/scripts/portability_lint.py \\
-       ~/.claude/skills/skill-publisher/scripts/portability_lint.py
-Re-copy from canonical when it changes. (Vendored 2026-05-30.)
+INDEPENDENT COPY — skill-publisher's own copy of a script skill-creator-ccvw also
+has, so the publisher runs standalone (without skill-creator-ccvw installed). The
+sync contract is RETIRED (2026-06-20): the two copies are no longer kept in sync
+and may freely diverge — edit this one for skill-publisher's needs without touching
+the other. (check_shared_sync.py remains only as a dormant manual drift-inspection
+tool; it is not run anywhere and nothing requires the copies to match.)
 
 Pure-stdlib (json + re only — uses bespoke minimal YAML frontmatter parser so
 it runs on machines without PyYAML installed).
@@ -58,7 +54,7 @@ CLAUDE_BODY_PATTERNS = [
     (r"\$\{CLAUDE_SESSION_ID\}", "claude-extension", "${CLAUDE_SESSION_ID} is Claude-specific"),
     (r"\bAgent\s+tool\b", "claude-extension", "Agent tool dispatch is Claude-specific"),
     (r"\bWebFetch\b", "claude-extension", "WebFetch is Claude-specific"),
-    (r"\bmcp__[a-zA-Z_]+__[a-zA-Z_]+\b", "claude-extension", "mcp__*__* tool names are Claude-specific"),
+    (r"\bmcp__[a-zA-Z0-9_]+__[a-zA-Z0-9_]+\b", "claude-extension", "mcp__*__* tool names are Claude-specific"),
 ]
 
 # Path patterns categorized by which tier each blocks.
@@ -203,13 +199,13 @@ def lint_directories(skill_path):
     # glossary so skill-tracer can read it instead of re-deriving cold.
     if not (Path(skill_path) / "references" / "glossary.md").is_file():
         missing.append("references/glossary.md")
-    # README.md (human intent + skill-tracer's considered-fix input) and HISTORY.md
-    # (provenance + changelog) are CCVW-mandatory root files as of the three-skill
-    # ecosystem refactor. See references/skill-structure-spec.md.
+    # README.md (human intent + skill-tracer's considered-fix input) is CCVW-mandatory.
+    # HISTORY.md is NOT added to ccvw_mandatory_missing: skill-publisher explicitly
+    # supports degraded mode when HISTORY.md is absent (SKILL.md Step 1 "degraded mode"
+    # path), so its absence must not block ship at any tier. It is already surfaced as
+    # a YELLOW gate by readiness_report.py's _gate_history. See references/skill-structure-spec.md.
     if not (Path(skill_path) / "README.md").is_file():
         missing.append("README.md")
-    if not (Path(skill_path) / "HISTORY.md").is_file():
-        missing.append("HISTORY.md")
     return missing
 
 
@@ -357,9 +353,11 @@ def lint_tier_violations(fm, body, body_start_line, tier):
                     "blocks_tier": "model-agnostic",
                 })
 
+    # Pre-split once; all three body-scan blocks below use the same lines.
+    body_lines = body.split("\n") if tier in ("model-agnostic", "claude-users") else []
+
     # Body-level Claude patterns (model-agnostic blocks; claude-users warns; personal allows)
     if tier in ("model-agnostic", "claude-users"):
-        body_lines = body.split("\n")
         for i, line in enumerate(body_lines):
             for pattern, vtype, msg in CLAUDE_BODY_PATTERNS:
                 if re.search(pattern, line):
@@ -373,7 +371,6 @@ def lint_tier_violations(fm, body, body_start_line, tier):
 
     # User-data paths (block at claude-users+ — other users don't have your specific data)
     if tier in ("claude-users", "model-agnostic"):
-        body_lines = body.split("\n")
         for i, line in enumerate(body_lines):
             for path_pattern, suggested in USER_DATA_PATHS:
                 if re.search(path_pattern, line):
@@ -388,7 +385,6 @@ def lint_tier_violations(fm, body, body_start_line, tier):
     # Claude-Code-system paths (block at model-agnostic only — other Claude Code
     # users have them, non-Claude runtimes don't)
     if tier == "model-agnostic":
-        body_lines = body.split("\n")
         for i, line in enumerate(body_lines):
             for path_pattern, suggested in CLAUDE_CODE_SYSTEM_PATHS:
                 if re.search(path_pattern, line):
@@ -500,7 +496,7 @@ def main():
         print(json.dumps({"error": f"SKILL.md not found at {skill_md}"}, indent=2))
         sys.exit(1)
 
-    text = skill_md.read_text()
+    text = skill_md.read_text(encoding="utf-8")
     fm, body, fm_lines = parse_frontmatter(text)
     body_start_line = fm_lines + 1
 
@@ -520,7 +516,7 @@ def main():
     if author is None:
         history_md = skill_path / "HISTORY.md"
         if history_md.is_file():
-            hfm, _, _ = parse_frontmatter(history_md.read_text())
+            hfm, _, _ = parse_frontmatter(history_md.read_text(encoding="utf-8"))
             a = hfm.get("author")
             if isinstance(a, dict):
                 author = a.get("primary")

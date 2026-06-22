@@ -65,7 +65,7 @@ def main() -> int:
         return 2
     skill_root = skill_md.parent
 
-    text = skill_md.read_text()
+    text = skill_md.read_text(encoding="utf-8")
     fm = frontmatter_block(text)
 
     # Servers called anywhere in SKILL.md (frontmatter included — a documented
@@ -75,7 +75,7 @@ def main() -> int:
 
     mcp_server_val = metadata_mcp_server(fm)
     readme = skill_root / "README.md"
-    readme_text = readme.read_text().lower() if readme.is_file() else ""
+    readme_text = readme.read_text(encoding="utf-8").lower() if readme.is_file() else ""
 
     declared = {}
     for srv in called:

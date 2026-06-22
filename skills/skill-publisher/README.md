@@ -2,7 +2,7 @@
 
 ## What this skill does
 
-Takes a finished, traced skill and makes it release-ready, then distributes it. It polishes the prose (a mandatory simplify pass on SKILL.md + README.md), audits CCVW compliance, runs the tier-transition checks that match the skill's intended audience (portability, attribution, security, and Cowork-compatibility), writes the user-facing README sections that teach others how to install and use the skill, bumps the version and appends a changelog entry, packages the skill for distribution, and — when the skill has a GitHub/marketplace origin — opens a pull request.
+Takes a finished, traced skill, makes it release-ready, and distributes it: it polishes the prose (a mandatory simplify pass on SKILL.md + README.md), audits CCVW compliance, runs the tier-transition checks that match the skill's intended audience (portability, attribution, security, and Cowork-compatibility), writes the user-facing README sections that teach others how to install and use the skill, bumps the version and appends a changelog entry, packages the skill for distribution, and — when the skill has a GitHub/marketplace origin — opens a pull request.
 
 It's the **ship** phase of a three-skill ecosystem: **build** (skill-creator-ccvw) → **trace** (skill-tracer) → **ship** (this skill).
 

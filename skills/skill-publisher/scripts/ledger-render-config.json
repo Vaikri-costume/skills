@@ -9,5 +9,5 @@
     "PR": "#ffe6f0"
   },
   "regression_patterns": ["\\bship-regression\\b"],
-  "valid_actions": ["polish", "audit", "tier", "addressing", "packaging", "pr"]
+  "valid_actions": ["polish", "audit", "tier", "addressing", "changelog", "packaging", "pr"]
 }
