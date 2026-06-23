@@ -2,17 +2,22 @@
 """
 Drive Organizer backend.
 
-Usage:
+Usage (run `organizer.py -h` for the authoritative, always-current list and flags):
   organizer.py download-batch [--limit-gb N] [<root_path>]
-  organizer.py scan [<root_path>]
+  organizer.py scan [--limit N] [--limit-gb N]
   organizer.py propose [--limit N]
   organizer.py execute --approved <json_file>
-  organizer.py duplicates
+  organizer.py duplicates [--colocate <file_id>]
   organizer.py variants
   organizer.py merge --group <group_id> --canonical <file_id>
+  organizer.py merge-category --diff <json>
   organizer.py status
   organizer.py generate-viewer --proposals <json_file> [--port 5002]
-  organizer.py cleanup [<root_path>]
+  organizer.py cleanup [--evict] [<root_path>]
+  organizer.py reconcile [--accept|--apply]
+  organizer.py rules [--json] | rules-viewer [--port 5003]
+  organizer.py bootstrap [--detect-atomic|--lock NAMES|--emit|--apply FILE]
+  organizer.py exif <path>  |  csv-export  |  templates  |  flagged  |  inbox-list
 """
 
 from __future__ import annotations  # defer annotation eval so `X | None` works on Python 3.9
@@ -59,12 +64,54 @@ def _default_root() -> Path:
 DEFAULT_ONEDRIVE = _default_root()
 CONFIG_PATH = Path.home() / ".claude" / "drive-organizer" / "config.json"
 _EFFECTIVE_ROOT = DEFAULT_ONEDRIVE  # set in main() from --root / config / DEFAULT
+_PATHS_FINALIZED = False  # flipped by _finalize_runtime_paths(); see get_db()
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".heic", ".heif", ".webp", ".tiff", ".tif", ".bmp", ".jfif"}
 # RAW formats are not in IMAGE_EXTS — Claude can't vision-read them, and the skill routes
 # them by filename + parent folder via the Documents/RAW process instead.
 SKIP_NAMES = {".DS_Store", ".localized", "desktop.ini", "thumbs.db", ".tidy-rules.json"}
 SKIP_EXTS  = {".tmp", ".partial", ".lnk", ".ini"}
+
+# Optional third-party libraries. Each enables a RICHER signal, but every call site
+# guards its import and degrades cleanly when the library is absent (PDF/audio peek →
+# None and the file routes by name/path/rule; EXIF → filename-date fallback; merge →
+# a clean "not installed" exit). The probe below is purely informational: it surfaces
+# which optional features are inactive ONCE at startup, so "why didn't it read the PDF
+# text / audio tags?" is a visible one-line notice instead of a silent surprise.
+# (`organize-tool` is deliberately NOT here: reconcile only *emits* a hand-written YAML
+#  artifact for an optional manual cross-check — it never invokes the external tool, so
+#  there is no runtime dependency to degrade.)
+_OPTIONAL_DEPS = [
+    ("fitz",    "pymupdf", "PDF text-peek + annotation merge"),
+    ("mutagen", "mutagen", "audio tag reading (artist / album / title)"),
+    ("PIL",     "pillow",  "EXIF date + camera for vision-off image routing"),
+]
+
+
+def _missing_optional_deps() -> list:
+    """Return [(pip_name, what_it_enables), …] for each optional dep that is NOT
+    importable. Pure check — each import is guarded, never raises."""
+    missing = []
+    for module, pip_name, enables in _OPTIONAL_DEPS:
+        try:
+            __import__(module)
+        except Exception:
+            missing.append((pip_name, enables))
+    return missing
+
+
+def _print_optional_deps_notice():
+    """One-line stderr notice naming any inactive optional features (degraded, not
+    broken). Silent when everything is present, so a fully-provisioned install sees
+    nothing."""
+    missing = _missing_optional_deps()
+    if not missing:
+        return
+    items = "; ".join(f"{name} ({enables})" for name, enables in missing)
+    pkgs = " ".join(name for name, _ in missing)
+    print(f"Note: optional features degraded (the tool still works, just with weaker "
+          f"signals) — not installed: {items}. To enable: "
+          f"pip3 install --user --break-system-packages {pkgs}", file=sys.stderr)
 
 # Special staging folders — never cleaned up, never re-scanned as fresh content
 PARA_ROOTS = {"_Inbox", "_To Delete", "_Duplicates", "_Merged-Originals", "Archive"}
@@ -153,6 +200,21 @@ def _read_config_root() -> "Path | None":
 def _save_config_root(root: Path):
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write(CONFIG_PATH, json.dumps({"root": str(root)}, ensure_ascii=False, indent=2))
+
+
+def _finalize_runtime_paths(root: "Path | None" = None):
+    """Single source of truth for the per-drive registry/CSV paths. Resolves
+    `_EFFECTIVE_ROOT` from (in order) the explicit `root`, the saved config, then
+    DEFAULT_ONEDRIVE, and derives REGISTRY_DB / CSV_EXPORT_PATH from it. main() calls
+    this once with the resolved `--root`; get_db() calls it lazily if main() has not run
+    yet (e.g. the module imported and a helper invoked directly), so there is no window
+    in which get_db() opens the bare module-level default while a configured drive is in
+    effect — the formerly-silent wrong-DB path."""
+    global REGISTRY_DB, CSV_EXPORT_PATH, _EFFECTIVE_ROOT, _PATHS_FINALIZED
+    _EFFECTIVE_ROOT = root if root is not None else (_read_config_root() or DEFAULT_ONEDRIVE)
+    REGISTRY_DB     = _EFFECTIVE_ROOT / ".organizer" / "registry.db"
+    CSV_EXPORT_PATH = _EFFECTIVE_ROOT / ".organizer" / "registry.csv"
+    _PATHS_FINALIZED = True
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +434,7 @@ def cmd_exif(args):
     vision: route an image by EXIF instead of pixels). ALWAYS prints a JSON object and never
     errors out: Pillow is an optional dep, and without it (or without embedded EXIF) it
     degrades to the filename-derived date. Routing-useful fields: `date` (match a project's
-    production_period), `camera`, dimensions."""
+    date_range), `camera`, dimensions."""
     path = Path(args.path).expanduser()
     out = {"path": str(path), "date": None, "camera": None,
            "width": None, "height": None, "source": "none", "note": None}
@@ -475,12 +537,12 @@ def _bubble_sort_proposals(proposals: list) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Project metadata (filename_tag + production_period) — read/write helpers
+# Project metadata (filename_tag + date_range) — read/write helpers
 # ---------------------------------------------------------------------------
 
 def _project_metadata(project_path: Path) -> dict:
     """
-    Read filename_tag and production_period from a project's .tidy-rules.json.
+    Read filename_tag and date_range from a project's .tidy-rules.json.
     Returns {} if the file is missing, unparseable, or has no metadata fields.
     """
     rules_file = project_path / ".tidy-rules.json"
@@ -497,21 +559,30 @@ def _project_metadata(project_path: Path) -> dict:
     out = {}
     if data.get("filename_tag"):
         out["filename_tag"] = data["filename_tag"]
-    if data.get("production_period"):
-        out["production_period"] = data["production_period"]
+    dr = data.get("date_range") or data.get("production_period")  # legacy key back-compat
+    if dr:
+        out["date_range"] = dr
     return out
 
 
 def _enumerate_project_metadata(root: Path) -> list:
     """
     Walk top-level project folders under root and collect their metadata.
-    Returns list of {path (relative), filename_tag, production_period} entries
+    Returns list of {path (relative), filename_tag, date_range} entries
     for every folder whose .tidy-rules.json carries a filename_tag.
     Used by propose to surface candidate matches by date for loose bills.
     """
     out = []
-    # Top-level folders (legacy flat) and nested grouping/company/project folders
-    SKIP = {".organizer", "logseq-journals", "Archive"}
+    # The walk is unrolled to EXACTLY three levels on purpose — it mirrors the
+    # Cascading-Q structure, not an arbitrary depth: level 1 = top-level grouping (or a
+    # legacy flat project), level 2 = the "thing inside" (entity / company), level 3 =
+    # the project folder (e.g. WORK/ACME/ACME Project Alpha/). A project's
+    # filename_tag can live at any of those three depths, but never deeper — depth-4+
+    # folders are leaf TYPE subfolders (Scripts, Docs, …), never project roots, so a
+    # generic recursive walk would have to re-impose this same cap and would additionally
+    # blur the depth-specific skip rules below (level 1 excludes SKIP; levels 2–3 exclude
+    # PARA_ROOTS). Keeping the three levels explicit makes that domain contract legible.
+    SKIP = {".organizer", "Archive"}
     try:
         tops = sorted(root.iterdir())
     except (PermissionError, OSError) as e:
@@ -539,7 +610,7 @@ def _enumerate_project_metadata(root: Path) -> list:
                 meta_mid = _project_metadata(mid)
                 if meta_mid.get("filename_tag"):
                     out.append({"path": f"{top.name}/{mid.name}", **meta_mid})
-                # Three-level (e.g. WORK/VAIKRI/VAIKRI CS Yeh Saali Naukri/)
+                # Three-level (e.g. WORK/ACME/ACME Project Alpha/)
                 try:
                     for deep in sorted(mid.iterdir()):
                         if not deep.is_dir() or deep.name.startswith(('.', '_')) or deep.name in PARA_ROOTS:
@@ -558,7 +629,7 @@ def _enumerate_project_metadata(root: Path) -> list:
 
 def _find_project_for_destination(dest_subfolder: str, root: Path) -> "Path | None":
     """
-    Given a destination subfolder path like 'WORK/VAIKRI/VAIKRI CS Yeh Saali Naukri/Scripts',
+    Given a destination subfolder path like 'WORK/ACME/ACME Project Alpha/Scripts',
     walk up from the deepest folder until we find an ancestor whose .tidy-rules.json
     carries a filename_tag. Returns the absolute path to that project folder, or None.
     """
@@ -579,10 +650,10 @@ def _find_project_for_destination(dest_subfolder: str, root: Path) -> "Path | No
         cur = cur.parent
 
 
-def _expand_production_period(project_path: Path, file_date_iso: str, buffer_days: int = 30) -> None:
+def _expand_date_range(project_path: Path, file_date_iso: str, buffer_days: int = 30) -> None:
     """
-    Expand the project's production_period to include file_date_iso, with a
-    buffer_days padding at each end. If the project has no production_period
+    Expand the project's date_range to include file_date_iso, with a
+    buffer_days padding at each end. If the project has no date_range
     yet, initialise one centred on this file's date. Writes back to .tidy-rules.json.
     """
     rules_file = project_path / ".tidy-rules.json"
@@ -592,7 +663,7 @@ def _expand_production_period(project_path: Path, file_date_iso: str, buffer_day
         data = json.loads(rules_file.read_text(encoding="utf-8"))
     except Exception as e:
         print(f"WARNING: could not parse {rules_file} ({e}); "
-              f"not expanding production_period.", file=sys.stderr)
+              f"not expanding date_range.", file=sys.stderr)
         return
     if not isinstance(data, dict):
         return  # legacy list-format files don't carry project metadata
@@ -610,7 +681,7 @@ def _expand_production_period(project_path: Path, file_date_iso: str, buffer_day
         return  # out-of-range date: ignore rather than widen the period
 
     buf = timedelta(days=buffer_days)
-    period = data.get("production_period")
+    period = data.get("date_range") or data.get("production_period")  # legacy key back-compat
     if not period or not isinstance(period, dict):
         new_start = (file_dt - buf).date().isoformat()
         new_end = (file_dt + buf).date().isoformat()
@@ -633,9 +704,10 @@ def _expand_production_period(project_path: Path, file_date_iso: str, buffer_day
         new_start = new_start_dt.date().isoformat()
         new_end = new_end_dt.date().isoformat()
 
-    if data.get("production_period") == {"start": new_start, "end": new_end}:
+    if data.get("date_range") == {"start": new_start, "end": new_end}:
         return  # nothing changed
-    data["production_period"] = {"start": new_start, "end": new_end}
+    data["date_range"] = {"start": new_start, "end": new_end}
+    data.pop("production_period", None)  # migrate legacy key on write
     _atomic_write(rules_file, json.dumps(data, ensure_ascii=False, indent=2))
 
 
@@ -698,6 +770,8 @@ CREATE INDEX IF NOT EXISTS idx_current_path ON files(current_path);
 
 
 def get_db() -> sqlite3.Connection:
+    if not _PATHS_FINALIZED:
+        _finalize_runtime_paths()  # lazy: honour saved config even if main() hasn't run
     REGISTRY_DB.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(REGISTRY_DB))
     conn.row_factory = sqlite3.Row
@@ -810,7 +884,7 @@ def _peek_audio(path: Path) -> str | None:
     the metadata signal).
 
     Returns a single-line text blob like:
-        "artist=A.R. Rahman | album=Roja | title=Chinna Chinna Aasai | year=1992 | track=2"
+        "artist=Example Artist | album=Example Album | title=Example Song | year=2001 | track=2"
     that Claude can scan during cascading-Q routing.
     """
     try:
@@ -1277,7 +1351,7 @@ def _learn_dir_vocab(drive: Path, conn: sqlite3.Connection):
     """
     Walk the approved directory tree and register folder names into path_vocab
     by depth. Depth 1 = position 1 (root project/category folders), etc.
-    This makes any folder Vaidehi creates manually visible to classification
+    This makes any folder the user creates manually visible to classification
     on the next scan, not only folders that went through the viewer.
     """
     for root, dirs, _ in os.walk(drive):
@@ -1315,7 +1389,7 @@ def _seed_vocab_from_rules(root: Path, conn: sqlite3.Connection):
     if not rules_file.exists():
         return
     try:
-        data = json.loads(rules_file.read_text())
+        data = json.loads(rules_file.read_text(encoding="utf-8"))
         for rule in data.get("rules", []):
             top = rule.get("folderName", "").split("/")[0].strip()
             if top:
@@ -1354,10 +1428,21 @@ def cmd_scan(args):
     t_download = t_hash = t_peek = 0.0   # per-phase timing (reported in the summary)
     total_bytes = 0
 
+    # Paths the tool has already given a TERMINAL status — never re-hash or re-propose
+    # them. Not just 'organized': a deletion-staged ('to_delete'), merged-original
+    # ('archived'), co-located duplicate ('duplicate'), or pruned ('deleted') row sits
+    # under Archive/ etc. and must NOT be re-walked as fresh content — otherwise an mtime
+    # change would re-hash it and Pass 3 would flip it back to 'pending', re-proposing a
+    # file the user already deleted/merged. 'flagged' is included for the same reason: a
+    # flagged file is set aside for the manual peek-and-reclassify path (process-return
+    # step 7) and must stay flagged — re-hashing it on a content change would flip it to
+    # 'pending' and re-expose it to propose with no peek. (Genuine new content under a
+    # user's own 'Archive' folder still has no row yet, so it still gets scanned.)
     organized_paths: set[str] = {
         r["current_path"]
         for r in conn.execute(
-            "SELECT current_path FROM files WHERE status='organized'"
+            "SELECT current_path FROM files "
+            "WHERE status IN ('organized','to_delete','archived','duplicate','deleted','flagged')"
         ).fetchall()
     }
 
@@ -1494,9 +1579,12 @@ def cmd_scan(args):
             if ex and ex[0] and ex[1] == fsize and ex[2] == cur_mtime:
                 unchanged += 1
                 continue  # unchanged + already registered — no work
-            # Admit at least one file even if it alone exceeds the GB cap — otherwise a
-            # single file larger than the cap is rejected on every scan and never gets
-            # processed (permanent stall). Once anything is admitted, the cap applies.
+            # First-admission exception, scoped PER SCAN CALL (the `and to_process` guard):
+            # admit the FIRST file of this call even if it alone exceeds the GB cap — else a
+            # single file larger than the cap is rejected on every scan and never processed
+            # (permanent stall). Once this call has admitted anything (`to_process` non-empty),
+            # the cap applies strictly. It is per-call, not per-file: a too-big file deferred
+            # this call is re-considered (and again first-admitted) on the NEXT scan call.
             if total_bytes + fsize > byte_limit and to_process:
                 stopped_at_priority = priority
                 break
@@ -1737,7 +1825,7 @@ def _build_rules_index(root: Path) -> tuple:
             continue
         parent_disp = "" if str(rel_parent) == "." else str(rel_parent)
         try:
-            data = json.loads(rules_file.read_text())
+            data = json.loads(rules_file.read_text(encoding="utf-8"))
         except Exception:
             continue
         rule_list = data.get("rules", []) if isinstance(data, dict) else data
@@ -1884,13 +1972,20 @@ def cmd_propose(args):
     auto_log = []
 
     def _open_blocked(e: dict) -> list:
+        # Returns ALL applicable block reasons (not just the first) — a file can be blocked by
+        # several toggles at once, e.g. ["vision-off","skip-type"]. The closed reason set is
+        # exactly: "vision-off", "skip-type", ">{N}MB".
         reasons = []
         if e["is_image"] and not vision_on:
             reasons.append("vision-off")
         if e["extension"] in skip_types:
             reasons.append("skip-type")
         if skip_over_bytes and (e["file_size"] or 0) > skip_over_bytes:
-            reasons.append(f">{skip_over_mb:g}MB")  # :g => 200 not 200.0
+            # Render a plain integer when whole (200), else the bare value — never :g, which
+            # switches to scientific notation (1e+06) for large MB caps.
+            mb = float(skip_over_mb)
+            mb_str = str(int(mb)) if mb.is_integer() else repr(skip_over_mb)
+            reasons.append(f">{mb_str}MB")
         return reasons
 
     result = []
@@ -1949,6 +2044,12 @@ def cmd_propose(args):
 
     # Audit trail: every auto-route is appended to <root>/.organizer/auto-routed.csv
     # so the user can see exactly what was decided deterministically (never opaque).
+    # This is a best-effort APPEND-ONLY audit log, NOT authoritative state — the registry
+    # (DB) is the source of truth — so it is written with a plain append (not _atomic_write):
+    # a partial row from a crash mid-flush is cosmetic, never corrupts routing. Both kinds of
+    # deterministic route land here and are distinguished by the `reason` column: a W1 fast-path
+    # match has a bare reason; a file blocked-from-opening that the matcher still placed carries
+    # the `skipped-open; ` prefix (set above) — same channel, self-labelling reasons.
     if auto_log:
         import csv as _csv
         audit = root / ".organizer" / "auto-routed.csv"
@@ -1974,7 +2075,7 @@ def cmd_propose(args):
           f"`organizer.py exif <path>` metadata, never opening pixels.", file=sys.stderr)
 
     # Write project-metadata sidecar so Claude can look up filename_tag and
-    # production_period for each known project when classifying.
+    # date_range for each known project when classifying.
     metadata = _enumerate_project_metadata(_EFFECTIVE_ROOT)
     sidecar = Path.home() / ".claude" / "drive-organizer" / "project_metadata.json"
     sidecar.parent.mkdir(parents=True, exist_ok=True)
@@ -1993,7 +2094,7 @@ def cmd_execute(args):
     if not approved_path.exists():
         sys.exit(f"Error: approved file not found: {approved_path}")
 
-    with open(approved_path) as f:
+    with open(approved_path, encoding="utf-8") as f:
         approved = json.load(f)
 
     if not approved:
@@ -2012,19 +2113,41 @@ def cmd_execute(args):
     # On start, a non-empty journal is reconciled — if the file is already at `dest`
     # the move happened (fix the registry row); if it is still at `src` we leave it
     # for the normal pass to re-move.
+    #
+    # The per-move read-modify-write of this file (in _write_journal_entry /
+    # _clear_journal_entry below) is DELIBERATE and must NOT be optimised into an
+    # in-memory dict flushed once per batch: the whole point is that the {id,src,dest}
+    # record is durable on disk BEFORE the move and removed only AFTER the commit, so a
+    # crash at any instant leaves a recoverable on-disk trail. Holding it in memory and
+    # writing once would reopen exactly the crash window this journal closes — the I/O
+    # is the feature, not waste. (Batch size is bounded by the propose cap, so the cost
+    # is bounded too.)
     journal_path = drive / ".organizer" / ".move-journal.json"
 
     def _read_journal() -> dict:
         try:
-            data = json.loads(journal_path.read_text())
+            raw = journal_path.read_text(encoding="utf-8")
+        except OSError:
+            return {}  # absent / unreadable — normal: no journal yet, nothing to recover
+        try:
+            data = json.loads(raw)
             return data if isinstance(data, dict) else {}
-        except Exception:
+        except (json.JSONDecodeError, ValueError):
+            # The file EXISTS but won't parse — the exact corruption the journal guards
+            # against. Surface it (a crash-stranded move may not auto-recover) instead of
+            # silently treating it as empty and skipping recovery with no diagnostic.
+            print(f"  WARNING: move-journal {journal_path} is unparseable — a "
+                  f"crash-stranded move may not be auto-recovered; run `reconcile` to "
+                  f"check for files whose registry path is stale.", file=sys.stderr)
             return {}
 
-    def _write_journal_entry(jid, jsrc, jdest):
+    def _write_journal_entry(jid, jsrc, jdest, jstatus):
         journal_path.parent.mkdir(parents=True, exist_ok=True)
         j = _read_journal()
-        j[str(jid)] = {"id": jid, "src": jsrc, "dest": jdest}
+        # Record the intended terminal status (to_delete / organized) so recovery reads
+        # the move's INTENT directly instead of re-deriving delete-vs-organized by
+        # string-matching the dest path — robust even if the delete staging path changes.
+        j[str(jid)] = {"id": jid, "src": jsrc, "dest": jdest, "status": jstatus}
         _atomic_write(journal_path, json.dumps(j, indent=2))
 
     def _clear_journal_entry(jid):
@@ -2043,19 +2166,57 @@ def cmd_execute(args):
                 _clear_journal_entry(jid)
                 continue
             if jdest.exists() and not (jsrc.exists() and jsrc.samefile(jdest)):
-                # The move completed but the registry may not have been updated.
+                # The move completed but the registry may not have been updated. Reconstruct
+                # the FULL organised-row state from the destination so the row is complete —
+                # not left status='pending' with stale para_* (which the next scan would
+                # wrongly re-process as unorganised). para_subfolder = the dest's folder
+                # relative to root; para_category = its first segment projected onto the
+                # active groupings (mirrors the normal execute write below).
+                try:
+                    rec_sub = str(Path(jdest).parent.relative_to(drive)).replace(os.sep, "/")
+                except ValueError:
+                    rec_sub = ""
+                rec_cat = _para_category(rec_sub)
+                # Prefer the intent journaled at move time; fall back to the path compare
+                # for entries written by an older build that didn't record `status`.
+                rec_status = rec.get("status") or ("to_delete" if rec_sub == "Archive/_To Delete" else "organized")
                 conn.execute(
-                    "UPDATE files SET current_path=?, processed_at=? WHERE id=?",
-                    (str(jdest), datetime.now().isoformat(), rec.get("id"))
+                    "UPDATE files SET current_path=?, para_subfolder=?, para_category=?, "
+                    "status=?, processed_at=? WHERE id=?",
+                    (str(jdest), rec_sub, rec_cat, rec_status,
+                     datetime.now().isoformat(), rec.get("id"))
                 )
                 conn.commit()
-                print(f"  RECOVERED: journal entry id {rec.get('id')} -> {jdest}", file=sys.stderr)
+                # Also widen the destination project's date_range, exactly as the
+                # normal move path does — otherwise a crash-recovered file would silently
+                # skip that update (it is never re-processed: it is now status='organized'),
+                # making recovery non-idempotent vs a clean run. file_date persists on the
+                # registry row from scan time, so read it back and apply it.
+                if rec_status == "organized":
+                    try:
+                        _r = conn.execute("SELECT file_date FROM files WHERE id=?", (rec.get("id"),)).fetchone()
+                        rec_date = _r["file_date"] if _r else None
+                        if rec_date:
+                            proj = _find_project_for_destination(rec_sub, drive)
+                            if proj is not None:
+                                _expand_date_range(proj, rec_date)
+                    except Exception as e:
+                        print(f"  WARN: could not update date_range on recovery for id {rec.get('id')}: {e}",
+                              file=sys.stderr)
+                print(f"  RECOVERED: journal entry id {rec.get('id')} -> {jdest} (status={rec_status})", file=sys.stderr)
                 _clear_journal_entry(jid)
             elif jsrc.exists():
                 # File still at source — the move never happened; leave for re-move.
                 _clear_journal_entry(jid)
             else:
-                # Neither src nor dest present — nothing safe to do; drop the stale entry.
+                # Neither src nor dest present — the file vanished mid-move (moved or
+                # deleted out-of-band between the journal write and the crash). Nothing is
+                # safe to auto-recover, but DON'T drop it silently: surface it so the user
+                # knows a move was lost and can reconcile, then clear the stale entry.
+                print(f"  WARNING: journal entry id {rec.get('id')} points at a file that is "
+                      f"at neither {jsrc} nor {jdest} — a move was lost (file relocated/deleted "
+                      f"outside the tool mid-move). Run `reconcile` to repair the registry row.",
+                      file=sys.stderr)
                 _clear_journal_entry(jid)
 
     for entry in approved:
@@ -2063,15 +2224,6 @@ def cmd_execute(args):
         src         = Path(entry["current_path"])
         action      = entry.get("action", "approved")
         subfolder   = _normalize_grouping(entry.get("para_subfolder", ""))
-        # Derive the top-level grouping from the path when the entry carries no
-        # para_category (e.g. reclassified-rejected entries Claude rewrote with only
-        # para_subfolder updated) — so the registry column is never stale/_Inbox.
-        # Derive deterministically from the normalised subfolder's first segment, and
-        # fall back to _Inbox whenever that segment is not a real active grouping.
-        category    = entry.get("para_category")
-        if not category:
-            first_seg = _normalize_grouping(subfolder).split("/")[0] if subfolder else ""
-            category = first_seg if first_seg in _active_groupings() else "_Inbox"
         new_filename = entry.get("new_filename")
         vision_desc  = entry.get("vision_desc")
         file_date    = entry.get("file_date")
@@ -2086,9 +2238,17 @@ def cmd_execute(args):
         # _safe_dest returning None means 'reject' — record an error and SKIP the
         # move; NEVER fall back to an unchecked drive / subfolder join.
         sub_rel = "Archive/_To Delete" if action == "delete" else subfolder
+        # para_category is a PURE PROJECTION of the actual destination (sub_rel): its first
+        # path segment when that is an active grouping, else _Inbox. Derived unconditionally
+        # (never from a caller-supplied para_category — the verdict contract excludes it), so
+        # the registry column can never drift from para_subfolder. For a delete the destination
+        # is Archive/_To Delete, so it resolves to _Inbox (the file is in staging, not a
+        # grouping) — consistent with where the file actually lands.
+        category = _para_category(sub_rel)
         dest_dir = _safe_dest(drive, sub_rel)
         if dest_dir is None:
-            print(f"  ERROR: unsafe destination subfolder {sub_rel!r} for {src} — skipped.",
+            why = "empty/missing" if not (sub_rel or "").strip() else "unsafe (escapes the drive root)"
+            print(f"  ERROR: {why} destination subfolder {sub_rel!r} for {src} — skipped.",
                   file=sys.stderr)
             errors += 1
             continue
@@ -2106,9 +2266,10 @@ def cmd_execute(args):
                 dest = dest_dir / f"{stem}_{counter}{suffix}"
                 counter += 1
 
+        new_status = "to_delete" if action == "delete" else "organized"
         # Journal the intent BEFORE moving so a crash in the move-then-commit window
-        # is recoverable on the next run.
-        _write_journal_entry(file_id, str(src), str(dest))
+        # is recoverable on the next run (status included so recovery reads the intent).
+        _write_journal_entry(file_id, str(src), str(dest), new_status)
         try:
             shutil.move(str(src), str(dest))
         except OSError as e:
@@ -2117,14 +2278,13 @@ def cmd_execute(args):
             errors += 1
             continue
 
-        new_status = "to_delete" if action == "delete" else "organized"
         conn.execute(
             """UPDATE files SET
                current_path=?, para_category=?, para_subfolder=?,
                vision_desc=?, file_date=COALESCE(?,file_date),
                status=?, processed_at=?
                WHERE id=?""",
-            (str(dest), category, subfolder, vision_desc,
+            (str(dest), category, sub_rel, vision_desc,
              file_date, new_status, datetime.now().isoformat(), file_id)
         )
         # Commit per file: the move has already happened on disk, so the registry
@@ -2136,7 +2296,7 @@ def cmd_execute(args):
         _clear_journal_entry(file_id)
         moved += 1
 
-        # Expand the destination project's production_period to include
+        # Expand the destination project's date_range to include
         # this file's date. Initialises the period on first approval; widens
         # it (with one-month buffer) on subsequent approvals. Skipped for
         # action='delete' (file went to Archive/_To Delete) or when file_date
@@ -2145,9 +2305,9 @@ def cmd_execute(args):
             project_dir = _find_project_for_destination(subfolder, drive)
             if project_dir is not None:
                 try:
-                    _expand_production_period(project_dir, file_date)
+                    _expand_date_range(project_dir, file_date)
                 except Exception as e:
-                    print(f"  WARN: could not update production_period for {project_dir.name}: {e}",
+                    print(f"  WARN: could not update date_range for {project_dir.name}: {e}",
                           file=sys.stderr)
 
     conn.commit()
@@ -2734,7 +2894,7 @@ const PROPOSALS = __PROPOSALS_JSON__;
 const PAGE_SIZE = 25;
 
 // per-row state: { status, seg1, seg2, seg3, newName }
-// status values: 'unset' | 'approved' | 'rejected' | 'inbox' | 'flagged'
+// status values: 'unset' | 'approved' | 'rejected' | 'inbox' | 'delete' | 'flagged'
 // rejected = I got it wrong, reclassify using context
 // inbox    = user needs to open it manually (EPS etc), confirmed _Inbox
 const rowState = {};
@@ -2754,7 +2914,7 @@ PROPOSALS.forEach(p => {
 // ---------- Path helpers ----------
 function destPath(id) {
   const st = rowState[id];
-  return [st.seg1, st.seg2, st.seg3].map(slugify).filter(Boolean).join('/');
+  return [slugify(st.seg1), slugify(st.seg2), slugifyPath(st.seg3)].filter(Boolean).join('/');
 }
 
 function isStagingPath(path) {
@@ -2767,7 +2927,7 @@ function isStagingPath(path) {
 
 function inferCategory(path) {
   // para_category is the file's TOP-LEVEL GROUPING — the first segment of the
-  // destination path (e.g. WORK/Ishan/finance -> WORK). Staging roots (_Inbox,
+  // destination path (e.g. WORK/Acme/finance -> WORK). Staging roots (_Inbox,
   // Archive) return themselves. (This is a registry column only; routing is by
   // para_subfolder. The old fixed Areas/Resources/Projects vocab was wrong.)
   if (isStagingPath(path)) return path || '_Inbox';
@@ -2962,19 +3122,28 @@ function addToDatalist(pos, val) {
 }
 
 function slugify(s) {
-  // Normalise a path segment: trim, collapse internal whitespace, and strip any
-  // embedded '/' so a single segment can never change the destination depth.
+  // Normalise a single path segment (seg1/seg2): trim, collapse internal whitespace, and
+  // strip any embedded '/' so a single segment can never change the destination depth.
   return String(s == null ? '' : s)
     .replace(/\//g, ' ')
     .trim()
     .replace(/\s+/g, ' ');
 }
 
+function slugifyPath(s) {
+  // Normalise the seg3 TAIL, which legitimately holds a multi-segment path (Q3/Q4, e.g.
+  // "Financials/Bills" or "PROJECT/Scripts" when the classifier returned a 4+-segment
+  // para_subfolder). Sanitise each component but PRESERVE the '/' separators — slugify()
+  // would fold them to spaces and collapse the depth, corrupting the destination.
+  return String(s == null ? '' : s)
+    .split('/').map(slugify).filter(Boolean).join('/');
+}
+
 function onSeg(id) {
   const st = rowState[id];
   st.seg1 = slugify((document.getElementById(`s1-${id}`) || {value: ''}).value);
   st.seg2 = slugify((document.getElementById(`s2-${id}`) || {value: ''}).value);
-  st.seg3 = slugify((document.getElementById(`s3-${id}`) || {value: ''}).value);
+  st.seg3 = slugifyPath((document.getElementById(`s3-${id}`) || {value: ''}).value);
   addToDatalist(1, st.seg1);
   addToDatalist(2, st.seg2);
   addToDatalist(3, st.seg3);
@@ -3024,7 +3193,6 @@ function submitAll() {
         current_path:   p.current_path,
         filename:       p.filename,
         is_image:       p.is_image,
-        para_category:  inferCategory(path),
         para_subfolder: path,
         new_filename:   st.newName || p.filename,
         vision_desc:    p.vision_desc || null,
@@ -3039,7 +3207,6 @@ function submitAll() {
         current_path:   p.current_path,
         filename:       p.filename,
         is_image:       p.is_image,
-        para_category:  p.para_category || null,
         para_subfolder: p.para_subfolder || null,
         new_filename:   p.new_filename || p.filename,
         vision_desc:    p.vision_desc || null,
@@ -3054,7 +3221,6 @@ function submitAll() {
         current_path:   p.current_path,
         filename:       p.filename,
         is_image:       p.is_image,
-        para_category:  '_Inbox',
         para_subfolder: '_Inbox',
         new_filename:   p.filename,
         vision_desc:    p.vision_desc || null,
@@ -3068,7 +3234,6 @@ function submitAll() {
         current_path:   p.current_path,
         filename:       p.filename,
         is_image:       p.is_image,
-        para_category:  'Archive',
         para_subfolder: 'Archive/_To Delete',
         new_filename:   p.filename,
         vision_desc:    p.vision_desc || null,
@@ -3219,18 +3384,38 @@ class _SilentHandler(BaseHTTPRequestHandler):
                 self.wfile.write(resp)
                 return
 
-            APPROVED_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
-            if approved:
+            # Persist both output files. A failure here (disk full, permissions, read-only
+            # mount) must NOT crash the handler with a bare traceback and then fall through
+            # to the success response + shutdown — that would tell the user their review was
+            # saved when it was lost. Catch it, report it in the browser response AND on
+            # stderr, and DON'T shut the server down so they can retry the submit.
+            try:
+                APPROVED_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
+                # Write proposals_approved.json UNCONDITIONALLY (even an empty list):
+                # process-return reads it every round, and a guarded skip on an
+                # empty-approved-but-flagged submit would leave a STALE prior-round file the
+                # consumer mistakes for this round's. An empty list is the correct signal —
+                # execute then prints "Approved list is empty."
                 _atomic_write(APPROVED_JSON_PATH, json.dumps(approved, indent=2))
-            # Persist the EXACT flagged-ID set to a sidecar so process-return has the
-            # precise flagged list if the registry write below fails — never inferred
-            # by set-difference (which catches unreviewed 'unset' rows too). Only
-            # written when there is content, so a flag-less submit can't clobber it.
-            if flagged_ids:
+                # Persist the EXACT flagged-ID set to a sidecar (the precise list
+                # process-return's warning-branch fallback reads — never inferred by
+                # set-difference, which catches unreviewed 'unset' rows too). Written
+                # UNCONDITIONALLY (including []) so a flag-less submit CLEARS any prior-round
+                # file instead of leaving stale IDs for the next round.
                 _atomic_write(
                     APPROVED_JSON_PATH.parent / "proposals_flagged.json",
                     json.dumps(flagged_ids, indent=2),
                 )
+            except OSError as e:
+                print(f"ERROR: could not write review output ({e}); submit NOT saved — "
+                      f"resolve the disk/permission problem and re-submit.", file=sys.stderr, flush=True)
+                err = json.dumps({"ok": False, "error": f"could not write output: {e}"}).encode()
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(err)))
+                self.end_headers()
+                self.wfile.write(err)
+                return  # leave the server running so the user can retry
 
             # Surface deliberately-unreviewed ('unset') rows explicitly so downstream
             # knows which files were skipped rather than silently dropping them.
@@ -3248,9 +3433,15 @@ class _SilentHandler(BaseHTTPRequestHandler):
                     with sqlite3.connect(db_path) as _db:
                         for entry in approved:
                             subfolder = entry.get("para_subfolder", "")
-                            if not subfolder or subfolder.startswith("_"):
+                            parts = subfolder.split("/", 2) if subfolder else []
+                            # Skip staging destinations entirely — they are not routing
+                            # vocab. That means a leading '_' (e.g. '_Inbox') AND any path
+                            # whose first segment is a PARA_ROOT (e.g. 'Archive/_To Delete',
+                            # the delete destination, which does NOT start with '_'); without
+                            # the latter check 'Archive' / '_To Delete' would be learned as
+                            # autocomplete destinations the next viewer round offers.
+                            if not subfolder or subfolder.startswith("_") or (parts and parts[0] in PARA_ROOTS):
                                 continue
-                            parts = subfolder.split("/", 2)
                             for pos, seg in enumerate(parts, 1):
                                 if seg:
                                     _db.execute(
@@ -3277,6 +3468,14 @@ class _SilentHandler(BaseHTTPRequestHandler):
                     print(f"{len(flagged_ids)} files marked flagged in registry.", flush=True)
                 except Exception as e:
                     print(f"Warning: could not mark flagged in DB: {e}", flush=True)
+            elif flagged_ids and not db_path:
+                # Files WERE flagged but the registry path was unavailable at viewer
+                # launch (db absent). Emit the same warning shape so the executor reads
+                # this as the flag-write-failed case (and applies the manual patch from
+                # proposals_flagged.json) rather than the no-files-flagged case — those
+                # flagged files would otherwise reappear as pending next round.
+                print("Warning: could not mark flagged in DB: registry not found at viewer launch "
+                      "(patch status='flagged' manually from proposals_flagged.json).", flush=True)
 
             resp = json.dumps({"ok": True, "path": str(APPROVED_JSON_PATH)}).encode()
             self.send_response(200)
@@ -3301,7 +3500,7 @@ def cmd_generate_viewer(args):
     if not proposals_path.exists():
         sys.exit(f"Error: proposals file not found: {proposals_path}")
 
-    with open(proposals_path) as f:
+    with open(proposals_path, encoding="utf-8") as f:
         proposals = json.load(f)
 
     if not proposals:
@@ -3314,27 +3513,28 @@ def cmd_generate_viewer(args):
 
     # Load path vocab from registry (+ built-in structural defaults)
     # Level 1 is seeded from .tidy-rules.json — never hardcoded here.
-    # Level 2 = universal subfolder types; level 3 = common depth-3 structural names.
-    # Pulled from subfolder-templates.json subfolder_definitions and parent_type_definitions
-    # to keep autocomplete aligned with the canonical vocabulary.
+    # Level 2 = universal subfolder *types*; level 3 = common depth-3 structural names.
+    # This is a curated seed list hand-aligned with subfolder-templates.json's
+    # subfolder_definitions — it is NOT read from that file at runtime (autocomplete must
+    # work before any templates are loaded), so it is only a convenience seed: the live,
+    # authoritative vocabulary comes from the registry's actually-used path segments
+    # (queried below), which always reflect the real taxonomy even as the templates grow.
+    # Personal ENTITY names (people, joint owners, etc.) are NOT hardcoded here — they
+    # are seeded per-drive from entities.json / the registry's used segments below, so a
+    # shared install ships only generic types, never any individual's identity.
     BUILTIN_VOCAB: dict[int, list[str]] = {
         1: [],
-        2: ["Scripts", "Schedules", "Scene Breakdown", "Docs", "References",
-            "Legal", "Financials", "Promotional Assets", "Film Coverage",
-            "Branding Materials", "Templates", "Tasks from Notion export",
-            "Planning", "Admin", "Vaidehi", "Ishan", "Joint",
-            "Academic Papers", "Notes", "Digital Tools", "Lyrics Research",
-            "Statements And Proposals", "Archived", "Future Planning",
-            "Fonts", "Film Stills", "Game Master Guides",
-            "Patterns", "Projects", "Cosplay"],
-        3: ["Bills", "Invoices", "Advances", "Expense Reports",
-            "Payment Summaries", "Receipts", "Bank Statements", "Tax Documents",
-            "MOUs and Agreements", "Authority Letters", "Contracts",
-            "Appointment and Employment Letters", "Disputes",
-            "Cast Lists", "Crew Lists", "Pitch Docs", "Info Sheets",
-            "Look Decks", "Mood Boards", "Locations", "Product Images",
-            "Corpus", "Code", "Output", "Backups", "CPAP Data"],
+        2: ["Schedules", "Docs", "References", "Legal", "Financials",
+            "Templates", "Planning", "Admin", "Notes", "Reports",
+            "Academic Papers", "Archived", "Deliverables"],
+        3: ["Bills", "Invoices", "Receipts", "Bank Statements", "Tax Documents",
+            "Expense Reports", "Payment Summaries", "Advances",
+            "Contracts", "Agreements", "Backups", "Code", "Output"],
     }
+    # NOTE: this is a small UNIVERSAL seed only. Any user's real, domain-specific
+    # vocabulary reaches autocomplete from the registry's actually-used path segments
+    # (path_vocab, queried below) and from entities.json — it is NOT hardcoded here, so
+    # the shipped skill ships no individual's taxonomy.
     vocab: dict[int, list[str]] = {1: [], 2: [], 3: []}
     if REGISTRY_DB.exists():
         try:
@@ -3352,7 +3552,7 @@ def cmd_generate_viewer(args):
     rules_file = _EFFECTIVE_ROOT / ".tidy-rules.json"
     if rules_file.exists():
         try:
-            _rules_data = json.loads(rules_file.read_text())
+            _rules_data = json.loads(rules_file.read_text(encoding="utf-8"))
             _seen_l1 = set(vocab[1])
             for _rule in _rules_data.get("rules", []):
                 _top = _rule.get("folderName", "").split("/")[0].strip()
@@ -3361,6 +3561,15 @@ def cmd_generate_viewer(args):
                     _seen_l1.add(_top)
         except Exception:
             pass
+    # Seed entity names (people / joint owners / orgs) from this drive's entities.json —
+    # the per-drive source of truth for identities. Replaces the formerly-hardcoded
+    # personal names so a shared install carries none, yet a configured drive still
+    # autocompletes its own entities. Entities sit at the "thing inside" depth (level 2).
+    _seen_l2 = set(vocab[2])
+    for _ent in _read_entities().keys():
+        if _ent and _ent not in _seen_l2:
+            vocab[2].append(_ent)
+            _seen_l2.add(_ent)
     for pos in [2, 3]:
         seen = set(vocab[pos])
         for v in BUILTIN_VOCAB[pos]:
@@ -3596,6 +3805,28 @@ def _active_groupings() -> set:
     return _GROUPINGS_CACHE
 
 
+def _para_category(sub_rel: str) -> str:
+    """The PARA category for a destination subfolder: its first path segment if that is
+    an active grouping, else '_Inbox'. This is the SINGLE authoritative home for the
+    projection — execute and crash-recovery both call it, and the verdict contract omits
+    para_category entirely so the backend always derives it here. (The viewer's client-side
+    `inferCategory` is NOT a mirror: it takes the raw first segment with no grouping check,
+    and is display-only — its value is never sent back or persisted, so the two need not
+    and do not match for legacy-flat paths.)"""
+    first_seg = sub_rel.split("/")[0] if sub_rel else ""
+    return first_seg if first_seg in _active_groupings() else "_Inbox"
+
+
+def _ensure_in_suffix(desc: str, leaf: str) -> str:
+    """Ensure a rule description carries the required ' in <leaf>' suffix (the
+    self-describing-sentence convention; see SKILL.md "Description format"). The SINGLE
+    home for the append — every site that writes a rule description calls this, so the
+    suffix convention can never drift between writers."""
+    if desc and not desc.endswith(f" in {leaf}"):
+        return f"{desc} in {leaf}"
+    return desc
+
+
 def _normalize_grouping(para: str) -> str:
     """Force a destination's top-level grouping segment to its canonical ALL-CAPS
     form, so a viewer edit like 'Personal/PERSONAL Financial' lands in
@@ -3613,7 +3844,7 @@ def _normalize_grouping(para: str) -> str:
 def _reconcile_known_roots() -> set:
     """Root-level folder names reconcile treats as expected (not 'mangled'): the
     active groupings plus the special staging/system folders."""
-    return _active_groupings() | {"_Inbox", "Archive", "logseq-journals", ".organizer"}
+    return _active_groupings() | {"_Inbox", "Archive", ".organizer"}
 
 
 def _emit_organize_yaml(root: Path):
@@ -3627,7 +3858,7 @@ def _emit_organize_yaml(root: Path):
     for rules_file in sorted(Path(root).rglob(".tidy-rules.json")):
         parent = rules_file.parent
         try:
-            data = json.loads(rules_file.read_text())
+            data = json.loads(rules_file.read_text(encoding="utf-8"))
         except Exception:
             continue
         rule_list = data.get("rules", []) if isinstance(data, dict) else data
@@ -3700,7 +3931,7 @@ def cmd_reconcile(args):
         report_path = root / ".organizer" / "reconcile-report.json"
         if not report_path.exists():
             sys.exit("No reconcile report yet — run `reconcile` (dry-run) first, then apply per-file decisions.")
-        rep = json.loads(report_path.read_text())
+        rep = json.loads(report_path.read_text(encoding="utf-8"))
         conn = get_db()
         if _act == "prune":
             entry = next((b for b in rep.get("bad_registry_rows", []) if b.get("id") == _id), None)
@@ -3765,9 +3996,12 @@ def cmd_reconcile(args):
         # (reconcile reports it every run). Only mark 'organized' when the file truly
         # lands inside an active grouping; otherwise 'pending' for reclassification.
         new_status = "organized" if in_tree else "pending"
+        # Re-derive para_category from the new para too — it is a pure projection of
+        # para_subfolder for EVERY row (see the projection invariant), so an accept that
+        # moves the file must update both or the row's category goes stale.
         conn.execute(
-            "UPDATE files SET current_path=?, para_subfolder=?, status=?, processed_at=? WHERE id=?",
-            (actual, new_para, new_status, now, _id))
+            "UPDATE files SET current_path=?, para_subfolder=?, para_category=?, status=?, processed_at=? WHERE id=?",
+            (actual, new_para, _para_category(new_para), new_status, now, _id))
         conn.commit(); conn.close(); export_csv()
         note = "" if in_tree else "  (outside the active groupings → pending, not organized)"
         print(f"Accepted id {_id}'s location: {actual}  (registry updated → status={new_status}; file not moved){note}")
@@ -3966,15 +4200,26 @@ def export_csv():
            FROM files ORDER BY status, para_subfolder, filename"""
     ).fetchall()
     conn.close()
-    with open(CSV_EXPORT_PATH, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["id", "filename", "current_path", "destination", "status",
-                         "file_date", "file_size_bytes", "vision_desc"])
-        for r in rows:
-            writer.writerow([r["id"], r["filename"], r["current_path"],
-                              r["para_subfolder"] or "", r["status"],
-                              r["file_date"] or "", r["file_size"] or "",
-                              r["vision_desc"] or ""])
+    # The CSV is a best-effort human-readable MIRROR of the registry — the SQLite DB is
+    # the authoritative state. export_csv is called at the tail of every mutation command
+    # (scan/execute/duplicates/merge/reconcile/csv-export) AFTER its commit, so a write
+    # failure here (file open in Excel, read-only dir, full disk) must NOT abort the caller
+    # and lose its completion output — the mutation already durably landed in the DB.
+    # Warn and continue; `csv-export` re-mirrors on demand.
+    try:
+        with open(CSV_EXPORT_PATH, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["id", "filename", "current_path", "destination", "status",
+                             "file_date", "file_size_bytes", "vision_desc"])
+            for r in rows:
+                writer.writerow([r["id"], r["filename"], r["current_path"],
+                                  r["para_subfolder"] or "", r["status"],
+                                  r["file_date"] or "", r["file_size"] or "",
+                                  r["vision_desc"] or ""])
+    except OSError as e:
+        print(f"  WARNING: could not write CSV mirror {CSV_EXPORT_PATH} ({e}) — "
+              f"the SQLite registry is unaffected; re-run `csv-export` to retry.", file=sys.stderr)
+        return
     print(f"Registry exported: {CSV_EXPORT_PATH}  ({len(rows)} rows)")
 
 
@@ -3985,8 +4230,8 @@ def cmd_csv_export(args):
 # ---------------------------------------------------------------------------
 # Rule aggregation + entity metadata (shared data layer for the rules viewer,
 # the bootstrap builder, and the learning loop). Walks the whole .tidy-rules.json
-# cascade and groups rules by entity (folder name) across the tree, so "Ishan"
-# in WORK and "Ishan" in EDUCATION collapse to one entity with two occurrences.
+# cascade and groups rules by entity (folder name) across the tree, so "Acme"
+# in WORK and "Acme" in EDUCATION collapse to one entity with two occurrences.
 # ---------------------------------------------------------------------------
 
 def _read_entities(root: "Path | None" = None) -> dict:
@@ -4000,7 +4245,7 @@ def _read_entities(root: "Path | None" = None) -> dict:
     if not p.exists():
         return {}
     try:
-        d = json.loads(p.read_text())
+        d = json.loads(p.read_text(encoding="utf-8"))
         return d if isinstance(d, dict) else {}
     except Exception:
         return {}
@@ -4115,7 +4360,7 @@ def _aggregate_rules(root: "Path") -> list:
             continue
         parent_disp = "" if str(rel_parent) == "." else str(rel_parent)
         try:
-            data = json.loads(rules_file.read_text())
+            data = json.loads(rules_file.read_text(encoding="utf-8"))
         except Exception:
             continue
         rule_list = data.get("rules", []) if isinstance(data, dict) else data
@@ -4185,7 +4430,7 @@ def _aggregate_rules(root: "Path") -> list:
             "notes": meta.get("notes"),
             "review": meta.get("review"),   # persisted "rethink" flag — viewer reads e.review
             "filename_tag": proj.get("filename_tag"),
-            "production_period": proj.get("production_period"),
+            "date_range": proj.get("date_range"),
             "occurrence_count": len(ent["occurrences"]),
             "usage_count": ucount,
             "dead": ucount == 0,
@@ -4204,7 +4449,7 @@ def _aggregate_rules(root: "Path") -> list:
                 "aliases": meta.get("aliases", []), "relation": meta.get("relation"),
                 "policy": meta.get("policy"), "notes": meta.get("notes"),
                 "review": meta.get("review"),
-                "filename_tag": None, "production_period": None,
+                "filename_tag": None, "date_range": None,
                 "occurrence_count": 0, "usage_count": 0, "dead": True,
             })
 
@@ -4230,7 +4475,7 @@ def _aggregate_rules(root: "Path") -> list:
             "aliases": m.get("aliases", []), "relation": m.get("relation"),
             "policy": m.get("policy"), "notes": m.get("notes"),
             "review": m.get("review"),
-            "filename_tag": None, "production_period": None,
+            "filename_tag": None, "date_range": None,
             "occurrence_count": 1, "usage_count": area_usage, "dead": area_usage == 0,
             "synthetic_area": True,
         })
@@ -4321,7 +4566,7 @@ def _coverage_gaps(root: Path, dest_set: set) -> list:
     gaps = []
     groupings = _active_groupings()
     locked_atomic = _locked_atomic_names(root)
-    skip = {".organizer", "logseq-journals", "Archive", "_Inbox"}
+    skip = {".organizer", "Archive", "_Inbox"}
     # Normalise destinations (forward-slash, case-folded) so a real folder isn't
     # reported as a gap merely because of separator/case differences vs the rule dest.
     norm_dest_set = {str(d).replace(os.sep, "/").strip("/").casefold() for d in dest_set}
@@ -4372,7 +4617,7 @@ def _edit_rule_across_occurrences(root: Path, entity: str, occurrences: list,
         path = root / rel_file
         if path.exists():
             try:
-                data = json.loads(path.read_text())
+                data = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
                 continue
         elif create_if_missing and new_description is not None:
@@ -4393,20 +4638,14 @@ def _edit_rule_across_occurrences(root: Path, entity: str, occurrences: list,
                     continue  # drop the rule
                 if new_description is not None:
                     leaf = r["folderName"].split("/")[-1]
-                    desc = new_description.strip()
-                    if not desc.endswith(f" in {leaf}"):
-                        desc = f"{desc} in {leaf}"
-                    r["description"] = desc
+                    r["description"] = _ensure_in_suffix(new_description.strip(), leaf)
                     touched = True
             new_rules.append(r)
         if create_if_missing and new_description is not None and not delete:
             for fn in folder_names:
                 if fn not in seen:
                     leaf = fn.split("/")[-1]
-                    desc = new_description.strip()
-                    if not desc.endswith(f" in {leaf}"):
-                        desc = f"{desc} in {leaf}"
-                    new_rules.append({"folderName": fn, "description": desc})
+                    new_rules.append({"folderName": fn, "description": _ensure_in_suffix(new_description.strip(), leaf)})
                     touched = True
         if touched:
             if isinstance(data, dict):
@@ -4462,7 +4701,7 @@ def _rename_entity(root: Path, entity: str, occurrences: list, new_name: str,
             rf = root / rules_file
             if rf.exists():
                 try:
-                    data = json.loads(rf.read_text())
+                    data = json.loads(rf.read_text(encoding="utf-8"))
                     rules = data.get("rules", []) if isinstance(data, dict) else data
                     for r in rules:
                         if isinstance(r, dict) and r.get("folderName") == folder_name:
@@ -4475,8 +4714,13 @@ def _rename_entity(root: Path, entity: str, occurrences: list, new_name: str,
                     if isinstance(data, dict):
                         data["rules"] = rules
                     _atomic_write(rf, json.dumps(data, indent=2, ensure_ascii=False))
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Don't swallow silently — a rewrite failure (disk-full, bad JSON) leaves
+                    # this rule file un-updated while the rename proceeds; surface it so the
+                    # user knows that file is out of sync and `did["rules"]` is understated.
+                    print(f"  WARNING: could not rewrite rules in {rf} for rename "
+                          f"'{folder_name}' -> '{new_name}' ({e}); that file may be out of "
+                          f"sync — re-run rename or fix it by hand.", file=sys.stderr)
             # folder move on disk — if the destination already exists (a collision the
             # pre-scan can't catch if it appeared mid-run), ABORT this occurrence: do
             # NOT rewrite the registry to point at a folder files were never moved into.
@@ -4601,7 +4845,7 @@ def _apply_area_changes(root: Path, add: list, rename: list, remove: list) -> di
     cfg = {}
     if cfg_path.exists():
         try:
-            cfg = json.loads(cfg_path.read_text())
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
         except Exception:
             cfg = {}
 
@@ -4681,6 +4925,11 @@ def _apply_area_changes(root: Path, add: list, rename: list, remove: list) -> di
     cfg["areas"] = areas
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write(cfg_path, json.dumps(cfg, indent=2, ensure_ascii=False))
+    # The active-grouping set just changed on disk; drop the process cache so any later
+    # _active_groupings() call in THIS process (reconcile, execute, a follow-up rules call)
+    # re-reads config.json instead of returning the pre-change set. Not all callers go
+    # through the rules-viewer /apply path that also resets — reset here at the source.
+    _reset_caches()
     return {"areas": areas, "notes": notes}
 
 
@@ -4768,8 +5017,8 @@ _RULES_VIEWER_HTML = r"""<!DOCTYPE html>
     <li><b>policy</b> — an entity whose rule is a <i>behaviour</i> (e.g. group files by event/date)</li>
     <li><b>atomic</b> — a whole folder treated as one locked unit, never opened file-by-file</li>
    </ul>
-   <b>aliases</b> — other spellings/names that should route to this same entity (e.g. <i>Ishu</i> → Ishan).<br>
-   <b>relation</b> — how it relates to you or another entity, free text (collaborator, client, spouse…).<br>
+   <b>aliases</b> — other spellings/names that should route to this same entity (e.g. <i>Bob</i> → Robert).<br>
+   <b>relation</b> — how it relates to you or another entity, free text (collaborator, client, partner…).<br>
    <b>behaviour</b> — the specific routing behaviour, if any (e.g. <i>event-group</i>). This is different from the <i>policy</i> type: type says "this entity is a behaviour rule", behaviour says "what the rule does".<br>
    <b>notes</b> — anything else worth recording about the rule.
   </div>
@@ -4832,10 +5081,10 @@ function card(e){
   <h3><input type="checkbox" class="bulk" ${ck} onchange="toggleSel('${jsq(e.entity)}',this.checked)" title="select for bulk action"> ${esc(e.entity)} ${tags.join(' ')} <span class="tag">${e.usage_count} files</span></h3>
   <div class="meta">
    <label title="Which cluster this entity belongs to. See the 'What goes where' legend at the top.">type</label><select onchange="metaEdit('${jsq(e.entity)}','entity_type',this.value)">${types.map(t=>`<option value="${t}" ${t==e.entity_type?'selected':''}>${t} — ${TYPE_HELP[t]}</option>`).join('')}</select>
-   <label title="Other names this same thing is known by, so they auto-route to it.">aliases</label><input value="${esc((e.aliases||[]).join(', '))}" placeholder="other names, e.g. Ishu, I.K." onchange="metaEdit('${jsq(e.entity)}','aliases',this.value.split(',').map(s=>s.trim()).filter(Boolean))">
-   <label title="How this entity relates to you or to another entity (free text).">relation</label><input value="${esc(e.relation||'')}" placeholder="e.g. collaborator, client, spouse, employer" onchange="metaEdit('${jsq(e.entity)}','relation',this.value)">
+   <label title="Other names this same thing is known by, so they auto-route to it.">aliases</label><input value="${esc((e.aliases||[]).join(', '))}" placeholder="other names, e.g. Bob, R.S." onchange="metaEdit('${jsq(e.entity)}','aliases',this.value.split(',').map(s=>s.trim()).filter(Boolean))">
+   <label title="How this entity relates to you or to another entity (free text).">relation</label><input value="${esc(e.relation||'')}" placeholder="e.g. collaborator, client, partner, employer" onchange="metaEdit('${jsq(e.entity)}','relation',this.value)">
    <label title="A routing behaviour for this entity's files (optional). Distinct from the 'policy' type: this is the specific rule.">behaviour</label><input value="${esc(e.policy||'')}" placeholder="e.g. event-group (group photos by date/event)" onchange="metaEdit('${jsq(e.entity)}','policy',this.value)">
-   <label title="Free notes — what this rule is for, or why it exists.">notes</label><input value="${esc(e.notes||'')}" placeholder="free notes, e.g. 'thesis supervisor — files go under EDUCATION'" onchange="metaEdit('${jsq(e.entity)}','notes',this.value)">
+   <label title="Free notes — what this rule is for, or why it exists.">notes</label><input value="${esc(e.notes||'')}" placeholder="free notes, e.g. 'primary contact for Project X'" onchange="metaEdit('${jsq(e.entity)}','notes',this.value)">
   </div>
   ${occ}
   ${conf.length?`<div class="conflict">⚠ overlaps: ${conf.map(c=>esc(c.with)+' ['+c.shared.join(',')+']').join('; ')}</div>`:''}
@@ -4947,6 +5196,13 @@ class _RulesHandler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
             return
         root = self.__class__._root
+        # Two tree walks here (_aggregate_rules for the entity view, _build_rules_index
+        # for conflicts/coverage). Kept separate on purpose: they are independent concerns
+        # reused at other call sites (the W1 matcher, /test, cmd_reconcile), and merging
+        # them into one shared walk would couple the matcher's hot path to the viewer's
+        # display logic. The cost is two .tidy-rules.json walks PER PAGE LOAD of a manual,
+        # localhost-only viewer the user opens a handful of times — not a production hot
+        # path — so the clarity of two single-purpose helpers wins over de-duping the walk.
         agg = _aggregate_rules(root)
         index, dest_set = _build_rules_index(root)
         payload = {
@@ -5164,7 +5420,7 @@ def _detect_atomic_units(root: Path) -> list:
     the bootstrap walkthrough; on approval they're written locked to entities.json."""
     root = Path(root)
     locked = _locked_atomic_names(root)
-    out, skip = [], {".organizer", "logseq-journals"}
+    out, skip = [], {".organizer"}
     for cur, dirs, files in os.walk(root):
         cp = Path(cur)
         keep = []
@@ -5199,7 +5455,7 @@ def _bootstrap_candidates(root: Path, mode: str = "cold-start",
     root = Path(root)
     index, dest_set = _build_rules_index(root)
     locked_atomic = _locked_atomic_names(root)
-    skip = {".organizer", "logseq-journals", "Archive", "_Inbox"}
+    skip = {".organizer", "Archive", "_Inbox"}
     candidates, drift = [], []
     for cur, dirs, files in os.walk(root):
         cp = Path(cur)
@@ -5242,13 +5498,16 @@ def _bootstrap_candidates(root: Path, mode: str = "cold-start",
             e = {"filename": sample[0]["name"], "current_path": str(cp / sample[0]["name"]),
                  "is_image": False, "extension": sample[0]["ext"]}
             dest, _r = _auto_classify_entry(e, root, index, dest_set)
-            if dest and dest != rel and dest != "already in ruled folder":
+            # dest is a destination PATH; the "already-placed" case always returns
+            # dest == rel (the file's own folder), so `dest != rel` alone excludes it —
+            # no need to compare dest against the reason string (which it can never equal).
+            if dest and dest != rel:
                 drift.append({"folder": rel, "sampled": sample[0]["name"], "matches_instead": dest})
     capped = candidates[:limit]
     for i, c in enumerate(capped):
-        c["batch"] = i // 25
+        c["batch"] = i // BATCH
     return {"mode": mode, "n_candidates": len(candidates), "emitted": len(capped),
-            "n_batches": (len(capped) + 24) // 25, "candidates": capped,
+            "n_batches": (len(capped) + BATCH - 1) // BATCH, "candidates": capped,
             "drift": drift, "dropped": max(0, len(candidates) - len(capped))}
 
 
@@ -5258,6 +5517,12 @@ def _bootstrap_apply(root: Path, proposed: dict) -> dict:
     root = Path(root)
     res = {"rules_written": 0, "entities": 0}
     for rule in proposed.get("rules", []):
+        if not isinstance(rule, dict):
+            # A non-object rule entry (string/list) would crash the .get() calls below;
+            # skip it like _aggregate_rules / _build_rules_index do, and count it as
+            # rejected rather than aborting the whole apply.
+            res.setdefault("rejected", []).append({"folderName": rule, "why": "not an object"})
+            continue
         parent_rel = rule.get("parent", "") or ""
         folder = rule.get("folderName")
         desc = rule.get("description", "")
@@ -5276,12 +5541,15 @@ def _bootstrap_apply(root: Path, proposed: dict) -> dict:
             res.setdefault("rejected", []).append({"parent": parent_rel, "folderName": folder, "why": "escapes root"})
             continue
         leaf = folder.split("/")[-1]
-        if desc and not desc.endswith(f"in {leaf}"):
-            desc = f"{desc} in {leaf}"
+        # Canonical rule-description suffix is " in <leaf>" WITH the leading space; the
+        # shared _ensure_in_suffix is the single home for that rule (the space matters:
+        # endswith("in <leaf>") would also match a word ending in "in", e.g. "Bitcoin Bills"
+        # ends with "in Bills", and wrongly skip the append).
+        desc = _ensure_in_suffix(desc, leaf)
         data = {"rules": []}
         if pf.exists():
             try:
-                data = json.loads(pf.read_text())
+                data = json.loads(pf.read_text(encoding="utf-8"))
             except Exception:
                 data = {"rules": []}
         rules = data.get("rules", []) if isinstance(data, dict) else data
@@ -5345,7 +5613,7 @@ def cmd_bootstrap(args):
         if not path.exists():
             sys.exit(f"Error: proposals file not found: {path}")
         try:
-            proposed = json.loads(path.read_text())
+            proposed = json.loads(path.read_text(encoding="utf-8"))
         except (ValueError, OSError) as e:
             sys.exit(f"Error: could not parse proposals file {path}: {e}. It must be a JSON "
                      f"object with 'rules'/'entities' keys. See SKILL.md bootstrap step 4 for the shape.")
@@ -5495,16 +5763,14 @@ def main():
 
     args = parser.parse_args()
 
-    # Derive root: --root flag (saves to config) > saved config > DEFAULT_ONEDRIVE
-    global REGISTRY_DB, CSV_EXPORT_PATH, _EFFECTIVE_ROOT
+    # Derive root: --root flag (saves to config) > saved config > DEFAULT_ONEDRIVE.
+    # _finalize_runtime_paths is the single place REGISTRY_DB / CSV_EXPORT_PATH are set.
     if args.root:
-        _EFFECTIVE_ROOT = Path(args.root).expanduser().resolve()
-        _save_config_root(_EFFECTIVE_ROOT)
+        _root = Path(args.root).expanduser().resolve()
+        _save_config_root(_root)
+        _finalize_runtime_paths(_root)
     else:
-        _EFFECTIVE_ROOT = _read_config_root() or DEFAULT_ONEDRIVE
-
-    REGISTRY_DB     = _EFFECTIVE_ROOT / ".organizer" / "registry.db"
-    CSV_EXPORT_PATH = _EFFECTIVE_ROOT / ".organizer" / "registry.csv"
+        _finalize_runtime_paths()
 
     # Auto-migrate from legacy ~/.claude/drive-organizer/ location (first run only)
     _legacy_db = Path.home() / ".claude" / "drive-organizer" / "registry.db"
@@ -5515,6 +5781,11 @@ def main():
         _legacy_csv = _legacy_db.parent / "registry.csv"
         if _legacy_csv.exists() and not CSV_EXPORT_PATH.exists():
             shutil.copy2(str(_legacy_csv), str(CSV_EXPORT_PATH))
+
+    # Startup probe: one-line stderr notice if any optional library is absent (silent
+    # when all present). Skipped for `exif`, which emits its own Pillow-specific note.
+    if args.command != "exif":
+        _print_optional_deps_notice()
 
     dispatch = {
         "download-batch":  cmd_download_batch,
