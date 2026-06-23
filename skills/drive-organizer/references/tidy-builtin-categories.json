@@ -1,169 +1,563 @@
 [
   {
     "category": "Screenshots",
-    "keywords": ["screenshot", "screen shot", "capture", "cleanshot"],
-    "extensions": ["gif", "heic", "heif", "jpeg", "jpg", "png"],
-    "onedrive_hint": "Usually personal → PERSONAL/PERSONAL Photos/YYYY/Month YY/. If clearly from a production context, route to WORK/<Company>/<Project>/References/."
+    "keywords": [
+      "screenshot",
+      "screen shot",
+      "capture",
+      "cleanshot"
+    ],
+    "extensions": [
+      "gif",
+      "heic",
+      "heif",
+      "jpeg",
+      "jpg",
+      "png"
+    ],
+    "onedrive_hint": "Usually personal → PERSONAL/PERSONAL Photos/YYYY/Month YY/. If clearly work-related, route to WORK/<Company>/<Project>/References/."
   },
   {
     "category": "Screen Recordings",
-    "keywords": ["screen recording", "screencast", "capture", "recording"],
-    "extensions": ["mov", "mp4"],
+    "keywords": [
+      "screen recording",
+      "screencast",
+      "capture",
+      "recording"
+    ],
+    "extensions": [
+      "mov",
+      "mp4"
+    ],
     "onedrive_hint": "_Inbox — video files are not currently organised; ask."
   },
   {
     "category": "Pictures",
-    "keywords": ["photo", "image", "picture", "wallpaper"],
-    "extensions": ["arw", "bmp", "cr2", "cr3", "dng", "gif", "heic", "heif", "jfif", "jpeg", "jpg", "nef", "orf", "png", "raf", "rw2", "tif", "tiff", "webp"],
-    "onedrive_hint": "Faces/social/travel → PERSONAL/PERSONAL Photos/YYYY/Month YY/ (preserve event subfolder if already inside one). Props/costumes/set → WORK/<Company>/<Project>/References/. Product shots → WORK/<Company>/<Project>/References/Product Images/. Camera RAW (nef/raf/cr2/cr3/dng/orf/rw2): skip vision — Claude can't decode RAW; classify by parent folder + filename only."
+    "keywords": [
+      "photo",
+      "image",
+      "picture",
+      "wallpaper"
+    ],
+    "extensions": [
+      "arw",
+      "bmp",
+      "cr2",
+      "cr3",
+      "dng",
+      "gif",
+      "heic",
+      "heif",
+      "jfif",
+      "jpeg",
+      "jpg",
+      "nef",
+      "orf",
+      "png",
+      "raf",
+      "rw2",
+      "tif",
+      "tiff",
+      "webp"
+    ],
+    "onedrive_hint": "Faces/social/travel → PERSONAL/PERSONAL Photos/YYYY/Month YY/ (preserve event subfolder if already inside one). Project assets/props → WORK/<Company>/<Project>/References/. Product shots → WORK/<Company>/<Project>/References/Product Images/. Camera RAW (nef/raf/arw/cr2/cr3/dng/orf/rw2): skip vision — Claude can't decode RAW; classify by parent folder + filename only."
   },
   {
     "category": "Finance",
-    "keywords": ["invoice", "receipt", "bank", "tax", "statement", "payment", "bill", "advance", "salary", "payslip"],
-    "extensions": ["csv", "doc", "docx", "pdf", "xlsx", "xls"],
+    "keywords": [
+      "invoice",
+      "receipt",
+      "bank",
+      "tax",
+      "statement",
+      "payment",
+      "bill",
+      "advance",
+      "salary",
+      "payslip"
+    ],
+    "extensions": [
+      "csv",
+      "doc",
+      "docx",
+      "pdf",
+      "xlsx",
+      "xls"
+    ],
     "onedrive_hint": "With project signal → WORK/<Company>/<Project>/Financials/Bills/. Personal or no project → PERSONAL/PERSONAL Financial/<Person>/. Bank/CC statement → PERSONAL/PERSONAL Financial/<Person>/Bank Statements/. Tax → PERSONAL/PERSONAL Financial/<Person>/Tax Documents/."
   },
   {
     "category": "Tickets",
-    "keywords": ["ticket", "boarding", "pass", "flight", "itinerary", "booking"],
-    "extensions": ["heic", "jpeg", "jpg", "pdf"],
+    "keywords": [
+      "ticket",
+      "boarding",
+      "pass",
+      "flight",
+      "itinerary",
+      "booking"
+    ],
+    "extensions": [
+      "heic",
+      "jpeg",
+      "jpg",
+      "pdf"
+    ],
     "onedrive_hint": "PERSONAL/PERSONAL Admin/<Person>/ (travel admin) or PERSONAL/PERSONAL ID and Documents/<Person>/ if it's a saved pass."
   },
   {
     "category": "Government",
-    "keywords": ["passport", "visa", "certificate", "permit", "aadhaar", "pan", "degree", "birth certificate"],
-    "extensions": ["doc", "docx", "heic", "jpeg", "jpg", "pdf"],
+    "keywords": [
+      "passport",
+      "visa",
+      "certificate",
+      "permit",
+      "aadhaar",
+      "pan",
+      "degree",
+      "birth certificate"
+    ],
+    "extensions": [
+      "doc",
+      "docx",
+      "heic",
+      "jpeg",
+      "jpg",
+      "pdf"
+    ],
     "onedrive_hint": "ID/passport/degree → PERSONAL/PERSONAL ID and Documents/<Person>/. Visa/permit/form → PERSONAL/PERSONAL Admin/<Person>/."
   },
   {
     "category": "Career",
-    "keywords": ["cv", "resume", "portfolio", "career", "cover letter", "job application"],
-    "extensions": ["doc", "docx", "pdf"],
+    "keywords": [
+      "cv",
+      "resume",
+      "portfolio",
+      "career",
+      "cover letter",
+      "job application"
+    ],
+    "extensions": [
+      "doc",
+      "docx",
+      "pdf"
+    ],
     "onedrive_hint": "PERSONAL/PERSONAL Resumes/<Person>/ for CVs and job docs. PERSONAL/PERSONAL Resumes/Templates/ for blank templates."
   },
   {
     "category": "Health",
-    "keywords": ["medical", "doctor", "prescription", "hospital", "lab", "report", "diagnosis", "health"],
-    "extensions": ["doc", "docx", "jpeg", "jpg", "pdf"],
+    "keywords": [
+      "medical",
+      "doctor",
+      "prescription",
+      "hospital",
+      "lab",
+      "report",
+      "diagnosis",
+      "health"
+    ],
+    "extensions": [
+      "doc",
+      "docx",
+      "jpeg",
+      "jpg",
+      "pdf"
+    ],
     "onedrive_hint": "PERSONAL/PERSONAL Medical/<Person>/."
   },
   {
     "category": "Education",
-    "keywords": ["course", "lecture", "homework", "assignment", "syllabus", "transcript", "enrolment"],
-    "extensions": ["doc", "docx", "pdf", "ppt", "pptx"],
+    "keywords": [
+      "course",
+      "lecture",
+      "homework",
+      "assignment",
+      "syllabus",
+      "transcript",
+      "enrolment"
+    ],
+    "extensions": [
+      "doc",
+      "docx",
+      "pdf",
+      "ppt",
+      "pptx"
+    ],
     "onedrive_hint": "Masters/postgraduate applications → EDUCATION/EDUCATION Masters Applications/<Person>/<Institution>/. Academic papers → EDUCATION/EDUCATION Research/Academic Papers/. General study notes → EDUCATION/EDUCATION Research/Notes/."
   },
   {
     "category": "Books",
-    "keywords": ["book", "ebook", "novel", "guide", "handbook"],
-    "extensions": ["azw", "azw3", "djvu", "epub", "mobi", "pdf"],
+    "keywords": [
+      "book",
+      "ebook",
+      "novel",
+      "guide",
+      "handbook"
+    ],
+    "extensions": [
+      "azw",
+      "azw3",
+      "djvu",
+      "epub",
+      "mobi",
+      "pdf"
+    ],
     "onedrive_hint": "Fiction/hobby reading → ENTERTAINMENT/ENTERTAINMENT Books and Audiobooks/. Academic/research text → EDUCATION/EDUCATION Research/Academic Papers/."
   },
   {
     "category": "Work",
-    "keywords": ["project", "meeting", "client", "proposal", "brief", "contract", "agreement"],
-    "extensions": ["doc", "docx", "key", "pdf", "pptx"],
+    "keywords": [
+      "project",
+      "meeting",
+      "client",
+      "proposal",
+      "brief",
+      "contract",
+      "agreement"
+    ],
+    "extensions": [
+      "doc",
+      "docx",
+      "key",
+      "pdf",
+      "pptx"
+    ],
     "onedrive_hint": "Use the cascading Q model — match against root, then WORK/, then the company (one of the real company folders the WORK .tidy-rules.json defines, e.g. [COMPANY A]/[COMPANY B]/[COMPANY C]), then the project. With project signal → <Project>/Docs/ or <Project>/Legal/. No signal → ask."
   },
   {
     "category": "Development",
-    "keywords": ["github", "gitlab", "repository", "api", "code", "script", "config"],
-    "extensions": ["csv", "env", "gitignore", "go", "js", "json", "md", "py", "ts", "yaml", "yml"],
+    "keywords": [
+      "github",
+      "gitlab",
+      "repository",
+      "api",
+      "code",
+      "script",
+      "config"
+    ],
+    "extensions": [
+      "csv",
+      "env",
+      "gitignore",
+      "go",
+      "js",
+      "json",
+      "md",
+      "py",
+      "ts",
+      "yaml",
+      "yml"
+    ],
     "onedrive_hint": "_Inbox — development files are unusual in OneDrive. Ask before routing."
   },
   {
     "category": "LLM Skills",
-    "keywords": ["skill"],
-    "extensions": ["md"],
+    "keywords": [
+      "skill"
+    ],
+    "extensions": [
+      "md"
+    ],
     "onedrive_hint": "_Inbox — skill files shouldn't be in OneDrive; confirm before routing."
   },
   {
     "category": "Personal",
-    "keywords": ["family", "vacation", "holiday", "birthday", "wedding", "personal"],
-    "extensions": ["heic", "jpeg", "jpg", "mov", "mp4", "pdf"],
+    "keywords": [
+      "family",
+      "vacation",
+      "holiday",
+      "birthday",
+      "wedding",
+      "personal"
+    ],
+    "extensions": [
+      "heic",
+      "jpeg",
+      "jpg",
+      "mov",
+      "mp4",
+      "pdf"
+    ],
     "onedrive_hint": "Photos → PERSONAL/PERSONAL Photos/YYYY/Month YY/. Docs → PERSONAL/PERSONAL Admin/<Person>/."
   },
   {
     "category": "Documents",
-    "keywords": ["manual", "handbook", "guide", "reference", "report"],
-    "extensions": ["doc", "docx", "pdf"],
+    "keywords": [
+      "manual",
+      "handbook",
+      "guide",
+      "reference",
+      "report"
+    ],
+    "extensions": [
+      "doc",
+      "docx",
+      "pdf"
+    ],
     "onedrive_hint": "Context-dependent. Use filename + content_peek to identify project or personal/research nature."
   },
   {
     "category": "Presentations",
-    "keywords": ["presentation", "deck", "slides", "pitch"],
-    "extensions": ["key", "ppt", "pptx"],
+    "keywords": [
+      "presentation",
+      "deck",
+      "slides",
+      "pitch"
+    ],
+    "extensions": [
+      "key",
+      "ppt",
+      "pptx"
+    ],
     "onedrive_hint": "With project signal → WORK/<Company>/<Project>/Docs/ or WORK/<Company>/<Project>/References/. Template → RESOURCES/RESOURCES Templates/."
   },
   {
     "category": "Spreadsheets",
-    "keywords": ["spreadsheet", "budget", "tracker", "schedule", "breakdown"],
-    "extensions": ["csv", "xls", "xlsx"],
-    "onedrive_hint": "Scene breakdown → WORK/<Company>/<Project>/Scene Breakdown/. Financial → WORK/<Company>/<Project>/Financials/Bills/ or PERSONAL/PERSONAL Financial/<Person>/. Generic → check content_peek."
+    "keywords": [
+      "spreadsheet",
+      "budget",
+      "tracker",
+      "schedule",
+      "breakdown"
+    ],
+    "extensions": [
+      "csv",
+      "xls",
+      "xlsx"
+    ],
+    "onedrive_hint": "Financial → WORK/<Company>/<Project>/Financials/Bills/ or PERSONAL/PERSONAL Financial/<Person>/. Generic → check content_peek."
   },
   {
     "category": "Archives",
-    "keywords": ["archive", "backup", "compressed", "bundle", "zip"],
-    "extensions": ["7z", "bz2", "gz", "rar", "tar", "zip"],
+    "keywords": [
+      "archive",
+      "backup",
+      "compressed",
+      "bundle",
+      "zip"
+    ],
+    "extensions": [
+      "7z",
+      "bz2",
+      "gz",
+      "rar",
+      "tar",
+      "zip"
+    ],
     "onedrive_hint": "_Inbox — inspect contents before routing."
   },
   {
     "category": "Installers",
-    "keywords": ["installer", "setup", "install", "package"],
-    "extensions": ["app", "deb", "dmg", "exe", "pkg"],
+    "keywords": [
+      "installer",
+      "setup",
+      "install",
+      "package"
+    ],
+    "extensions": [
+      "app",
+      "deb",
+      "dmg",
+      "exe",
+      "pkg"
+    ],
     "onedrive_hint": "_Inbox — installers shouldn't be in OneDrive; flag for review."
   },
   {
     "category": "Fonts",
-    "keywords": ["font", "typeface", "typography"],
-    "extensions": ["otf", "ttc", "ttf", "woff", "woff2"],
+    "keywords": [
+      "font",
+      "typeface",
+      "typography"
+    ],
+    "extensions": [
+      "otf",
+      "ttc",
+      "ttf",
+      "woff",
+      "woff2"
+    ],
     "onedrive_hint": "RESOURCES/RESOURCES Fonts/."
   },
   {
     "category": "Music",
-    "keywords": ["music", "song", "track", "album", "audio", "sound"],
-    "extensions": ["aac", "aif", "aiff", "flac", "m4a", "mp3", "wav"],
+    "keywords": [
+      "music",
+      "song",
+      "track",
+      "album",
+      "audio",
+      "sound"
+    ],
+    "extensions": [
+      "aac",
+      "aif",
+      "aiff",
+      "flac",
+      "m4a",
+      "m4b",
+      "mp3",
+      "ogg",
+      "opus",
+      "wav",
+      "wma"
+    ],
     "onedrive_hint": "ENTERTAINMENT/ENTERTAINMENT Music/(YYYY) AlbumName/ — or ENTERTAINMENT/ENTERTAINMENT Music/_Unsorted/ if no album context yet."
   },
   {
     "category": "Video",
-    "keywords": ["video", "movie", "clip", "recording", "film", "reel"],
-    "extensions": ["3gp", "avi", "flv", "m4v", "mkv", "mov", "mp4", "mxf", "wmv"],
-    "onedrive_hint": "Film/production content → WORK/<Company>/<Project>/References/. Personal → PERSONAL/PERSONAL Photos/YYYY/Month YY/ (treat like photos). Movies/TV → ENTERTAINMENT/ENTERTAINMENT Movies and TV Shows/<Title>/. Screen recordings → _Inbox. General → _Inbox."
+    "keywords": [
+      "video",
+      "movie",
+      "clip",
+      "recording",
+      "film",
+      "reel"
+    ],
+    "extensions": [
+      "3gp",
+      "avi",
+      "flv",
+      "m4v",
+      "mkv",
+      "mov",
+      "mp4",
+      "mxf",
+      "wmv"
+    ],
+    "onedrive_hint": "Work-project content → WORK/<Company>/<Project>/References/. Personal → PERSONAL/PERSONAL Photos/YYYY/Month YY/ (treat like photos). Movies/TV → ENTERTAINMENT/ENTERTAINMENT Movies and TV Shows/<Title>/. Screen recordings → _Inbox. General → _Inbox."
   },
   {
     "category": "Design Source",
-    "keywords": ["design", "logo", "branding", "mockup", "artwork"],
-    "extensions": ["afdesign", "afphoto", "ai", "cdr", "eps", "idlk", "idml", "indd", "procreate", "psd", "sketch", "svg"],
+    "keywords": [
+      "design",
+      "logo",
+      "branding",
+      "mockup",
+      "artwork"
+    ],
+    "extensions": [
+      "afdesign",
+      "afphoto",
+      "ai",
+      "cdr",
+      "eps",
+      "idlk",
+      "idml",
+      "indd",
+      "procreate",
+      "psd",
+      "sketch",
+      "svg"
+    ],
     "onedrive_hint": "Project context → WORK/<Company>/<Project>/Branding Materials/ or References/. Generic/template → RESOURCES/RESOURCES Templates/. No project signal → _Inbox/ (design source files are too valuable to bury automatically). InDesign trio (.indd/.idml/.idlk) groups together — same destination."
   },
   {
     "category": "Sidecar",
-    "keywords": ["subtitle", "sidecar", "metadata", "waveform"],
-    "extensions": ["pfl", "srt", "thm", "xmp"],
+    "keywords": [
+      "subtitle",
+      "sidecar",
+      "metadata",
+      "waveform"
+    ],
+    "extensions": [
+      "pfl",
+      "srt",
+      "thm",
+      "xmp"
+    ],
     "onedrive_hint": "Sidecars follow their parent media file by basename match (clip.mp4.pfl parents to clip.mp4; movie.srt parents to movie.mp4). Route to wherever the parent goes. Orphan sidecars (no parent in same folder) → _Inbox."
   },
   {
     "category": "Scientific Data",
-    "keywords": ["data", "dataset", "research", "experiment", "log"],
-    "extensions": ["000", "001", "crc", "edf", "edn", "f", "f90", "h", "mat", "npy"],
-    "onedrive_hint": "Almost always part of an atomic-unit folder (CPAP backup, research dataset). Route the WHOLE folder, not individual files. If loose: research-tied → EDUCATION/EDUCATION Research/<Topic>/Data/. Medical/CPAP → PERSONAL/PERSONAL Medical/<Person>/. Never propose per-file moves."
+    "keywords": [
+      "data",
+      "dataset",
+      "research",
+      "experiment",
+      "log"
+    ],
+    "extensions": [
+      "000",
+      "001",
+      "crc",
+      "edf",
+      "edn",
+      "f",
+      "f90",
+      "h",
+      "mat",
+      "npy"
+    ],
+    "onedrive_hint": "Almost always part of an atomic-unit folder (device-export backup, research dataset). Route the WHOLE folder, not individual files. If loose: research-tied → EDUCATION/EDUCATION Research/<Topic>/Data/. Medical device data → PERSONAL/PERSONAL Medical/<Person>/. Never propose per-file moves."
   },
   {
     "category": "Legacy Media",
-    "keywords": ["flash", "director", "legacy", "obsolete"],
-    "extensions": ["asp", "au", "dxr", "fla", "swf", "wma", "x32"],
+    "keywords": [
+      "flash",
+      "director",
+      "legacy",
+      "obsolete"
+    ],
+    "extensions": [
+      "asp",
+      "au",
+      "dxr",
+      "fla",
+      "swf",
+      "x32"
+    ],
     "onedrive_hint": "Obsolete formats (Flash retired 2020, Director retired 2017). Inside an atomic 'Old Projects' folder → route whole folder. Loose → _Inbox/ with ? — most are unreadable on modern machines and worth reviewing for deletion."
   },
   {
     "category": "Code Source",
-    "keywords": ["source", "code", "script", "package"],
-    "extensions": ["c", "cs", "doctest", "edn", "f", "f90", "h", "ini", "js", "json", "log", "plist", "pxd", "pxi", "py", "pyi", "sample", "shader", "so", "ts", "typed", "unity", "prefab", "xml", "yaml", "yml"],
+    "keywords": [
+      "source",
+      "code",
+      "script",
+      "package"
+    ],
+    "extensions": [
+      "c",
+      "cs",
+      "doctest",
+      "edn",
+      "f",
+      "f90",
+      "h",
+      "ini",
+      "js",
+      "json",
+      "log",
+      "plist",
+      "pxd",
+      "pxi",
+      "py",
+      "pyi",
+      "sample",
+      "shader",
+      "so",
+      "ts",
+      "typed",
+      "unity",
+      "prefab",
+      "xml",
+      "yaml",
+      "yml"
+    ],
     "onedrive_hint": "If inside a Python venv (pyvenv.cfg present in ancestor), Unity Assets/ tree, or node_modules — route the WHOLE folder as an atomic unit. Loose code/config files → _Inbox/ with ? noting 'shouldn't be in OneDrive'."
   },
   {
     "category": "Atomic Folder Markers",
-    "keywords": ["venv", "node_modules", "OSCAR_Data", "zotero", "Time Machine", "Assets", ".app", ".framework"],
+    "keywords": [
+      "venv",
+      "node_modules",
+      "OSCAR_Data",
+      "zotero",
+      "Time Machine",
+      "Assets",
+      ".app",
+      ".framework"
+    ],
     "extensions": [],
     "onedrive_hint": "Not extensions but folder-name / marker-file patterns. See SKILL.md 'Atomic-unit folders' section. Detected via: pyvenv.cfg, zotero.sqlite, .unity files, folder names matching node_modules/Backups.backupdb/etc. When detected: generate ONE proposal for the whole folder, not per-file."
   }

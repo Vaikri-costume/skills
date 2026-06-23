@@ -1,7 +1,7 @@
 ---
-version: "2.3.0"
+version: "2.4.0"
 category: C
-parent-version: "2.2.0"
+parent-version: "2.3.0"
 author:
   primary: "Vaikri-costume"
   history:
@@ -23,6 +23,54 @@ inspirations:
 # History — drive-organizer
 
 ## Changelog
+
+### 2.4.0 — 2026-06-23
+
+#### Added
+- **Optional-dependency graceful degradation.** The backend probes `mutagen`, `PyMuPDF`, and
+  `Pillow` at startup and prints a single stderr notice of any inactive features; every call site
+  degrades cleanly (a weaker signal, not a crash) when a library is absent.
+- `exif` subcommand documented as the vision-off image-routing path; the arbiter prompt gains a
+  `[CAPABILITIES]` slot (peek/vision ON/OFF) matching the classify fan-out contract.
+- `tidy-builtin-categories.json` expanded with broader generic category entries.
+
+#### Changed
+- **De-personalization of the shipped skill.** Removed the original author's personal names,
+  production-company and character examples, and personal folder references from SKILL.md,
+  `references/`, the viewer UI, and `BUILTIN_VOCAB`; remaining examples reframed as illustrative
+  generics. The shipped skill is now generic and universal.
+- Renamed the `.tidy-rules.json` project-metadata key `production_period` → `date_range` (more
+  general); back-compat reads the legacy key and migrates it on write.
+- Removed a hardcoded personal folder name from the skip sets in favour of the existing
+  external-folder mechanism.
+- Corrected the auto-approve description in two SKILL.md spots to "W1 fast-path (deterministic rule
+  match)" rather than "high-confidence classifier verdict".
+- Arbiter-sweep section now names the `[INBOX_BATCH_JSON]` slot and states the pointer-not-inline WHY.
+- Clarified the rejected-button cell: the served `para_subfolder` is the verdict destination carried
+  through for process-return to reclassify against the baseline.
+- process-return now fills a null `file_date` when a date becomes readable, instead of carrying null
+  and silently skipping the period update.
+- Scoped the batch-loop idempotency claim: replaying a consumed `approved.json` reports MISSING;
+  generate a fresh batch.
+- Documented the intentional `IMAGE_EXTS` two-consumer split (backend constant + agent-facing list;
+  a Markdown reference cannot import a Python set).
+- Consolidated the `date_range` buffer value (`buffer_days=30`) to a single prose home in SKILL.md.
+- Replaced the Camera RAW extension enumeration in SKILL.md with a pointer to
+  `references/file-type-routing.md` as the authoritative set.
+
+#### Fixed
+- `reconcile --accept` now re-derives `para_category = _para_category(new_para)` when rewriting
+  `para_subfolder`, restoring the projection invariant.
+- `_bootstrap_apply` guards each rule with `isinstance(rule, dict)` before `.get()`, preventing a
+  crash on a non-object rule entry.
+- Added `.arw` to the tidy-builtin Pictures RAW extension list.
+- Added `flagged` to `scan`'s terminal-status exclusion set, so a content/mtime change no longer
+  re-exposes a flagged file to `propose` without a peek.
+- move-journal lost-move branch now emits a WARNING naming both paths and directs to `reconcile`
+  before clearing the entry (previously silent).
+- Corrected the `_para_category` docstring: the viewer's `inferCategory` is client-side display-only
+  and intentionally not a mirror of the backend function.
+- Rewrote the module Usage docstring to cover all subcommands and point to `organizer.py -h`.
 
 ### 2.3.0 — 2026-06-20
 - **Automated eviction — `cleanup --evict`.** The new flag dehydrates the organised top-level
