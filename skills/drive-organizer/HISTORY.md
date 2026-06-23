@@ -1,7 +1,7 @@
 ---
-version: "2.4.0"
+version: "2.7.0"
 category: C
-parent-version: "2.3.0"
+parent-version: "2.6.1"
 author:
   primary: "Vaikri-costume"
   history:
@@ -23,6 +23,75 @@ inspirations:
 # History — drive-organizer
 
 ## Changelog
+
+### 2.7.0 — 2026-06-24
+
+#### Added
+- **rules-viewer Settings panel (Phase 3 — the configurability gating feature).** A collapsible
+  **⚙ Settings** panel is now embedded in the rules-viewer (`rules-viewer`, port 5003). It reads the
+  current effective config via a new `_settings_for_viewer()` helper (defaults applied; legacy
+  top-level `vision` normalised into `model_capabilities`) and writes back via `_write_user_config()`,
+  which atomically merges changes into `<root>/.organizer/config.json` while preserving unrelated keys
+  (`areas`, `root`, `profile`). Editable settings: `peek` (read file contents), `vision` (see images),
+  `auto_approve` (W1 fast-path auto-approval), `skip_types` (normalised to a deduped sorted `.ext`
+  list), `skip_over_mb` (cleared when blank). "Save settings" POSTs to a new `/config` route — entirely
+  separate from `/save` and `/apply` — so settings changes never touch the rule set and vice-versa. The
+  GET payload now carries a `settings` object the panel renders on load. This panel is the designated
+  single settings surface: every future toggle/dial wires in here.
+
+### 2.6.1 — 2026-06-24
+
+Documentation and structure only — `organizer.py` is untouched, no behaviour change (a patch release).
+
+#### Changed
+- **Docs — viewer screenshot.** Added `assets/viewer.png`, a screenshot of the browser
+  proposal-review viewer (grouped destinations, inline-editable folder/filename fields, per-row
+  approve / reject / flag / inbox / delete), referenced from the README; `assets/README.md`
+  describes it.
+- **SKILL.md structural refactor** (~9,970 → ~8,230 words). Relocated point-of-use / agent-facing
+  detail into references, leaving SKILL.md a leaner contract + pointers; the residual is the
+  load-bearing core-loop executor contract.
+  - Per-file classification logic each fan-out agent applies (pre-bucket by Q1, lazy-load rules +
+    path_vocab, entity matching in `content_peek`, the per-level routing decision + templates
+    fallback, the both-axes file-type rules, RAW/images/photos/atomic/external/audio handling) →
+    moved into `references/classify-prompt.md` under "Per-file classification logic".
+  - Inbox-arbiter reclamation sweep mechanics (trigger rationale, dispatch + `[CAPABILITIES]` fill,
+    the `confirm_inbox`/`reroute_high`/`reroute_low` apply rules) → moved into
+    `references/arbiter-prompt.md` under "When + how the orchestrator runs the sweep".
+  - generate-viewer submit-response interpretation (log-line cases + manual registry-patch recovery)
+    and the process-return learning-loop accelerators (W5) + ordering rationale + delete-routing note
+    → moved into `references/subcommands.md`; SKILL.md keeps the numbered pipeline + pointers.
+  - Model-capabilities subsection compressed to the capability one-liner + a pointer.
+
+### 2.6.0 — 2026-06-23
+
+#### Added
+- **Cowork-reachable review path — `generate-viewer --static`.** The proposal-review viewer is a
+  localhost HTTP server (port 5002), unreachable from Cowork/remote sessions where the user's browser
+  isn't on this host. `--static` (auto-enabled when `DRIVE_ORG_HEADLESS=1` or a Cowork env marker —
+  `CLAUDE_COWORK` / `COWORK` / `CLAUDE_CODE_COWORK` — is set) writes, instead of starting the server:
+  a self-contained editable `proposals_review.html` (review and approve in any browser via a
+  client-side Blob download — no server, no localhost POST), plus a pre-filled `proposals_approved.json`
+  (every file defaulted to `approved` at its proposed destination, so accepting all needs no browser
+  at all). The approved-entry schema is identical to the served viewer's — only the transport differs,
+  so process-return is unchanged. The default localhost behaviour is unchanged.
+- **`generate-viewer --no-open`** — run the localhost viewer server without auto-opening a browser
+  (local headless testing where port 5002 is reachable), matching `rules-viewer --no-open`.
+- SKILL.md documents `--static` / `--no-open`, the auto-detection, and the two fallback outputs.
+
+### 2.5.0 — 2026-06-23
+
+#### Changed
+- **Batched cloud pre-trigger in `scan`.** Cloud-only placeholder downloads are now kicked all at
+  once — `scan` first selects the whole batch (file/GB caps + skip-rehash), then opens every selected
+  cloud-only file to start its download and polls the set once, so N downloads proceed concurrently
+  and overlap the hashing pass instead of the previous one-file-at-a-time trigger→poll. The
+  byte-stability confirmation (stat → sleep → stat) is likewise batched to a single wait across the
+  whole set.
+- Selection logic (bucket priority order, caps, first-admission exception, skip-rehash) is unchanged
+  and runs before the download phase; the per-batch timeout (`DRIVE_ORG_DL_TIMEOUT`) and the deferral
+  of files still online-only after the timeout are preserved.
+- SKILL.md documents the batched download behaviour.
 
 ### 2.4.0 — 2026-06-23
 

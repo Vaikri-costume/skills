@@ -81,3 +81,84 @@ You are read-only: you emit verdicts; the orchestrator executes them.
 Every input `id` appears exactly once. `para_subfolder` must be an existing-taxonomy path or
 `_Inbox`. Do **not** emit `para_category` — the backend derives it from the path. No prose,
 no file contents, verdicts only.
+
+---
+
+## Per-file classification logic (how each agent decides a destination)
+
+<!-- The detailed point-of-use logic each classification agent applies. SKILL.md's `propose`
+     section points here rather than inlining this — it is agent-facing detail, not the
+     orchestrator's always-loaded contract. -->
+
+**Pre-bucket the batch by likely Q1 grouping.** For each pending file, do a fast match against
+the templates' `Q1_groupings` using `filename` + `content_peek` + parent of `current_path`. You're
+not classifying yet — just bucketing each file under the grouping it most likely belongs to. A
+250-file batch typically resolves to 3–5 groupings + 15–25 Q2-level destinations.
+
+**Load on-disk `.tidy-rules.json` lazily** — only the groupings and Q2-level folders this batch
+actually touches. Skip the rest. If a file's pre-grouping was wrong, fall back: load that one
+folder's rules on demand.
+
+Also query the path vocabulary to catch approved names from previous batches:
+```bash
+sqlite3 <root>/.organizer/registry.db \
+  "SELECT segment, position, use_count FROM path_vocab ORDER BY position, use_count DESC"
+```
+Prefer exact spellings already in `.tidy-rules.json` or path_vocab — proposing novel names when
+approved ones exist is how drift occurs.
+
+**Entity matching in content_peek**: actively scan `content_peek` for any project name, person
+name, client, or company name that appears in the rules. A name match in content should override a
+weak filename signal. Example: content_peek contains a person's name → match the project folder
+whose Q3 rule description mentions that name (e.g. `WORK/[COMPANY]/[Project]`), even if the
+filename is generic.
+
+**At each level, the routing decision:**
+
+1. **On-disk rule matches** → route into the matched child. If the child has its own
+   `.tidy-rules.json`, descend and ask the next question.
+2. **No on-disk rule matches, but the templates file lists a valid child for this parent's type**
+   → propose creating that subfolder AND propose adding the rule to the parent's `.tidy-rules.json`.
+   This is the lazy-growth learning loop.
+3. **Templates have no match either** → route to `_Inbox/` at the current level. Note the missing
+   signal with `?`. Don't invent new categories.
+
+**Templates fallback example:** A tax document arrives at `WORK/[COMPANY]/[Project]/Financials/`.
+The Financials/.tidy-rules.json on disk doesn't yet have a "Tax Documents" rule. The templates file
+says `compound_children.Financials.children` includes "Tax Documents" — so propose creates
+`WORK/[COMPANY]/[Project]/Financials/Tax Documents/` AND queues a rule update to add Tax Documents
+to Financials/.tidy-rules.json on process-return.
+
+**Every file needs both axes, in parallel — neither replaces the other:** the cascading-Q model
+answers *where it goes* (grouping → thing → area → leaf); `file-type-routing.md` answers *how to
+handle this type* (vision vs metadata, atomic-unit parent, sidecar parenting, corrupted/lock/legacy
+handling). A perfectly-placed file still needs the right filename + metadata extraction + sidecar
+parenting, which only the file-type rules supply.
+
+**`file-type-routing.md` is the authoritative per-type spec** (extensions, signals, destinations,
+sidecar parenting, lock files, legacy/corrupted formats, the vision decision table). Read it for any
+file whose handling isn't obvious. The load-bearing rules you must not miss:
+
+- **Camera RAW** (the RAW formats listed in `file-type-routing.md`, the authoritative set) **can't
+  be vision-read — never Read them**; classify by parent folder + filename alone.
+- **Images: vision is expensive — decide before Reading.** Skip vision when the path is a known
+  project, the filename is descriptive, or the folder is a character-name container; use it only
+  when needed, then write a 1-sentence `vision_desc`. Full decision table in the reference.
+- **Preserve event folders for photos**: a photo already inside a named event subfolder (e.g.
+  `[Person] Photos/Summer Party 2024/`) keeps that event folder under
+  `PERSONAL/PERSONAL Photos/<event>/`; only loose photos bucket into
+  `PERSONAL/PERSONAL Photos/YYYY/Month YY/`.
+- **Documents**: `content_peek` is the strongest project-ID signal — scan it for
+  project/person/client/company names. Fall through to `tidy-builtin-categories.json` only when no
+  Q*n* match exists anywhere.
+- **Atomic-unit folders** (venvs, `node_modules`, Zotero/OSCAR stores, Unity projects,
+  `.app`/`.framework` bundles, Time Machine): if a file's parent/ancestor is an atomic unit,
+  **propose the whole folder as one entity**, never per-file.
+- **External folders** (`"external": true` in their `.tidy-rules.json`): never scanned or proposed
+  into.
+- **Audio**: `mutagen` surfaces `artist=… | album=… | title=… | date=…` in `content_peek` — use it
+  to route music to `ENTERTAINMENT/ENTERTAINMENT Music/(YYYY) AlbumName/`.
+
+Filename conventions, project metadata, and the `proposals_classified.json` entry shape live in
+`filename-conventions.md` — consult it for grouping-specific naming patterns, reading `content_peek`
+before naming, the `filename_tag` + `date_range` fields, and the verdict/entry shape.
