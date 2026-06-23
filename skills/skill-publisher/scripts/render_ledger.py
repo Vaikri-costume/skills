@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """Render a skill-tracer/skill-publisher audit ledger as one-page HTML.
 
-VENDORED COPY — sync contract. Canonical source:
-  ~/.claude/skills/skill-tracer/scripts/render_ledger.py
-A deliberate byte-copy so skill-publisher runs standalone. The renderer is
-PARAMETERIZED (--config {phase_colors, regression_patterns, valid_actions,
-round_label} + Round/Run auto-detect), so this copy needs NO code edits to serve
-the publisher's POLISH/AUDIT/TIER/PACKAGE/PR + Run ledger — the publisher just
-passes its --config at call time. Keep this copy byte-identical to canonical
-(check_vendored_sync.py enforces it); re-copy when canonical changes. Check drift:
-  diff ~/.claude/skills/skill-tracer/scripts/render_ledger.py \\
-       ~/.claude/skills/skill-publisher/scripts/render_ledger.py
-(Vendored 2026-05-30.)
+INDEPENDENT COPY — skill-publisher's own copy of a renderer skill-tracer also has,
+so the publisher runs standalone. The renderer is PARAMETERIZED (--config
+{phase_colors, regression_patterns, valid_actions, round_label} + Round/Run
+auto-detect), so this copy needs NO code edits to serve the publisher's
+POLISH/AUDIT/TIER/PACKAGE/PR + Run ledger — the publisher just passes its --config
+at call time. The sync contract is RETIRED (2026-06-20): this copy and skill-tracer's
+are no longer kept in sync and may freely diverge. (check_shared_sync.py remains only
+as a dormant manual drift-inspection tool; nothing requires the copies to match.)
 
 Pure-stdlib (argparse, collections, html, json, os, pathlib, re, subprocess, sys — no third-party dependencies). Reads
 the ledger path given as its positional argument and writes HTML to a file
@@ -24,7 +21,7 @@ The rendered page shows:
 - Cluster fan-out (one row per cluster with flag IDs visualized as chips)
 - Regression trace (clusters whose Root cause is marked `regression`,
   highlighted in red with a [regression] text badge)
-- Phase swimlane (phase set depends on the ledger — TRACE/SIMPLIFY/PORT-AUDIT for skill-tracer, POLISH/AUDIT/TIER/PACKAGE/PR for skill-publisher via --config) — Phase column visualized
+- Phase swimlane (phase set depends on the ledger — TRACE/REVIEW for skill-tracer (SIMPLIFY/PORT-AUDIT are legacy historical, still read-tolerated), POLISH/AUDIT/TIER/PACKAGE/PR for skill-publisher via --config) — Phase column visualized
   as colored band on each row
 
 Usage:
@@ -49,9 +46,10 @@ from pathlib import Path
 # This renderer is SHARED between skill-tracer and skill-publisher. The only real
 # differences are the phase-color map, the regression-tag patterns, the closed set
 # of valid in-flight action keywords, and the round/run column word — all of which
-# are configurable below. Everything else (table parse, chart, HTML) is identical,
-# so the file is vendored byte-for-byte to skill-publisher with only the DEFAULT_*
-# values overridden at call time via --config (see skill-publisher's ledger-render
+# are configurable below. Everything else (table parse, chart, HTML) is the same,
+# so each skill keeps its OWN independent copy of this renderer (skill-tracer +
+# skill-publisher, free to diverge — no sync) and overrides only the DEFAULT_*
+# values at call time via --config (see skill-publisher's ledger-render
 # config). Auto-detection of the "Round" vs "Run" column word means most callers
 # don't even need --config for the column.
 
@@ -368,7 +366,7 @@ def main():
             if not cfgp.is_file():
                 print(f"Error: --config file not found: {cfgp}", file=sys.stderr)
                 sys.exit(2)
-            raw = cfgp.read_text()
+            raw = cfgp.read_text(encoding="utf-8")
         try:
             cfg = json.loads(raw)
         except json.JSONDecodeError as e:
@@ -389,7 +387,7 @@ def main():
         sys.exit(1)
 
     try:
-        text = ledger_path.read_text()
+        text = ledger_path.read_text(encoding="utf-8")
     except OSError as e:
         print(f"Error: failed to read ledger at {ledger_path}: {e}", file=sys.stderr)
         sys.exit(2)
@@ -407,7 +405,7 @@ def main():
 
     output_path = Path(args.output) if args.output else ledger_path.with_suffix(".html")
     try:
-        output_path.write_text(html_output)
+        output_path.write_text(html_output, encoding="utf-8")
     except OSError as e:
         print(f"Error: failed to write HTML to {output_path}: {e}\nCheck output directory permissions and disk space.", file=sys.stderr)
         sys.exit(4)

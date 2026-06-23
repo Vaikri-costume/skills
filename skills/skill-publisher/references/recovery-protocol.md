@@ -2,7 +2,21 @@
 
 How skill-publisher recovers a ship run across compaction or session restart. Adapted from skill-tracer's recovery-protocol — same in-flight-marker + atomic-write mechanics, with publisher's action keywords.
 
-SKILL.md Step 1 consults this when an `in-flight::` marker is present in the ship ledger. Without an in-flight marker, no *mid-run* recovery is needed — but Step 1 still consults rule 7 ("No marker, prior runs exist") to decide whether the prior ship completed or whether to start/resume a run.
+SKILL.md Step 1 consults this when an `in-flight::` marker is present in the ship ledger. Without an in-flight marker, no *mid-run* recovery is needed — but Step 1 still consults the **No marker** case ("prior runs exist") to decide whether the prior ship completed or whether to start/resume a run.
+
+---
+
+## Step-1 ledger-state dispatch
+
+Step 1 runs this dispatch against `~/.claude/skill-publisher-ledger/<skill>.md` (using the invocation argument as `<skill>` for the initial lookup — the SKILL.md frontmatter `name` is authoritative and is cross-checked in Step 1's target-resolution block). After it returns, `<N>` (the Run number) is set. Exactly one branch applies:
+
+1. **Ledger file does not exist** (first-ever ship for this skill): run `mkdir -p ~/.claude/skill-publisher-ledger/ && mkdir -p "${HOME}/.claude/session-logs"` in Bash (the second mkdir ensures the session-log directory exists for the `echo >>` markers in Steps 2–9; non-blocking — a failure is warned, not fatal), then **Write** a new ledger at that path with the **Header template (new ledger)** from `references/ledger-format.md`. Start **Run 1**.
+2. **Exists but cannot be read** (permission/encoding error): **USER-PAUSE** — report the exact path + error; do not proceed until the user resolves the file.
+3. **Exists, readable, carries an in-flight marker**: run the matching recovery rule (the **Recovery rule expansions** + the **Marker state-table** below select it from the marker keyword). `<N>` = the marker's `run-N`.
+4. **Exists, readable, marker present but unparseable** (matches `in-flight::` but fails the `<Runtime> <action> run-N` format, or names an unrecognized action keyword): apply the **Unknown keyword** fallback below (treat as `addressing`) **and surface the malformed marker to the user** before continuing — do not guess silently.
+5. **Exists, readable, no marker**: consult the **No marker** case below — if prior rows exist it determines completed-vs-crashed (and whether to resume as Run N or start fresh); if the ledger has no data rows, start **Run 1**.
+
+(Recovery Rule B (`addressing run-N`) and the other lettered rules resume *mid-workflow* and bypass Step 1's *interactive* target-read block — but Rule B itself first re-resolves the target path + tier and re-runs Steps 3–4 cold to rebuild the cluster set, so the audit/tier re-derivation is not skipped. This is the one exception to the "every invocation runs the interactive read" rule.)
 
 ---
 
@@ -18,20 +32,23 @@ Parse by splitting on whitespace: field 2 = `<Runtime>` (ISO-8601 `YYYY-MM-DDTHH
 
 ---
 
-## Action keywords (publisher-specific)
+## Marker state-table (single source of truth)
 
-Each names which workflow step was interrupted:
+One row per marker — the **only** place the marker grammar lives. Each marker is written BEFORE its state-changing step (atomic-write protocol) and replaced/cleared AFTER; the same row gives the recovery action when that marker is found mid-flight. (This table replaces the former separate "action keywords" list + "atomic-write" table — one home, no per-feature triplication.)
 
-- **`polish`** — mid-Step-2 (simplify pass) interrupted.
-- **`audit`** — mid-Step-3 (CCVW audit Agent dispatched, result not yet recorded).
-- **`tier`** — mid-Step-4 (tier-transition lints running).
-- **`addressing`** — mid-Step-5 (cluster-by-cluster addressing).
-- **`packaging`** — mid-Step-8 (packaging).
-- **`pr`** — mid-Step-9 (PR creation — the riskiest to interrupt; see recovery rule below).
+| Marker `<kw> run-N` | Written before (step) | Replaced / cleared after | On recovery (resume action) |
+|---|---|---|---|
+| `polish` | Step 2 (simplify pass) | → `audit` at Step 3 | re-run Step 2 from scratch (idempotent — reads current files); discard partial polish rows; resume Step 3 |
+| `audit` | Step 3 (CCVW audit dispatch) | → `tier` at Step 4 | **rule A** — recover the dispatch (`recover_dispatch.py --kind audit`); else re-dispatch a fresh cold Agent |
+| `tier` | Step 4 (tier-transition lints) | → `addressing` at Step 5 | re-run Step 4's lints (deterministic static scans); discard partial TIER rows; resume Step 5 |
+| `addressing` | Step 5 (cluster addressing) | cleared at Step 6 | **rule B** — re-derive the full cluster set cold, match by Root cause + Flags, continue from the first unaddressed |
+| `changelog` | Step 7a (diff-clone + changelog agent) | cleared at Step 7 (after the changelog is sourced) | **rule C** — re-run Step 7a (clone + diff + agent dispatch are idempotent/cheap); optionally reclaim the dispatch via `recover_dispatch.py --kind changelog` |
+| `packaging` | Step 8 (packaging) | → `pr` at Step 9 (or cleared if no PR) | re-run Step 8 (idempotent — overwrites the `.skill` + re-derives the digest); resume Step 9 |
+| `pr` | Step 9 (PR creation) | cleared at Step 10 (ship complete) | **rule D** — caution: a PR may be half-created; check state before acting, never blind re-push |
 
-**Unknown keyword** → treat as `addressing` (the most conservative — re-derive clusters from the ledger and continue). Tell the user.
+The marker is a single line; write/replace/clear via one Edit at the `in-flight::` anchor (at most one such line ever). Same mechanics as skill-tracer's recovery-protocol "Marker write/replace mechanics". No new markers for the Step-8 **digest** (computed inside the `packaging` step) or the Step-10 **manifest** (a marker-free terminal write — see the note at the end of this file).
 
-(`scripts/ledger-render-config.json`'s `valid_actions` array mirrors this keyword set for `render_ledger.py`'s `INVALID ACTION` HTML lint — keep the two in lockstep when the keyword set changes. That lint is cosmetic; this unknown-keyword→`addressing` rule, not the renderer, governs actual execution.)
+**Unknown keyword** → treat as `addressing` (the most conservative — re-derive clusters from the ledger and continue). Tell the user. (`scripts/ledger-render-config.json`'s `valid_actions` array mirrors this table's keyword set for `render_ledger.py`'s cosmetic `INVALID ACTION` HTML lint — keep the two in lockstep; this unknown-keyword→`addressing` rule, not the renderer, governs execution.)
 
 ---
 
@@ -49,40 +66,21 @@ Scan the ledger for the highest Run value. Resuming an in-flight run → continu
 
 ---
 
-## Recovery rules (one applies per invocation)
+## Recovery rule expansions
 
-1. **`polish run-N`** — re-run Step 2 from scratch. The simplify pass is idempotent enough (it reads current file state); discard any partial polish ledger rows for Run N and re-polish. Resume at Step 3 after.
+The state-table above covers the simple cases inline (`polish`, `tier`, `packaging` — all idempotent re-runs). The four lettered rules and the no-marker case need expansion:
 
-2. **`audit run-N`** — recover the Step-3 audit Agent's result from the session JSONL with `python3 scripts/recover_dispatch.py --skill <skill>` (auto-locates the newest JSONL, matches the constant dispatch description `skill-creator-ccvw audit of <skill>`, pairs tool_use→tool_result most-recent-wins, and handles the background-Agent `<task-notification>` case). **Exit 0** with `result_text.audit` present and non-empty → audit recovered; resume at **Step 4** (run the tier-transition checks — the `audit run-N` marker per the atomic-write table is normally replaced by `tier run-N` at Step 4 before addressing), then Step 5 GAP-addressing. (Exit 0 but `result_text.audit` absent or an empty string → no usable audit text was captured; treat exactly as Exit 1 — re-dispatch the audit as a fresh cold Agent.) **Exit 1** (no dispatch found, or dispatched-but-no-result) → re-dispatch the audit as a **fresh cold Agent** — never resume/fork the prior dispatch, which would leak the prior run's context and break the cold-audit invariant. WHY the invariant matters: if the prior session's reasoning or findings leak into the re-dispatched audit agent, the agent cannot form an independent view of the current skill state. It ceases to be a cold read — it may approve findings the new polish already resolved, or miss regressions introduced since the prior dispatch. Each audit must read the skill as it currently exists, with no prior-run knowledge. **Exit 2** (the script could not LOCATE the session JSONL — `--jsonl` not found, project dir not found, or no `*.jsonl` in the dir; prints an `ERROR:` line to stderr, no JSON result on stdout) → there is nothing to recover from, so re-dispatch the audit as a fresh cold Agent (same as exit 1's action); do not treat the missing JSONL as an audit failure. (Exit 2 also fires on an argparse usage error — e.g. an omitted `--skill` — which prints argparse usage text rather than an `ERROR:` line; in that case fix the invocation and re-run rather than re-dispatching.) The script only LOCATES + PAIRS; the orchestrator judges whether the recovered text is a *usable* audit (a truncated or `ABORTED` result → re-dispatch). This script is skill-publisher's own copy of the ecosystem cold-dispatch recovery pattern — deliberately NOT sync-contracted (the publisher recovers one audit dispatch; skill-tracer recovers three trace directions), so it is not checked by `check_vendored_sync.py`.
+**Rule A — `audit run-N`** — recover the Step-3 audit Agent's result from the session JSONL with `python3 scripts/recover_dispatch.py --skill <skill>` (auto-locates the newest JSONL, matches the constant dispatch description `skill-creator-ccvw audit of <skill>`, pairs tool_use→tool_result most-recent-wins, handles the background-Agent `<task-notification>` case). **Before acting on the result, re-resolve the target like Rule B does** — a post-compaction resume bypasses Step 1's interactive read, so re-resolve the target SKILL.md path (from the invocation argument or the ledger) and re-read `metadata.intended-audience`; Step 4's frontmatter gate (`portability_lint.py <target> --tier <tier>`) needs both `<target>` and the authoritative `<tier>`. **Exit 0** with `result_text["audit"]` present and non-empty → audit recovered; resume at Step 4, then Step 5. (Exit 0 but `result_text["audit"]` absent or empty → treat as Exit 1.) **Exit 1** (no dispatch found, or dispatched-but-no-result) → re-dispatch the audit as a **fresh cold Agent** — never resume/fork the prior dispatch, which would leak prior reasoning and break the cold-audit invariant (each audit must read the skill as it currently exists, with no prior-run knowledge). **Exit 2** (JSONL not locatable) → re-dispatch fresh cold Agent (same as Exit 1; no audit to recover). The script only locates + pairs; the orchestrator judges usability (truncated or `ABORTED` result → re-dispatch). Not sync-contracted: this script is the publisher's own copy of the ecosystem recovery pattern — not checked by `check_shared_sync.py`.
 
-3. **`tier run-N`** — re-run Step 4's lints (they're deterministic static scans; cheap to re-run). Discard partial TIER rows, regenerate. Resume at Step 5.
+**Rule B — `addressing run-N`** — the ledger's Run-N rows identify addressed clusters. Re-derive the full cluster set cold (re-run Steps 3–4) and match against addressed rows by Root cause + Flags; continue from the first unaddressed cluster. Before re-running Steps 3–4, re-resolve the target SKILL.md path (from the invocation argument or the ledger) and re-read `metadata.intended-audience`. **Match definition:** a re-derived cluster matches a ledger row when its Root cause text matches the row's Root cause column (case-insensitive substring) OR when at least one of its flag IDs appears in the row's Flags column. The first re-derived cluster with no matching row is the resume point.
 
-4. **`addressing run-N`** — the ledger's Run-N rows are the addressed clusters. Re-derive the full cluster set (re-run Steps 3-4 cold) and match against addressed rows by Root cause + Flags; continue from the first unaddressed cluster. Re-running Steps 3-4 needs inputs the Step-1 target-read block (bypassed on this resume) normally captures: first re-resolve the target SKILL.md path (from the invocation argument / ledger) and re-read the target's `metadata.intended-audience` tier, then re-run the audit (Step 3) and tier checks (Step 4). **Match definition:** a re-derived cluster matches a ledger row when its Root cause text matches the row's Root cause column (case-insensitive substring) OR when at least one of its flag IDs appears in the row's Flags column. The first re-derived cluster with no matching row is the first unaddressed cluster to continue from.
+**Rule C — `changelog run-N`** — re-run Step 7a (diff-clone + structured diff + changelog agent dispatch are all idempotent and cheap). Optionally, before re-dispatching, attempt `python3 scripts/recover_dispatch.py --skill <skill> --kind changelog`: if it exits 0 with `result_text["changelog"]` present and non-empty, the prior changelog agent's output is recoverable — use it and skip the re-dispatch. If the recovered text is absent, empty, truncated, or the script exits non-zero, re-dispatch a fresh cold changelog agent. Either way, continue to Step 7 (changelog sourcing + HISTORY.md write).
 
-5. **`packaging run-N`** — re-run Step 8 (packaging is idempotent — overwrites the `.skill` artifact). Resume at Step 9.
+**Rule D — `pr run-N`** — **caution.** A PR may be half-created (branch pushed, PR not yet opened, or vice versa). First re-derive `<name>` from the target SKILL.md frontmatter and `<version>` from the target HISTORY.md (Step 7 wrote it before this marker). **If either file is unreadable** → USER-PAUSE (do not attempt `gh pr list` with a wrong name, do not re-push). Recovery: `gh pr list` for an existing PR matching `ship/<name>-v<version>`. Found → record URL, skip to Step 10. Branch pushed but no PR → `gh pr create` against it. Nothing pushed → re-run Step 9 from the branch step. NEVER blindly re-push — a double-push or duplicate PR is an outward-facing error.
 
-6. **`pr run-N`** — **caution.** A PR may have been partially created (branch pushed, PR not yet opened, or vice versa). First re-derive the inputs the branch-name match needs (Step 1's interactive read is bypassed on resume): `<name>` from the target SKILL.md frontmatter `name`, and `<version>` from the target HISTORY.md `version` frontmatter (Step 7 wrote it before this marker). Recovery: check `gh pr list` for an existing PR matching `ship/<name>-v<version>`. If found, the PR exists — record its URL, skip to Step 10. If a branch was pushed but no PR, run `gh pr create` against it. If nothing was pushed, re-run Step 9 from the branch step. NEVER blindly re-push — check state first (a double-push or duplicate PR is a real outward-facing error).
-
-7. **No marker** — two sub-cases based on ledger state:
-   - **Ledger empty (no rows)**: this is the first ship for this skill — set Run = 1 and proceed to Step 2.
-   - **Prior runs exist**: the prior ship completed or crashed without a marker. If the last Run's summary comment shows a ship outcome (tier + version + PR) in the form `<!-- Run N total: … shipped at tier … version … PR: … -->`, the ship completed; ask the user whether to start a new ship run. If the user declines, stop and await their instruction — do not start a new run without user intent. If the last comment is in the generated form `<!-- Round N total: … -->` (without a ship outcome — `close-round` ran but the Edit-replace to canonical form at Step 10 did not): the crash landed in the **marker-free window between Step 6 and the Step-10 canonical replacement** (Steps 6–7 carry no marker; a crash in Step 8/9 would have left a `packaging`/`pr` marker instead, so those are excluded). Re-run from Step 1 to redo the remaining work — Step 6 README-gen and the Step-10 canonical-comment replacement are idempotent; for Step 7, FIRST check whether HISTORY.md already carries the bumped version (if so, skip the re-bump) to avoid a double version bump on the re-run. If no summary comment exists at all for the last Run, the prior run crashed — re-run from Step 1.
-
----
-
-## Atomic-write protocol
-
-Write the marker BEFORE each state-changing step; replace/clear AFTER:
-
-| Step | Marker before | After |
-|---|---|---|
-| Step 2 polish | `polish run-N` | replaced by `audit run-N` at Step 3 |
-| Step 3 audit dispatch | `audit run-N` | replaced by `tier run-N` at Step 4 |
-| Step 4 tier checks | `tier run-N` | replaced by `addressing run-N` at Step 5 |
-| Step 5 addressing | `addressing run-N` | cleared at Step 6 (no marker through README-gen + version-bump — those are local edits, re-runnable) |
-| Step 8 packaging | `packaging run-N` | replaced by `pr run-N` (or cleared if no PR) |
-| Step 9 PR | `pr run-N` | cleared at Step 10 (ship complete) |
-
-The marker is a single line; write/replace/clear via one Edit at the `in-flight::` anchor (at most one such line ever). Same mechanics as skill-tracer's recovery-protocol "Marker write/replace mechanics".
+**No marker** — two sub-cases based on ledger state:
+- **Ledger empty (no rows):** first ship for this skill — set Run = 1, proceed to Step 2.
+- **Prior runs exist:** the prior ship completed or crashed without a marker. If the last Run's summary comment shows a ship outcome (`<!-- Run N total: … shipped at tier … version … PR: … -->`), the ship completed — ask the user whether to start a new ship run; stop if they decline. If the comment is in the close-round form (`<!-- Round N total: … -->`) without a ship outcome, the crash landed in the marker-free window between Step 6 and the Step-10 canonical replacement — re-run from Step 6 onward **as Run N, NOT Run N+1**. This is the one place the "fresh run = highest + 1" rule is overridden: the crashed run's clusters were already written under Run N (its `Round N total` comment is on disk), so resuming as Run N+1 would re-run Steps 2–5 and append a second, duplicate cluster set under N+1, leaving Run N's comment forever un-canonicalized. Set `<N>` = the Run number in that `Round N total` comment, skip Steps 2–5 (their rows already exist for Run N), and resume at Step 6; Step 10 then replaces the existing `<!-- Round N total: … -->` with the canonical `<!-- Run N total: … -->` (the Edit-replace is keyed on the same N). Apply idempotency guards at Step 7: **(a)** if HISTORY.md is absent (degraded mode), skip the version-bump check; **(b)** if HISTORY.md is present, check whether it already carries the bumped version — skip the re-bump if so; **(c)** check `metadata.parent-version` in SKILL.md — skip that update if already set. If no summary comment exists at all for the last Run, the prior run crashed before Step 5's close-round (no Run-N rows are committed) — re-run that run from Step 1 (here Run = highest + 1 is correct, since no Run-N rows exist to duplicate).
 
 ---
 

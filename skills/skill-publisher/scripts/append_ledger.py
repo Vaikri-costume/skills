@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ledger row writer/validator + round-summary closer for skill-tracer.
+"""Ledger row writer/validator + round-summary closer for skill-publisher.
 
 The audit ledger is a 7-column markdown table:
     | Runtime | Round | Phase | Cluster | Root cause | Address | Flags |
@@ -42,7 +42,7 @@ ADDRESS_KINDS = ("FIX", "STRENGTHEN", "USER-PAUSE", "would-FIX", "would-STRENGTH
 # Phase is OPTIONAL so 6-column pre-Phase back-compat rows still parse (per recovery-protocol.md
 # "Pre-Phase-column ledgers" — matching ledger_state.py / render_ledger.py, which also accept 6-col).
 # Group 3 (phase) is None on a 6-col row and defaults to TRACE in _round_rows.
-ROW_RE = re.compile(r"^\|\s*([0-9T:\-]+)\s*\|\s*(\d+)\s*\|\s*(?:([A-Z\-]+)\s*\|\s*)?(C\d+)\s*\|(.*)\|(.*)\|(.*)\|\s*$")
+ROW_RE = re.compile(r"^\|\s*([0-9T:\-]+)\s*\|\s*(\d+)\s*\|\s*(?:([A-Z0-9a-z\-]+)\s*\|\s*)?(C\d+)\s*\|(.*)\|(.*)\|(.*)\|\s*$")
 
 
 def _reject_unsafe(field_name: str, value: str) -> list[str]:
@@ -75,17 +75,17 @@ def cmd_append(args) -> int:
         return 1
 
     row = f"| {args.runtime} | {args.round} | {args.phase} | {args.cluster} | {args.root_cause} | {args.address} | {args.flags} |"
-    text = ledger.read_text()
+    text = ledger.read_text(encoding="utf-8")
     if not text.endswith("\n"):
         text += "\n"
-    ledger.write_text(text + row + "\n")
+    ledger.write_text(text + row + "\n", encoding="utf-8")
     print(json.dumps({"appended": row, "ledger": str(ledger)}, indent=2))
     return 0
 
 
-def _round_rows(ledger: Path, rnd: int) -> list[dict]:
+def _round_rows(ledger: Path, rnd: int, _text: str | None = None) -> list[dict]:
     rows = []
-    for line in ledger.read_text().splitlines():
+    for line in (_text if _text is not None else ledger.read_text(encoding="utf-8")).splitlines():
         m = ROW_RE.match(line)
         if not m:
             continue
@@ -117,14 +117,22 @@ def cmd_close_round(args) -> int:
     if not ledger.is_file():
         print(f"ERROR: ledger not found: {ledger}", file=sys.stderr)
         return 2
-    rows = _round_rows(ledger, args.round)
+    text = ledger.read_text(encoding="utf-8")
+    rows = _round_rows(ledger, args.round, _text=text)
     t = _tally(rows)
     comment = (f"<!-- Round {args.round} total: raw flags {t['raw_flags']} — clusters {t['clusters']} — "
                f"addresses: {t['fix']} FIX + {t['strengthen']} STRENGTHEN + {t['user_pause']} USER-PAUSE -->")
-    text = ledger.read_text()
+    # Idempotency guard: skip if this round's summary comment already exists in either
+    # the generated form ("Round N total:") or the Step-10 canonical form ("Run N total:").
+    # The Step-10 Edit-replace changes "Round N total:" → "Run N total:", so after Step 10
+    # the generated guard string no longer appears — a recovery-rule-4 resume would otherwise
+    # append a second summary comment.
+    if f"<!-- Round {args.round} total:" in text or f"<!-- Run {args.round} total:" in text:
+        print(json.dumps({"round": args.round, "skipped": "summary comment already present"}, indent=2))
+        return 0
     if not text.endswith("\n"):
         text += "\n"
-    ledger.write_text(text + comment + "\n")
+    ledger.write_text(text + comment + "\n", encoding="utf-8")
     print(json.dumps({"round": args.round, "summary": comment, **t}, indent=2))
     return 0
 
@@ -159,14 +167,17 @@ def cmd_verify_auditability(args) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="skill-tracer ledger row writer/validator")
+    ap = argparse.ArgumentParser(description="skill-publisher ledger row writer/validator")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     a = sub.add_parser("append")
     a.add_argument("ledger")
     a.add_argument("--runtime", required=True)
-    a.add_argument("--round", required=True)
-    a.add_argument("--phase", default="TRACE")
+    # type=int so a non-integer Run is rejected at parse time, matching close-round
+    # / verify-auditability — a string Run would write a row whose round column the
+    # `(\d+)` row regex never matches, silently dropping it from every tally + render.
+    a.add_argument("--round", type=int, required=True)
+    a.add_argument("--phase", default="POLISH")
     a.add_argument("--cluster", required=True)
     a.add_argument("--root-cause", required=True)
     a.add_argument("--address", required=True)

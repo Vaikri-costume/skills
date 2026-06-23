@@ -19,7 +19,7 @@ One file per target skill, accumulating every ship run. Not written inside the t
 ```
 # Ship ledger — <skill>
 
-<!-- in-flight marker lives here when a ship run is mid-flight, in the form `in-flight:: YYYY-MM-DDTHH:MM <action> run-N`; absent means no ship in flight. The action-keyword enum and recovery rules are in recovery-protocol.md (authoritative) — the inline list here (polish/audit/tier/addressing/packaging/pr) is a convenience summary; if the two ever diverge, recovery-protocol.md wins. -->
+<!-- in-flight marker lives here when a ship run is mid-flight, in the form `in-flight:: YYYY-MM-DDTHH:MM <action> run-N`; absent means no ship in flight. The action-keyword enum and recovery rules are in recovery-protocol.md (authoritative) — the inline list here (polish/audit/tier/addressing/changelog/packaging/pr) is a convenience summary; if the two ever diverge, recovery-protocol.md wins. -->
 audit-references:: skill-creator-ccvw@<date-or-missing>, skill-creator@<date-or-missing>, plugin-dev/skill-development@<date-or-missing>
 
 | Runtime | Run | Phase | Cluster | Root cause | Address | Flags |
@@ -57,7 +57,7 @@ audit-references:: skill-creator-ccvw@<date-or-missing>, skill-creator@<date-or-
 
 - **Runtime** — ISO-8601 UTC when the ship run started, `YYYY-MM-DDTHH:MM`.
 - **Run** — cumulative-per-skill ship-run number. First ship is Run 1; every subsequent ship increments.
-- **Phase** — POLISH / AUDIT / TIER / PACKAGE / PR per above. (These five are the closed publisher-valid set. The vendored `append_ledger.py`'s `--phase` *also* accepts skill-tracer's `TRACE`/`SIMPLIFY`/`PORT-AUDIT` because the script is byte-vendored for sync parity — the publisher never writes those; only the five above are legal in a publisher ledger.)
+- **Phase** — POLISH / AUDIT / TIER / PACKAGE / PR per above. (These five are the closed publisher-valid set. The vendored `append_ledger.py`'s `--phase` *also* accepts skill-tracer's current phases `TRACE`/`REVIEW` and the legacy historical phases `SIMPLIFY`/`PORT-AUDIT` (still read-tolerated) because the script is byte-vendored for sync parity — the publisher never writes those; only the five above are legal in a publisher ledger.)
 - **Cluster** — `C<n>`, restarts at 1 within each Run.
 - **Root cause** — one-line description of the finding.
 - **Address** — FIX / STRENGTHEN / USER-PAUSE per `ship-checklist.md`.

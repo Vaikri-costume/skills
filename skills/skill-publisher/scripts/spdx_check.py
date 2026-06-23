@@ -57,7 +57,7 @@ COMMON_MISTAKES = {
 
 
 def read_license(skill_md: Path) -> str | None:
-    text = skill_md.read_text()
+    text = skill_md.read_text(encoding="utf-8")
     if not text.startswith("---\n"):
         return None
     end = text.find("\n---\n", 4)

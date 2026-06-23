@@ -1,7 +1,7 @@
 ---
-version: "1.1.0"
+version: "1.3.0"
 category: B
-parent-version: "1.0.1"
+parent-version: "1.2.0"
 author:
   primary: "Vaikri-costume"
 inspirations:
@@ -19,6 +19,32 @@ inspirations:
 # History — skill-publisher
 
 ## Changelog
+
+### 1.3.0 — 2026-06-22 (shipped)
+#### Added
+- Readiness mode: `readiness_report.py` aggregates the cheap deterministic gates into a read-only green/yellow/red pre-ship verdict (`--readiness` / `readiness` invocation), with no ledger writes or version bump.
+- `link_check.py` internal-link integrity gate (broken links, dead scripts, unreadable files), wired into the Step-4 tier checks and readiness mode.
+- Content hashing end-to-end: a shared `hashutil.py` streaming SHA-256, a per-file `SHA256SUMS` manifest packaged inside each `.skill` archive, and a `verify_ship.py --expected-digest` re-hash that fails the ship if the artifact on disk is not byte-for-byte the one packaged.
+- `ship_manifest.py` writes a durable ship manifest recording what landed (for the Phase-4 lifecycle tools).
+- Diff-driven changelog: `diff_published.py` plus `github_pr.py --diff-only` (a read-only clone of the published state) feed a cold changelog agent that reconciles the structured diff against the run's ledger rows into a Keep-a-Changelog / SemVer entry.
+- `triggering_eval.py` description-quality confidence heuristic plus an opt-in measured-accuracy run that delegates to skill-creator-ccvw's `run_eval.py`.
+- `install_check.py` verifies the derived install command's target (repo reachability + marketplace-catalog presence), degrading to "unverified" offline.
+- `frontmatter_util.py` and `sync_shared.py` shared helpers; `references/readiness-gates.md` documents the readiness gate set.
+#### Changed
+- Progressive-disclosure refactor of SKILL.md: 13 self-contained blocks of step mechanics moved out of SKILL.md into the reference files each step already loads (recovery-protocol, github-pr-workflow, ship-checklist, tier-transition-checks, ledger-format, changelog-format, audit-prompt, changelog-agent-prompt), leaving followable pointers — bringing SKILL.md from ~10,800 to ~8,350 words.
+- Polished SKILL.md + README.md prose (source-precedence and per-tier portability redundancies, small verbosity); added an explicit negative-trigger boundary to the description.
+- `recover_dispatch.py` now recovers either cold dispatch — the Step-3 audit or the Step-7 changelog proposal — selected by `--kind`, sharing one scan core.
+- The dormant shared-script drift-inspection tool was reworked from `check_vendored_sync.py` into `check_shared_sync.py` (part of the sync-contract retirement) — inspection-only, not in the ship flow, so no user-facing capability is removed.
+#### Fixed
+- Correctness and trace fixes across the scripts: explicit UTF-8 encoding on ledger/scan file I/O, an `append_ledger.py` row-regex widened to tolerate alphanumeric phase tokens, `skill-tracer`→`skill-publisher` docstring corrections, and stale `check_vendored_sync.py` references updated to `check_shared_sync.py`.
+#### Security
+- `security_scan`: reworded an in-prose `eval (` reference so it no longer trips the scanner's own regex (a false-positive self-flag).
+
+### 1.2.0 — 2026-06-20 (shared-script sync contract RETIRED)
+The three sibling skills (skill-creator-ccvw, skill-tracer, skill-publisher) had kept five scripts in sync across copies (`quick_validate`/`portability_lint`/`attribution_lint` with creator; `render_ledger`/`append_ledger` with tracer). After they deviated significantly in practice, the contract is **retired** — each skill now owns its **independent** copy and may freely diverge.
+- **Ship flow:** removed the Step-4 "verify shared scripts are in sync" gate; the `references/tier-transition-checks.md` "Shared-script sync checks" section now records the retirement (no Step-4 action for shared scripts).
+- **`check_shared_sync.py`:** kept but **dormant** — a manual drift-*inspection* tool only; its docstring, internals, and DRIFT message now state divergence is expected and not a finding (per the user's "headers + docs only" choice — the script was not deleted).
+- **Docs/headers:** the 4 vendor-header docstrings (quick_validate/portability_lint/attribution_lint/render_ledger), the SKILL.md reference notes, the `render_ledger` internal "byte-for-byte" comment, and skill-creator-ccvw's SKILL.md shared-scripts note all reframed from "peer copies / latest-and-better / keep in sync" → "independent copy, may diverge, no sync." (Supersedes the 2026-06-20 skill-creator-ccvw 1.0.2 "latest-and-better peers" reframe.)
 
 ### 1.1.0 — 2026-06-17 (shipped)
 - **Auto-tag on ship**: `scripts/github_pr.py` now creates + pushes an annotated `<skill>-v<version>` tag on the ship commit after a successful `gh pr create`, so the next ship has a `<last-ship-tag>` to diff from (`references/changelog-format.md`'s `git log <last-ship-tag>..HEAD`). Best-effort (a tag failure surfaces as a `tag_warning` field, never a ship-blocker — the PR already landed) and idempotent (skips an existing tag, safe for the exit-5 recovery re-run).
