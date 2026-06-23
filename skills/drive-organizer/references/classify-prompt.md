@@ -43,9 +43,13 @@ You are read-only: you emit verdicts; the orchestrator executes them.
 - Active groupings (the only valid top-level destinations): [GROUPINGS]
 - Merged taxonomy shape (run it): `[TEMPLATES_CMD]`
 - On-disk rules: `cat` the `.tidy-rules.json` in each folder your files touch, under `[ROOT]`
-- Project metadata — route loose bills/invoices/statements by **date**: match a file's date
-  to a project whose `date_range` covers it: `[PROJECT_METADATA_PATH]`
-- Entity aliases / negatives / types: `[ENTITIES_PATH]`
+- Dated-destination metadata — route loose dated files (bills/invoices/statements/photos) by
+  **date**: match a file's date to ANY destination whose `date_range` covers it. Two sources, both
+  generalised off projects-only: `[PROJECT_METADATA_PATH]` lists every **folder** (area, project,
+  event folder, course-term, tax-year) carrying a `date_range`; and an **entity** in `[ENTITIES_PATH]`
+  may carry its own `date_range` (a `{"start","end"}` dict) — a file whose date falls in an entity's
+  range routes to that entity's folder, exactly like a folder date_range.
+- Entity aliases / negatives / types / `date_range`: `[ENTITIES_PATH]`
 - **Cascading-Q model** (the destination cascade — apply it to every file): **Q1** which top-level
   grouping (from the active groupings above)? → **Q2** which thing inside it (project / company /
   person / category)? → **Q3** which functional area (Bills / Scripts / References / …)? → **Q4**

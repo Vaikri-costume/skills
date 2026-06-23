@@ -632,9 +632,11 @@ def _project_metadata(project_path: Path) -> dict:
 def _enumerate_project_metadata(root: Path) -> list:
     """
     Walk top-level project folders under root and collect their metadata.
-    Returns list of {path (relative), filename_tag, date_range} entries
-    for every folder whose .tidy-rules.json carries a filename_tag.
-    Used by propose to surface candidate matches by date for loose bills.
+    Returns list of {path (relative), filename_tag?, date_range?} entries for every folder
+    whose .tidy-rules.json carries a filename_tag **OR a date_range** (Phase-3 generalisation:
+    date-first routing is no longer projects-only — an area, an event folder, a course-term or
+    tax-year folder can carry a date_range and route dated files by date even with no
+    filename_tag). Used by propose to surface candidate matches by date for loose bills/photos.
     """
     out = []
     # The walk is unrolled to EXACTLY three levels on purpose — it mirrors the
@@ -662,7 +664,7 @@ def _enumerate_project_metadata(root: Path) -> list:
             continue
         # Direct-level project (legacy flat)
         meta = _project_metadata(top)
-        if meta.get("filename_tag"):
+        if meta.get("filename_tag") or meta.get("date_range"):
             out.append({"path": top.name, **meta})
         # Two-level (new nested: WORK/COMPANY/PROJECT, PERSONAL/PERSONAL X)
         try:
@@ -672,7 +674,7 @@ def _enumerate_project_metadata(root: Path) -> list:
                 if _is_external(mid):
                     continue
                 meta_mid = _project_metadata(mid)
-                if meta_mid.get("filename_tag"):
+                if meta_mid.get("filename_tag") or meta_mid.get("date_range"):
                     out.append({"path": f"{top.name}/{mid.name}", **meta_mid})
                 # Three-level (e.g. WORK/ACME/ACME Project Alpha/)
                 try:
@@ -682,7 +684,7 @@ def _enumerate_project_metadata(root: Path) -> list:
                         if _is_external(deep):
                             continue
                         meta_deep = _project_metadata(deep)
-                        if meta_deep.get("filename_tag"):
+                        if meta_deep.get("filename_tag") or meta_deep.get("date_range"):
                             out.append({"path": f"{top.name}/{mid.name}/{deep.name}", **meta_deep})
                 except (PermissionError, OSError):
                     pass
@@ -4426,7 +4428,10 @@ def cmd_csv_export(args):
 def _read_entities(root: "Path | None" = None) -> dict:
     """Per-drive entity metadata at <root>/.organizer/entities.json. Optional;
     absent => today's behaviour. Maps entity name -> {entity_type, locked,
-    aliases, relation, policy, notes}. Never raises."""
+    aliases, relation, policy, notes, date_range?}. `date_range` (a
+    {"start","end"} ISO-date dict, Phase-3) lets ANY entity — not just project
+    folders — route loose dated files (bills/statements/photos) to it by date.
+    All keys pass through unfiltered. Never raises."""
     root = root or _EFFECTIVE_ROOT
     if not root:
         return {}
@@ -5291,6 +5296,7 @@ function card(e){
    <label title="How this entity relates to you or to another entity (free text).">relation</label><input value="${esc(e.relation||'')}" placeholder="e.g. collaborator, client, partner, employer" onchange="metaEdit('${jsq(e.entity)}','relation',this.value)">
    <label title="A routing behaviour for this entity's files (optional). Distinct from the 'policy' type: this is the specific rule.">behaviour</label><input value="${esc(e.policy||'')}" placeholder="e.g. event-group (group photos by date/event)" onchange="metaEdit('${jsq(e.entity)}','policy',this.value)">
    <label title="Free notes — what this rule is for, or why it exists.">notes</label><input value="${esc(e.notes||'')}" placeholder="free notes, e.g. 'primary contact for Project X'" onchange="metaEdit('${jsq(e.entity)}','notes',this.value)">
+   <label title="Date range this entity's dated files fall in (optional). Routes loose dated files (bills, statements, photos) to this entity by date — generalised off projects-only. Leave both blank to clear.">date range</label><span style="display:flex;gap:4px"><input type="date" value="${esc((e.date_range||{}).start||'')}" onchange="drEdit('${jsq(e.entity)}','start',this.value)"><input type="date" value="${esc((e.date_range||{}).end||'')}" onchange="drEdit('${jsq(e.entity)}','end',this.value)"></span>
   </div>
   ${occ}
   ${conf.length?`<div class="conflict">⚠ overlaps: ${conf.map(c=>esc(c.with)+' ['+c.shared.join(',')+']').join('; ')}</div>`:''}
@@ -5347,6 +5353,13 @@ function saveSettings(){
 }
 function flip(t,d){const m=byType();const n=Math.ceil(Math.min(m[t].length,CAP)/PAGE);pages[t]=Math.max(0,Math.min(n-1,pages[t]+d));render();}
 function metaEdit(e,k,v){changes.entities[e]=changes.entities[e]||{};changes.entities[e][k]=v;markDirty();}
+function drEdit(ent,which,val){
+ const cur=(changes.entities[ent]&&changes.entities[ent].date_range)||((DATA.entities.find(x=>x.entity===ent)||{}).date_range)||{};
+ const dr={start:cur.start||'',end:cur.end||''}; dr[which]=val;
+ changes.entities[ent]=changes.entities[ent]||{};
+ changes.entities[ent].date_range=(dr.start||dr.end)?{start:dr.start,end:dr.end}:null;
+ markDirty();
+}
 function signalEdit(e,v){changes.rule_edits[e]={entity:e,description:v};markDirty();}
 function delEntity(e){if(confirm('Delete the routing rule for "'+e+'" everywhere? (files/folders are NOT deleted)')){changes.deletes[e]=true;markDirty();render();}}
 function rethinkEntity(e){changes.rethink[e]=true;markDirty();render();}
@@ -5498,7 +5511,7 @@ class _RulesHandler(BaseHTTPRequestHandler):
 
         if self.path in ("/save", "/apply"):
             keepalive = (self.path == "/apply") or bool(payload.get("keepalive"))
-            META_KEYS = ("entity_type", "locked", "aliases", "relation", "policy", "notes", "review")
+            META_KEYS = ("entity_type", "locked", "aliases", "relation", "policy", "notes", "review", "date_range")
             agg = {e["entity"]: e for e in _aggregate_rules(root)}
             results = {"meta": 0, "rule_edits": 0, "deletes": 0, "rethink": 0,
                        "renames": [], "merges": [], "areas": None}
