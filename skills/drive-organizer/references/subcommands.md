@@ -124,7 +124,7 @@ python3 ~/.claude/drive-organizer/organizer.py duplicates --colocate ID
 
 Moves duplicate `ID` so it sits **beside the group's keeper**, renamed `<keeper-stem>_dupN` (so the copies sort adjacent to the original for easy visual checking), and marks `status='duplicate'` in the registry (CSV mirror updates automatically). Nothing is archived or deleted — co-located in place. Nothing moves until confirmed. (The old `--archive ID` flag is a deprecated alias that now co-locates too.)
 
-If the script exits with `"File id N is the keeper …"` — you passed the keeper's ID; co-locate a different copy. If `"File id N not found in registry."`, `"File not found on disk: <path>"`, or `"File id N has no duplicates …"` — re-run `duplicates` (without `--colocate`) to refresh the list and confirm the correct ID.
+If the script exits with `"File id N is the keeper …"` — you passed the keeper's ID; co-locate a different copy. If `"File id N not found in registry."`, `"File not found on disk: <path>"`, `"File id N has no duplicates …"`, or `"Keeper id N not found on disk: <path>…"` — re-run `duplicates` (without `--colocate`) to refresh the registry and confirm the correct ID. If `"Failed to co-locate id N (<src> → <dest>): …"` — a disk/permission error during the move; fix it and retry.
 
 ---
 
@@ -138,7 +138,7 @@ python3 ~/.claude/drive-organizer/organizer.py variants
 
 If the script prints `"No variant groups found."` — no variants exist; the final pass is complete.
 
-Otherwise outputs a JSON array of probable variant groups — similar names, same extension, size ratio ≤ 2×. Each group has a `group_id`, a `key` (the normalised filename used for matching), and a `files` array with `id`, `path`, `filename`, `file_size`, `file_date`. Claude formats this for display:
+Otherwise outputs a JSON array of probable variant groups — grouped by same extension + normalised filename stem. It deliberately does **not** gate on a size ratio: a highlighted/annotated variant can legitimately be several times the size of the plain original, and a ratio cap would split exactly the variant pairs this command exists to surface. Each group has a `group_id`, a `key` (the normalised filename used for matching), and a `files` array with `id`, `path`, `filename`, `file_size`, `file_date`. Claude formats this for display:
 
 ```
 Group 1:
@@ -163,13 +163,19 @@ python3 ~/.claude/drive-organizer/organizer.py merge \
 
 Uses PyMuPDF to extract annotations (highlights, comments, sticky notes) from non-canonical versions and insert them into the canonical file. Originals move to `Archive/_Merged-Originals/` and are marked `status='archived'` in the registry (CSV mirror updates automatically).
 
-**No-data-loss guard — handle the WARNING.** If a variant carried annotations that could not be copied, the script prints `WARNING: <file> has N annotation(s) but none could be copied — left in place (not archived) to avoid data loss.` to stderr and **leaves that file where it is** (not archived). So the `Merge complete: N files merged` count can be lower than the group size, and a variant remains un-merged on purpose. Don't treat that as failure: report the warning to the user, leave the file, and (if they still want it merged) retry or merge it manually — never delete or move a warned file to reclaim the "missing" count.
+**No-data-loss guard — handle the WARNINGs.** A variant is **left in place (not archived)** — so the `Merge complete: N files merged` count drops below the group size and a variant stays un-merged on purpose — in **two** cases, each printed to stderr:
+- **More pages than the canonical:** `WARNING: <file> has N pages vs canonical M — trailing-page annotations cannot merge; left in place (not archived).` (the extra pages have nowhere to merge into).
+- **Annotations only partially copied:** `WARNING: <file> has N annotation(s) but only K could be copied — left in place (not archived) to avoid data loss.` — fires on **any** shortfall (`K < N`, the all-failed `K=0` case included), since partial loss is loss.
+
+Don't treat either as failure: report the warning to the user, leave the file, and (if they still want it merged) retry or merge it manually — never delete or move a warned file to reclaim the "missing" count.
 
 If PyMuPDF is not installed: `pip install pymupdf` (or `pip3 install --user --break-system-packages pymupdf` on macOS PEP-668 systems).
 
 If the script prints `"No other files in this variant group."` — the `group_id` from variants is stale; re-run `variants` to get fresh IDs and try again.
 
 If the script exits with `"Canonical file id N not found."` or `"Canonical file not found: <path>"` — re-run `variants` to get fresh IDs and try again.
+
+If it exits with `"Could not open canonical PDF <path>: …"` — the canonical file is corrupt/unreadable; nothing was changed and no originals were archived (the message says so). Pick a different canonical (another group member) or repair the file. If it exits with `"Failed to save merged canonical <path>: …"` — a disk/write error after annotations were copied in memory; the originals were NOT archived, so re-run after fixing the disk/permission problem.
 
 ---
 
@@ -191,9 +197,9 @@ The CSV is meant for human auditing (open in Numbers / Excel / a text editor); t
 python3 ~/.claude/drive-organizer/organizer.py exif "<path to image>"
 ```
 
-Prints routing-useful image metadata as a single JSON object — the **vision-off degradation path** (see SKILL.md "Model capabilities"). When the running model can't see images, a classification agent calls this to route a photo by its capture date instead of its pixels (e.g. matching a project's `production_period`).
+Prints routing-useful image metadata as a single JSON object — the **vision-off degradation path** (see SKILL.md "Model capabilities"). When the running model can't see images, a classification agent calls this to route a photo by its capture date instead of its pixels (e.g. matching a project's `date_range`).
 
-Output fields: `date` (`YYYY-MM-DD`), `camera` (Make + Model), `width`, `height`, plus `source` (`exif` | `filename` | `none`) and a `note`. It is deliberately **total** — it never errors and always prints an object:
+Output fields: `path` (the input path, echoed back so a fan-out caller can match each output object to its file), `date` (`YYYY-MM-DD`), `camera` (Make + Model), `width`, `height`, plus `source` (`exif` | `filename` | `none`) and a `note`. It is deliberately **total** — it never errors and always prints an object:
 
 - Pillow is an **optional** dependency. With it installed, `date`/`camera`/dimensions come from embedded EXIF (`source: "exif"`). Install for richer metadata: `pip3 install --user --break-system-packages pillow`.
 - Without Pillow (or when the image carries no EXIF), it degrades to the filename-derived date via the same `-PHOTO-YYYY-MM-DD` pattern the image router uses (`source: "filename"`), and `note` explains the degrade.
@@ -236,12 +242,12 @@ When the user asks to see the folder tree (any wording — "show me the folder t
 
 **Exclude:**
 - Subfolders that exist on disk but aren't referenced in any `.tidy-rules.json` (e.g. `ENTERTAINMENT Music/`'s 1107 artist folders, season folders inside media folders, raw content subfolders)
-- Subfolders referenced in rules but not yet on disk (aspirational destinations — show them only if she asks for the rule-defined structure specifically)
+- Subfolders referenced in rules but not yet on disk (aspirational destinations — show them only if the user asks for the rule-defined structure specifically)
 - All files
 
-**Why:** a flat list of rule-folders isn't a tree, and the full filesystem tree is dominated by media/content folders that drown out the project structure she cares about. The intersection gives her what's both *intended* (rules) and *realised* (on disk).
+**Why:** a flat list of rule-folders isn't a tree, and the full filesystem tree is dominated by media/content folders that drown out the project structure the user cares about. The intersection gives them what's both *intended* (rules) and *realised* (on disk).
 
-**Output format:** standard tree characters (`├──`, `└──`, `│   `) with `/` suffix on folder names. Mark rule-bearing folders with a small ` [rules]` tag so she can see which folders carry their own classification rules vs which are just destination subfolders.
+**Output format:** standard tree characters (`├──`, `└──`, `│   `) with `/` suffix on folder names. Mark rule-bearing folders with a small ` [rules]` tag so the user can see which folders carry their own classification rules vs which are just destination subfolders.
 
 ---
 
@@ -264,7 +270,7 @@ When the user asks to see the folder tree (any wording — "show me the folder t
 
 After `cleanup` removes empty folders, free local disk space by evicting the organised grouping folders (the top-level groupings — e.g. `WORK/`, `PERSONAL/` — **not** the `_Inbox/`/`Archive/` staging folders) to online-only; the cloud copies stay and re-download on demand.
 
-**Automated — `cleanup --evict`** (v2.3.0+): dehydrates those grouping folders for you, per-OS and best-effort:
+**Automated — `cleanup --evict`**: dehydrates those grouping folders for you, per-OS and best-effort:
 - **macOS**: `brctl evict <folder>` — works for File-Provider/iCloud-backed drives (verified path). OneDrive-on-macOS has no eviction CLI, so it fails cleanly and falls back to the manual recipe below.
 - **Windows**: `attrib +U -P <folder> /s /d` — unpins OneDrive Files-On-Demand to online-only (best-effort, unverified).
 - **Linux / other**: no standard eviction command → prints the manual recipe.

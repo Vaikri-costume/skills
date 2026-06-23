@@ -34,7 +34,7 @@ The cascading-Q routing model in SKILL.md handles the *destination cascade* (Q1 
 
 ## Images and Camera RAW
 
-**Image extensions**: `.jpg`, `.jpeg`, `.png`, `.gif`, `.heic`, `.heif`, `.webp`, `.tiff`, `.tif`, `.bmp`, `.jfif`
+**Image extensions**: `.jpg`, `.jpeg`, `.png`, `.gif`, `.heic`, `.heif`, `.webp`, `.tiff`, `.tif`, `.bmp`, `.jfif`. This list is **intentionally** kept here as well as in the `IMAGE_EXTS` constant in `scripts/organizer.py`: the backend needs the constant for runtime `is_image` detection, and the classifying agent (which reads this reference, never the code) needs the human-readable list — a Markdown reference cannot import a Python set, so two consumers means two copies by design. The code constant is authoritative; keep this list in sync when adding a format.
 
 **Camera RAW extensions**: `.nef` Nikon, `.raf` Fuji, `.arw` Sony, `.cr2`/`.cr3` Canon, `.dng`, `.orf` Olympus, `.rw2` Panasonic
 
@@ -42,19 +42,19 @@ The cascading-Q routing model in SKILL.md handles the *destination cascade* (Q1 
 
 RAW files can't be vision-read (Claude can't decode proprietary RAW formats) regardless of capability. Skip the Read tool for RAW always — classify by parent folder + filename alone, treat the same as you would treat the JPEG/HEIC version.
 
-**First, decide whether vision is actually needed.** Most images can be classified from path + filename alone, and vision (Read tool on the image) is expensive. Observation from previous batches: of ~84 images in one batch, ~75 had path/filename signal strong enough to skip vision entirely — they got Read calls anyway, which was wasted time. Group images by `current_path` parent folder and inspect filenames before classifying. Skip vision when ANY of these are true:
+**First, decide whether vision is actually needed.** Most images can be classified from path + filename alone, and vision (Read tool on the image) is expensive. In a typical batch most images have path/filename signal strong enough to skip vision entirely; opening them with vision anyway just wastes time. Group images by `current_path` parent folder and inspect filenames before classifying. Skip vision when ANY of these are true:
 
 | Condition | Example | Action |
 |-----------|---------|--------|
-| Folder is a known project AND filename is descriptive | `[COMPANY]/company_announcement_blog.png` | Classify by filename → `WORK/[COMPANY]/[COMPANY] Admin/Promotional Assets/`. Use filename slug as `vision_desc`. |
-| Folder is a known project AND filenames are a numbered series | `BCF05 Parlour Didi/1.jpg`, `2.jpg`, `3.jpg` | Likely costume deck pages → `<Project>/Scene Breakdown/`. Number = page. No vision needed for any of them. |
+| Folder is a known project AND filename is descriptive | `[COMPANY]/company_announcement_blog.png` | Classify by filename → `WORK/[COMPANY]/[COMPANY] Admin/Promotional Assets/`. Put the filename-derived summary in `reason`, NOT `vision_desc` (omit `vision_desc` unless you actually opened the image with vision — see classify-prompt.md). |
+| Folder is a known project AND filenames are a numbered series | `Some Project/1.jpg`, `2.jpg`, `3.jpg` | Likely sequential pages of one deck/document → keep them together at the destination the folder routes to. Number = page. No vision needed for any of them. |
 | Folder path encodes the destination via `.tidy-rules.json` | `[COMPANY] [Project]/[Person]/anything.jpg` | The folder's rule says References → route there. Generic `[Project]_[Person]_reference_N.jfif` filename is fine. |
-| Filename has a date pattern + clear subject | `20240417-PHOTO-2024-04-17.jpg` in `[Person] Photos/Holi 2024/` | Event folder preserves; date in filename. → `PERSONAL/PERSONAL Photos/Holi 2024/20240417_holi.jpg`. |
+| Filename has a date pattern + clear subject | `20240417-PHOTO-2024-04-17.jpg` in `[Person] Photos/Summer Party 2024/` | Event folder preserves; date in filename. → `PERSONAL/PERSONAL Photos/Summer Party 2024/20240417_party.jpg`. |
 
 **Use vision only when:**
 - Filename is opaque AND folder is generic/staging (`images.jfif` at root, `IMG_1234.jpg` in `_Inbox/`, photos in `[Person] Photos/` with no event subfolder)
-- Path suggests one destination but filename suggests another, and you need to disambiguate (e.g. logo file in a character folder — could be misfiled)
-- The classification routes via image content (e.g. is this a reference photo or a costume deck page? — content tells you)
+- Path suggests one destination but filename suggests another, and you need to disambiguate (e.g. logo file in a folder that otherwise holds photos — could be misfiled)
+- The classification routes via image content (e.g. is this a reference photo or a document/deck page? — content tells you)
 
 When vision IS needed:
 1. Read the image using the Read tool
@@ -69,20 +69,20 @@ Either way:
    - Receipts / IDs / medical docs photographed: route through their respective categories (Finance / Government / Health) in the fallback JSON.
    - Anything unresolved: `_Inbox/`.
 
-**Preserve event folders for personal photos**: If a photo's `current_path` shows it's already inside a named event subfolder (e.g. `[Person] Photos/Holi 2024/IMG_1234.jpg`, `[Person] Photos/Diwali 2023/`, `[Person] Photos/Goa Trip Feb 2024/`), keep that event folder structure under `PERSONAL/PERSONAL Photos/`. Route the file to `PERSONAL/PERSONAL Photos/Holi 2024/`, not `PERSONAL/PERSONAL Photos/2024/March 24/`. Only photos that arrive **loose** (no meaningful parent folder, or only inside a year/date-named container) get bucketed into the `PERSONAL/PERSONAL Photos/YYYY/Month YY/` structure. The event folder name carries information the year/month bucket loses.
+**Preserve event folders for personal photos**: If a photo's `current_path` shows it's already inside a named event subfolder (e.g. `[Person] Photos/Summer Party 2024/IMG_1234.jpg`, `[Person] Photos/Birthday 2023/`, `[Person] Photos/Trip Feb 2024/`), keep that event folder structure under `PERSONAL/PERSONAL Photos/`. Route the file to `PERSONAL/PERSONAL Photos/Summer Party 2024/`, not `PERSONAL/PERSONAL Photos/2024/March 24/`. Only photos that arrive **loose** (no meaningful parent folder, or only inside a year/date-named container) get bucketed into the `PERSONAL/PERSONAL Photos/YYYY/Month YY/` structure. The event folder name carries information the year/month bucket loses.
 
 ---
 
 ## Documents (high level)
 
-`.pdf`, `.docx`, `.doc`, `.xlsx`, `.fdx`, etc. — use filename heuristics **and** `content_peek`. If the filename is ambiguous but the content peek clearly signals a type (e.g. "Invoice No. INV-2024-0042"), trust the content over the filename.
+`.pdf`, `.docx`, `.doc`, `.xlsx`, etc. — use filename heuristics **and** `content_peek`. If the filename is ambiguous but the content peek clearly signals a type (e.g. "Invoice No. INV-2024-0042"), trust the content over the filename.
 
 Apply the cascading-Q model from SKILL.md "Routing model". For documents specifically the cascade walks like this:
 
-- **Q1** — root rules' descriptions discriminate between ENTERTAINMENT / PERSONAL / WORK / EDUCATION / RESOURCES. Match by filename, content_peek, and parent of current_path. Project / character / cast / company name in content_peek is the strongest signal for WORK.
-- **Q2** — inside the grouping, match against that grouping's `.tidy-rules.json`. For WORK, this distinguishes the individual companies (e.g. `[COMPANY A]` / `[COMPANY B]` / `[COMPANY C]` — the actual company folders that exist in this user's WORK rules; the bracketed names are placeholders for whatever real companies the on-disk rules define). For PERSONAL, this distinguishes Financial / Medical / Admin / ID / Resumes / Writing. For EDUCATION, Masters Applications / Research. For ENTERTAINMENT, Music / Movies / Books / Comics / RPGs / Sewing. For RESOURCES, Fonts / Templates / Film Stills.
-- **Q3** — inside the thing, the question narrows further. For a WORK production, it's the production type (project name, Admin, CLIENT). For a PERSONAL tree, it's the person. For Research, it's Academic Papers / Film Coverage / Notes / Lyrics Research.
-- **Q4** — inside compound subfolders (References / Financials / Legal / Docs / Film Coverage), the leaf-type question selects the specific child.
+- **Q1** — root rules' descriptions discriminate between ENTERTAINMENT / PERSONAL / WORK / EDUCATION / RESOURCES. Match by filename, content_peek, and parent of current_path. A project, client, or company name in content_peek is the strongest signal for WORK.
+- **Q2** — inside the grouping, match against that grouping's `.tidy-rules.json`. For WORK, this distinguishes the individual companies (e.g. `[COMPANY A]` / `[COMPANY B]` / `[COMPANY C]` — the actual company folders that exist in this user's WORK rules; the bracketed names are placeholders for whatever real companies the on-disk rules define). For PERSONAL, this distinguishes Financial / Medical / Admin / ID / Resumes / Writing. For EDUCATION, Masters Applications / Research. For ENTERTAINMENT, Music / Movies / Books / Comics / Games. For RESOURCES, Fonts / Templates.
+- **Q3** — inside the thing, the question narrows further. For a WORK company, it's the project or client (a project name, Admin, or a client folder). For a PERSONAL tree, it's the person. For Research, it's Academic Papers / Notes / Digital Tools.
+- **Q4** — inside compound subfolders (References / Financials / Legal / Docs), the leaf-type question selects the specific child.
 
 If at any level the on-disk rules don't match but the templates file shows the matched signal corresponds to a valid child for this parent type, **propose the new subfolder and queue a rule addition** (lazy-growth learning loop).
 
@@ -96,7 +96,7 @@ If still no match, `_Inbox/` at the current level with `?`. Don't invent new sub
 
 Folders owned by someone else — never touch:
 
-- The folder contains a `.tidy-rules.json` with the top-level field `"external": true`. Example: `logseq-journals/.tidy-rules.json` declares `external: true` because the folder is a shared Logseq journal owned by someone else.
+- The folder contains a `.tidy-rules.json` with the top-level field `"external": true`. Example: a shared notes/journal folder owned by someone else declares `external: true` in its `.tidy-rules.json`.
 - The backend's `_is_external()` check makes scan skip these folders entirely — files inside never enter the registry. Propose never targets these folders either.
 
 When the user says a folder is "shared from someone else" or "don't touch", create a `.tidy-rules.json` inside it with:
@@ -118,7 +118,7 @@ Folders where the folder IS the unit. Before classifying any individual file, ch
 | Pattern | Marker / structure | Atomic destination |
 |---|---|---|
 | **Python virtual environment** | folder contains `pyvenv.cfg` at root, or `lib/pythonX.Y/site-packages/` | Recommend delete (venvs are recreatable from `requirements.txt`); else route the whole venv folder to `_Inbox/` for review |
-| **OSCAR / CPAP data backup** | folder structure `Profiles/<name>/ResMed_<serial>/Backup/DATALOG/YYYY/` with `.edf` + `.crc` files | Whole `OSCAR_Data/` tree → `PERSONAL/PERSONAL Medical/<Person>/CPAP Data/` — preserve every subfolder, do not re-bucket the files |
+| **Medical-device data backup** (e.g. CPAP/OSCAR, glucose monitor) | folder structure like `Profiles/<name>/<Device_serial>/Backup/DATALOG/YYYY/` with device export files (`.edf`, `.crc`, etc.) | Route the whole device-data tree → `PERSONAL/PERSONAL Medical/<Person>/Device Data/` — preserve every subfolder, do not re-bucket the files |
 | **Zotero data folder** | contains `zotero.sqlite` or `storage/` with `.zotero-ft-cache` files | Whole folder → `EDUCATION/EDUCATION Research/Zotero/` — keep its internal structure intact |
 | **Unity / Unreal game project** | contains `Assets/`, `ProjectSettings/`, or any `.unity`/`.uproject` file | Whole project folder → `Archive/Old Projects/<Game Name>/` |
 | **node_modules** | folder named exactly `node_modules` | Delete or `_Inbox/` — never organise individually |
@@ -142,7 +142,7 @@ Almost always part of an atomic-unit folder (see above). If you see these files 
 
 ## Legacy / dead-format media
 
-Extensions: `.swf` Flash, `.fla` Flash source, `.dxr` Director, `.au` Sun audio, `.x32` various, `.asp` classic ASP, `.wma` Windows Media Audio.
+Extensions: `.swf` Flash, `.fla` Flash source, `.dxr` Director, `.au` Sun audio, `.x32` various, `.asp` classic ASP. (`.wma` is NOT here — it is a live audio format handled by the Audio section / `_peek_audio`, not a dead format.)
 
 These are formats from obsolete software (Flash retired 2020, Director retired 2017). Process:
 1. If inside an atomic-unit "Old Projects" folder, route the whole folder.
@@ -152,9 +152,9 @@ These are formats from obsolete software (Flash retired 2020, Director retired 2
 
 ## Config / system / log files
 
-Extensions: `.plist` Apple preferences, `.ini` config, `.log` log, `.json`/`.xml` data, `.url`/`.webloc` shortcuts, `.sample` git pack samples.
+Extensions: `.plist` Apple preferences, `.log` log, `.json`/`.xml` data, `.url`/`.webloc` shortcuts, `.sample` git pack samples. (`.ini` is **not** routed here — it is in the backend's `SKIP_EXTS`, so it is skipped at scan time and never reaches the classifier at all.)
 
-- `.plist`, `.ini`, `.log`: app/system files that rarely belong in OneDrive. `_Inbox/` with a `?`.
+- `.plist`, `.log`: app/system files that rarely belong in OneDrive. `_Inbox/` with a `?`.
 - `.json`/`.xml`: data files. If inside a project folder, route to that project's `Docs/` or `References/`. If standalone with no context, `_Inbox/`.
 - `.url`/`.webloc`: see "Web links and snippets" below.
 - `.sample`: typically git pack sample files; part of a `.git/` directory which is hidden and skipped anyway. If they surface, `_Inbox/`.
@@ -165,7 +165,7 @@ Extensions: `.plist` Apple preferences, `.ini` config, `.log` log, `.json`/`.xml
 
 Spreadsheet extensions: `.xlsx`, `.xls`, `.csv`, `.tsv`, `.ods`. Presentation extensions: `.pptx`, `.ppt`, `.key`, `.odp`.
 
-Treat exactly like Documents — apply the cascading-Q model. The backend extracts `content_peek` from cells and slide text for `.xlsx`/`.pptx`. Per-folder rules typically route spreadsheets to `Scene Breakdown/`, `Financials/Bills/`, or `Docs/` depending on signals (e.g. "scene 1, scene 2…" rows → Scene Breakdown; "invoice amount, GST" → Financials/Bills; cast list → Docs). Presentations usually go to `<Project>/Docs/` (pitches, decks) or `<Project>/References/` (mood decks). Templates (`.pptx` with "template" in name or already in a Templates folder) → see Templates section below.
+Treat exactly like Documents — apply the cascading-Q model. The backend extracts `content_peek` from cells and slide text for `.xlsx`/`.pptx`. Per-folder rules typically route spreadsheets to `Financials/Bills/` or `Docs/` depending on signals (e.g. "invoice amount, tax" rows → Financials/Bills; a roster or list → Docs). Presentations usually go to `<Project>/Docs/` (pitches, decks) or `<Project>/References/` (reference decks). Templates (`.pptx` with "template" in name or already in a Templates folder) → see Templates section below.
 
 ---
 
@@ -176,19 +176,19 @@ Extensions: `.mp3`, `.m4a`, `.m4b`, `.flac`, `.aac`, `.aif`, `.aiff`, `.wav`, `.
 **`content_peek` IS populated for audio** — the backend uses `mutagen` to extract embedded metadata (ID3 for mp3, MP4 atoms for m4a/m4b/aac, Vorbis Comment for flac/ogg/opus, ASF for wma, RIFF/AIFF tags for wav/aiff). When present, it surfaces as a one-line key=value blob:
 
 ```
-artist=Mohd. Rafi | album=Junglee | title=Ehsan Tera Hoga Mujhpar | date=1969 | tracknumber=3/0 | genre=Film | length=206s
+artist=Example Artist | album=Example Album | title=Example Song | date=2001 | tracknumber=3/0 | genre=Pop | length=206s
 ```
 
 If `mutagen` is not installed (`pip3 install --user --break-system-packages mutagen` on macOS PEP-668 systems) the backend returns `None` and audio falls back to filename + parent-folder classification. Either way the cascade still works.
 
 **Classify with metadata + filename + parent folder together:**
 
-1. **Embedded metadata identifies album/film soundtrack** (`album=Junglee`, `date=1969`) → `ENTERTAINMENT/ENTERTAINMENT Music/(1969) Junglee/`. Filename: `Junglee - Ehsan Tera Hoga Mujhpar - Mohd. Rafi.mp3` (use `album - title - artist` reconstructed from metadata if the existing filename is messier).
+1. **Embedded metadata identifies album/film soundtrack** (`album=Example Album`, `date=2001`) → `ENTERTAINMENT/ENTERTAINMENT Music/(2001) Example Album/`. Filename: `Example Album - Example Song - Example Artist.mp3` (use `album - title - artist` reconstructed from metadata if the existing filename is messier).
 2. **Metadata is sparse** (only title, no album) → look at filename and parent folder for the album/film name. If parent folder is `(YYYY) AlbumName/`, route there.
-3. **`length` < ~60s** + filename like `Scene_3_take_2.m4a` + parent is a project → `<Project>/References/` (production voice memo / take).
+3. **`length` < ~60s** + filename like `meeting_take_2.m4a` + parent is a project → `<Project>/References/` (voice memo / take).
 4. **No metadata, no project signal, no clear music name** → `_Inbox/` for review.
 
-**Conflicts between filename and metadata**: trust metadata when it's complete (artist + album + title all present), but check for nonsense — some files have placeholder metadata (e.g. `artist=Mere Yaar Ki Shaadi Hai` is the album name in the artist field; `album=YRF Top 50` is a compilation hint, not the source film). Use filename to disambiguate when metadata smells wrong.
+**Conflicts between filename and metadata**: trust metadata when it's complete (artist + album + title all present), but check for nonsense — some files have placeholder metadata (e.g. the album name sits in the artist field; an `album=...Top 50` value is a compilation hint, not the real source album). Use filename to disambiguate when metadata smells wrong.
 
 **Audiobooks** (`.m4b`, occasionally `.m4a` or `.mp3` collections): metadata may have a `book` or chapter tag. Route to `ENTERTAINMENT/ENTERTAINMENT Books and Audiobooks/<Series Title>/`.
 
@@ -199,7 +199,7 @@ If `mutagen` is not installed (`pip3 install --user --break-system-packages muta
 Extensions: `.mov`, `.mp4`, `.mkv`, `.avi`, `.m4v`, `.wmv`, `.flv`, `.3gp`, `.mxf` broadcast.
 
 No `content_peek` — classify by filename + parent folder.
-1. Parent folder is a project + filename suggests reference/shoot (`look_test_zara.mov`, `scene_5_blocking.mp4`) → `<Project>/References/`.
+1. Parent folder is a project + filename suggests a reference/capture (`site_walkthrough.mov`, `demo_take_5.mp4`) → `<Project>/References/`.
 2. Parent folder is a `PERSONAL Photos/<event>/` or filename has personal date+subject → `PERSONAL/PERSONAL Photos/<event>/` (preserve event folder).
 3. Screen recordings (filename has "screencast" / "screen recording" / "cleanshot") → `_Inbox/` — video screen recordings are rarely worth organising; flag for review.
 4. Movies / TV → `ENTERTAINMENT/ENTERTAINMENT Movies and TV Shows/<Title>/`. Music videos → `ENTERTAINMENT/ENTERTAINMENT Music/(YYYY) AlbumName/`.
@@ -214,7 +214,7 @@ Extensions: `.psd`, `.ai`, `.afdesign`, `.afphoto`, `.indd`, `.idml`, `.idlk`, `
 The InDesign trio is grouped: `.indd` is the file, `.idml` is its exchange format, `.idlk` is the lock file — keep all three together when routing (same destination). Procreate files are iPad illustrations; route like .psd.
 
 These are the user's working design files (Affinity Designer, Photoshop, Illustrator, etc.) — never auto-classify by content. Classify by filename + parent folder:
-1. Parent folder is a project → `<Project>/Branding Materials/` (logos, banners, marketing) or `<Project>/References/` (mood boards, costume design source).
+1. Parent folder is a project → `<Project>/Branding Materials/` (logos, banners, marketing) or `<Project>/References/` (reference/inspiration boards, design source material).
 2. Filename clearly names a company logo (`[Client] logo final.afdesign`, `[COMPANY] letterhead.psd`) → that company's `Branding Materials/` folder (e.g. `WORK/[COMPANY]/[COMPANY] Admin/Branding Materials/` or `WORK/[COMPANY]/[COMPANY] [Client]/Branding Materials/`).
 3. Generic templates (filename has "template", "blank", "master") → `RESOURCES/RESOURCES Templates/`.
 4. No project/company signal → `_Inbox/` — design source files are too valuable to bury.
@@ -256,7 +256,7 @@ No `content_peek` for these formats. Classify by filename (book title is usually
 
 Extensions: `.url`, `.webloc`, `.html`, `.htm`.
 
-- `.html` / `.htm`: usually saved web pages or article exports. Backend extracts text via `_peek_text`. Treat like Documents — project ID via content/filename, route to `EDUCATION/EDUCATION Research/Film Coverage/<Film Title>/` for press about a film, `EDUCATION/EDUCATION Research/Notes/` for general saves, or `<Project>/References/` if project-tied.
+- `.html` / `.htm`: usually saved web pages or article exports. Backend extracts text via `_peek_text`. Treat like Documents — project ID via content/filename, route to `EDUCATION/EDUCATION Research/Notes/` for general saved articles, or `<Project>/References/` if project-tied.
 - `.url` / `.webloc`: a one-line pointer to a URL. No real text. Route to `_Inbox/` for review — these are rarely worth organising automatically.
 
 ---
@@ -265,7 +265,7 @@ Extensions: `.url`, `.webloc`, `.html`, `.htm`.
 
 Extension: `.md`. Backend extracts text. Two common cases:
 
-1. **Notion exports** (filename has hex UUID suffix like `[Person Name] bb50f7290c35822fa15d815349a4ef8a.md`) — these are Notion task/note exports. Route via project signal in filename (e.g. `[COMPANY] Co-ordinate work with [Person]` → `WORK/[COMPANY]/[COMPANY] Admin/Tasks from Notion export/`) or `PERSONAL/PERSONAL Admin/<Person>/Tasks from Notion export/`.
+1. **Notion exports** (filename has hex UUID suffix like `[Person Name] bb50f7290c35822fa15d815349a4ef8a.md`) — these are Notion task/note exports. Route via project signal in filename (e.g. `[COMPANY] Co-ordinate work with [Person]` → `WORK/[COMPANY]/[COMPANY] Admin/Tasks/`) or `PERSONAL/PERSONAL Admin/<Person>/Tasks/`.
 2. **Other markdown** — treat as Documents (project ID via content_peek, then route).
 3. Skill files / code-adjacent `.md` (filename ends in `SKILL.md`, content looks like a skill prompt) → `_Inbox/` — these shouldn't be in OneDrive.
 
@@ -322,7 +322,7 @@ OneDrive's sync conflict resolution sometimes appends a date suffix to the file 
 
 ## Compound corruption
 
-Filenames with embedded artist/cast credits inside the extension chain, e.g. `Episode 1. badri chavan, farzeen ali.mp4-april`.
+Filenames with embedded artist/contributor credits inside the extension chain, e.g. `Episode 1. alex doe, sam lee.mp4-april`.
 
 Same as conflict-suffixed — strip the trailing `-<month>` and treat the result as the real filename. The dot-separated credits embedded mid-name aren't a real extension boundary; just the final `.mp4-april` is. Don't try to parse the credits out — leave them in the stem.
 

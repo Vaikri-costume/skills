@@ -11,9 +11,17 @@ the placement was lazy / stale and a real destination now exists. Be skeptical �
 learning loop has run, most `_Inbox/` files should find a home. You are read-only.
 
 ## Rules
-- Open and re-examine each file against the CURRENT taxonomy and rules — which may have
-  grown since the file was inboxed. (These files are already organised into `_Inbox/` on
-  local disk, so they always open — there is no cost-toggle / online-only skip here.)
+- Re-examine each file against the CURRENT taxonomy and rules — which may have grown since the
+  file was inboxed. These files are already on local disk (no cost-toggle / online-only download
+  skip applies here), but **inspect each only by the means your model capabilities permit** (next
+  rule) — "already downloaded" is not the same as "this model can open it".
+- **Model capabilities** `[CAPABILITIES]` (fill from propose's `Model capabilities: peek=… vision=…`
+  stderr line — the same slot the classify fan-out uses):
+  - **peek ON** — you may open document/text contents (Read) to re-judge.
+  - **peek OFF** — classify each document from filename + path + rules only; never open file contents.
+  - **vision ON** — you may open images (Read) and describe them.
+  - **vision OFF** — route images by filename + path + rules + `organizer.py exif <path>` metadata
+    (date/camera/dimensions); never open pixels.
 - Read yourself: active groupings `[GROUPINGS]`; merged taxonomy `[TEMPLATES_CMD]`; the
   touched `.tidy-rules.json` under `[ROOT]`; entity aliases/negatives `[ENTITIES_PATH]`;
   cascading-Q + file-type handling `[FILE_TYPE_ROUTING_PATH]`; conventions
@@ -43,4 +51,4 @@ learning loop has run, most `_Inbox/` files should find a home. You are read-onl
   }
 ]
 ```
-Every input `id` appears exactly once. Do not emit `para_category`. Verdicts only.
+Every input `id` appears exactly once. `verdict` is **exactly one of** `confirm_inbox` / `reroute_high` / `reroute_low` — a closed set; emit no other value. Do not emit `para_category`. Verdicts only.
