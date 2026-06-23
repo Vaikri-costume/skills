@@ -281,3 +281,73 @@ Per-folder failures, a missing tool, or an unsupported OS never error the run �
 - **iCloud Drive**: right-click folder → *Remove Download*
 - **Dropbox Smart Sync**: right-click folder → Smart Sync → *Online only*
 - **Google Drive (Stream mode)**: no action needed — files evict automatically once closed
+
+## generate-viewer (submit-response handling)
+
+<!-- SKILL.md's generate-viewer section points here for the after-submit log-line interpretation. -->
+
+**Check the server's final log line before continuing.** The server writes `proposals_approved.json`
+AND `proposals_flagged.json` to disk *before* it prints its final lines, so once you see
+`Server shutting down.` both sidecar files are guaranteed present (the case-3 recovery below can
+always read `proposals_flagged.json`). One of these cases holds:
+
+- **Write failure — no `Server shutting down.` line at all**, instead `ERROR: could not write review
+  output (…); submit NOT saved` on stderr and an HTTP 500 in the browser: the write failed, the
+  server is **still running**, nothing was saved. Do NOT proceed to process-return; tell the user to
+  resolve the disk/permission problem and re-submit (or re-run `generate-viewer`). The remaining
+  cases all assume the submit was written (the `Server shutting down.` line printed):
+- **Neither flagged line appears** (only `Approved proposals written to: …` / `Server shutting
+  down.`) — no files were `?`-flagged this round; proceed normally.
+- `"N files marked flagged in registry."` — `?`-flagged files were persisted; proceed normally.
+- `"Warning: could not mark flagged in DB: <error>"` — the flag write failed. Patch the registry
+  before running process-return:
+  ```bash
+  sqlite3 <root>/.organizer/registry.db "UPDATE files SET status='flagged' WHERE id IN (<comma-separated IDs>);"
+  ```
+  Get the exact IDs from `~/.claude/drive-organizer/proposals_flagged.json` — the viewer writes the
+  precise flagged-ID set there on **every** submit (a bare JSON array, e.g. `[12,47,88]`; `[]` when
+  nothing was flagged). **Do not** infer them by "IDs in `proposals_classified.json` not in
+  `proposals_approved.json`": that set also contains rows the user left **unreviewed** (`unset`), and
+  marking those `flagged` would wrongly drop unreviewed files from future propose batches.
+
+If `Error: proposals file not found: <path>` or `Error: proposals JSON is empty.` — re-run propose to
+regenerate `proposals_classified.json` first. If `Error: port <N> is already in use…` — re-run
+`generate-viewer` with the suggested `--port`.
+
+## process-return (learning-loop accelerators + routing notes)
+
+<!-- SKILL.md's process-return section points here for the W5 accelerators, the ordering rationale,
+     and the delete-routing note. The numbered pipeline stays in SKILL.md. -->
+
+**Why learnings come before reclassification:** A rejection means the proposed destination was wrong,
+but *what* the right destination is often depends on a pattern the user just demonstrated by editing
+an approved entry. If you reclassify rejects before extracting learnings from approvals, you guess; if
+you do it after, the rules already encode their latest preferences and reclassification becomes a
+lookup.
+
+**Routing note (delete entries):** execute reads `action == 'delete'` and hard-codes the move
+destination to `Archive/_To Delete/` — the entry's `para_subfolder` is ignored. The registry row then
+records that **actual** destination (`para_subfolder='Archive/_To Delete'`, `para_category` derived
+→ `_Inbox`), so the registry always matches disk even if a hand-edited delete entry had a different
+`para_subfolder`. (`para_category` is a pure projection of the recorded `para_subfolder` for every
+row, delete included.) For all other entries (approved, inbox, reclassified), routing is via
+`para_subfolder` only; inbox entries work because the viewer already sets `para_subfolder='_Inbox'`.
+
+**Learning-loop accelerators (W5)** — use these when writing rules in step 2 and handling rejections:
+
+- **Auto-infer the signal, not just the folder.** When several approved files routed to the same
+  (possibly new) folder, derive the rule's signal from the tokens common to those filenames rather
+  than the folder name alone — the backend exposes `_infer_signal_from_filenames(names)`. A
+  signal-bearing rule then auto-routes the *next* similar file via W1.
+- **Learn from rejections (negative signal).** A rejection says "files like this do NOT belong here."
+  Record the distinguishing token(s) in that entity's `entities.json` `negative: [...]` list. The W1
+  matcher then suppresses that destination for any filename carrying a negative token.
+- **Aliases cut repeat corrections.** When the user keeps correcting the same misspelling/short form
+  to one entity, add it to that entity's `aliases` (viewer or `entities.json`); the matcher routes
+  alias spellings (down to 3 chars) straight to the entity.
+- **Proactive "make a rule?"** After a batch, if N files were approved into the same new folder, offer
+  to write the rule once (with the inferred signal) instead of re-classifying each next time.
+- **Confidence auto-approval (opt-in).** With `auto_approve` on (config or `--auto-approve`), **W1
+  fast-path** auto-routed files (the deterministic rule match — not a classifier `confidence` verdict)
+  are flagged `auto_approved` — you may execute them without a viewer pass (still audited in
+  `auto-routed.csv`). Default OFF: human review stays the norm unless the user opts in.
