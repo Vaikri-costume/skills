@@ -1,7 +1,7 @@
 ---
-version: "2.4.0"
+version: "2.5.0"
 category: C
-parent-version: "2.3.0"
+parent-version: "2.4.0"
 author:
   primary: "Vaikri-costume"
   history:
@@ -23,6 +23,20 @@ inspirations:
 # History — drive-organizer
 
 ## Changelog
+
+### 2.5.0 — 2026-06-23
+
+#### Changed
+- **Batched cloud pre-trigger in `scan`.** Cloud-only placeholder downloads are now kicked all at
+  once — `scan` first selects the whole batch (file/GB caps + skip-rehash), then opens every selected
+  cloud-only file to start its download and polls the set once, so N downloads proceed concurrently
+  and overlap the hashing pass instead of the previous one-file-at-a-time trigger→poll. The
+  byte-stability confirmation (stat → sleep → stat) is likewise batched to a single wait across the
+  whole set.
+- Selection logic (bucket priority order, caps, first-admission exception, skip-rehash) is unchanged
+  and runs before the download phase; the per-batch timeout (`DRIVE_ORG_DL_TIMEOUT`) and the deferral
+  of files still online-only after the timeout are preserved.
+- SKILL.md documents the batched download behaviour.
 
 ### 2.4.0 — 2026-06-23
 

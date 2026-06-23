@@ -39,7 +39,7 @@ It deliberately prioritises, and a fix that trades any of these away should be s
 
 ## How to invoke
 
-- Slash command: `/drive-organizer` (no subcommand = backend check + status + scan), or a subcommand: `status`, `scan`, `propose`, `generate-viewer`, `process-return`, `execute`, `cleanup`, `reconcile`, `duplicates`, `variants`, `merge`, `flagged`, `csv-export`, `rules`, `rules-viewer`, `bootstrap`, `exif`, `merge-category`, `download-batch`.
+- Slash command: `/drive-organizer` (no subcommand = backend check + status + scan), or a subcommand: `status`, `scan`, `propose`, `generate-viewer`, `process-return`, `execute`, `cleanup`, `reconcile`, `duplicates`, `variants`, `merge`, `flagged`, `csv-export`, `rules`, `rules-viewer`, `bootstrap`, `exif`, `merge-category`, `folder-tree`, `download-batch`.
 - Natural language: "organise my drive", "sort these files into folders", "my folder structure got messed up — fix it", "find duplicate files", "show me the folder tree", "set up rules from my existing folders" (`bootstrap`), "edit my routing rules" (`rules-viewer`).
 
 Example:
@@ -54,7 +54,7 @@ Example:
 
 **Main batch loop** — the core workflow that fills, classifies, reviews, and moves a batch of up to 250 files / 20 GB. Trigger: `/drive-organizer` (no subcommand), or "organise my drive" / "sort these files into folders". Runs scan → propose → generate-viewer → process-return → execute → cleanup in a repeating loop until the drive is sorted.
 
-- **scan** — fills the next batch by priority (rules-bearing folders first, then loose root files, then unruled folders; cloud-only files are downloaded inline). Reports new files, duplicates, and the batch stop state. Trigger: `/drive-organizer scan`.
+- **scan** — fills the next batch by priority (rules-bearing folders first, then loose root files, then unruled folders). Cloud-only files are downloaded in a batch: scan selects the whole batch first, then kicks every selected download up front and polls the set once, so the network waits overlap each other and the hashing. Reports new files, duplicates, and the batch stop state. Trigger: `/drive-organizer scan`.
 - **propose** — classifies the scanned batch via the cascading-Q model (Q1 top-level grouping → Q2 thing inside → Q3 functional area → Q4 leaf type), fanning out to one sub-agent per 25 files. Deterministic rule matches are fast-pathed. Trigger: `/drive-organizer propose`.
 - **generate-viewer** — serves a paginated browser UI (localhost:5002) of every proposed move + filename, grouped by destination; approve / reject / flag / inbox / delete, and edit destinations and filenames inline. Trigger: `/drive-organizer generate-viewer`, or "launch the viewer".
 - **process-return** — processes the viewer submission: learns rules from edited approvals, reclassifies rejections against the updated rules, peeks flagged files, and prepares the next batch. Trigger: `/drive-organizer process-return`, or "I've submitted" / "done reviewing".

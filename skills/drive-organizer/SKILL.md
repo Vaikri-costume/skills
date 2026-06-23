@@ -126,7 +126,7 @@ When the user asks to see the folder tree ("show me the folder tree", "what's th
 8. (after all batches done) duplicates → variants → merge
 ```
 
-`scan` now does its own downloading inline — there's no separate `download-batch` step in the cycle. The legacy `download-batch` subcommand still exists for manual top-ups but isn't part of the loop. Each scan fills the batch by walking priorities 1→6 until the budget is hit; priorities lower than where the cap landed are skipped this round.
+`scan` now does its own downloading — there's no separate `download-batch` step in the cycle. The legacy `download-batch` subcommand still exists for manual top-ups but isn't part of the loop. Each scan fills the batch by walking priorities 1→6 until the budget is hit; priorities lower than where the cap landed are skipped this round. **Downloads are batched**: scan first selects the whole batch (caps + skip-rehash), then kicks every selected cloud-only file's download up front and polls the set once — so the network waits overlap each other and the hashing, rather than downloading one file at a time. Tune the per-batch wait with `DRIVE_ORG_DL_TIMEOUT` (seconds).
 
 The registry remembers everything across batches — original names, paths, hashes, content previews — so duplicates and variants are caught even if they appeared in different batches. (Every mutation also mirrors to `registry.csv` — see the intro.)
 
