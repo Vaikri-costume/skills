@@ -362,6 +362,70 @@ def _read_user_config(root: "Path | None" = None) -> dict:
         return {}
 
 
+# Settings the rules-viewer Settings panel exposes (Phase 3 gating feature). v1 covers the
+# keys that are ALREADY config-backed; each later elevation item adds its control here, per
+# the standing rule "no new config/property ships without its control wired into this panel".
+def _settings_for_viewer(root: "Path | None" = None) -> dict:
+    """Current effective values of the user-editable config keys, with defaults applied —
+    the shape the Settings panel renders and POSTs back. Reads <root>/.organizer/config.json
+    via _read_user_config (never raises)."""
+    cfg = _read_user_config(root)
+    caps = cfg.get("model_capabilities")
+    if isinstance(caps, dict):
+        peek = bool(caps.get("peek", True))
+        vision = bool(caps.get("vision", cfg.get("vision", True)))
+    else:
+        peek = True
+        vision = bool(cfg.get("vision", True))  # legacy top-level `vision`
+    return {
+        "peek": peek,
+        "vision": vision,
+        "auto_approve": bool(cfg.get("auto_approve", False)),
+        "skip_types": list(cfg.get("skip_types", []) or []),
+        "skip_over_mb": cfg.get("skip_over_mb"),  # number or null
+    }
+
+
+def _write_user_config(updates: dict, root: "Path | None" = None) -> dict:
+    """Merge `updates` (the Settings-panel shape from _settings_for_viewer) into
+    <root>/.organizer/config.json, atomically, preserving every other key already in the
+    file (e.g. `areas`, `root`, `profile`). Normalises into the canonical config shape the
+    rest of the backend reads: capabilities under `model_capabilities`, the rest top-level.
+    Returns the new effective settings. Raises only on an unwritable config dir."""
+    root = root or _EFFECTIVE_ROOT
+    if not root:
+        raise RuntimeError("no active drive root — run `status` to set one before saving settings")
+    cfg_path = Path(root) / ".organizer" / "config.json"
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cur = _read_user_config(root)  # {} if absent/unparseable
+    caps = dict(cur.get("model_capabilities") or {})
+    if "peek" in updates:
+        caps["peek"] = bool(updates["peek"])
+    if "vision" in updates:
+        caps["vision"] = bool(updates["vision"])
+        cur.pop("vision", None)  # collapse the legacy top-level `vision` into model_capabilities
+    if caps:
+        cur["model_capabilities"] = caps
+    if "auto_approve" in updates:
+        cur["auto_approve"] = bool(updates["auto_approve"])
+    if "skip_types" in updates:
+        # accept a list or a comma string; normalise to a deduped sorted list of '.ext'
+        raw = updates["skip_types"]
+        if isinstance(raw, str):
+            raw = [t for t in raw.split(",")]
+        exts = sorted({(t.strip().lower() if t.strip().startswith(".") else "." + t.strip().lower())
+                       for t in (raw or []) if t and t.strip()})
+        cur["skip_types"] = exts
+    if "skip_over_mb" in updates:
+        v = updates["skip_over_mb"]
+        if v in (None, "", 0, "0"):
+            cur.pop("skip_over_mb", None)
+        else:
+            cur["skip_over_mb"] = float(v) if not float(v).is_integer() else int(float(v))
+    _atomic_write(cfg_path, json.dumps(cur, ensure_ascii=False, indent=2))
+    return _settings_for_viewer(root)
+
+
 _TEMPLATES_CACHE = None
 
 def _load_templates() -> dict:
@@ -568,9 +632,11 @@ def _project_metadata(project_path: Path) -> dict:
 def _enumerate_project_metadata(root: Path) -> list:
     """
     Walk top-level project folders under root and collect their metadata.
-    Returns list of {path (relative), filename_tag, date_range} entries
-    for every folder whose .tidy-rules.json carries a filename_tag.
-    Used by propose to surface candidate matches by date for loose bills.
+    Returns list of {path (relative), filename_tag?, date_range?} entries for every folder
+    whose .tidy-rules.json carries a filename_tag **OR a date_range** (Phase-3 generalisation:
+    date-first routing is no longer projects-only — an area, an event folder, a course-term or
+    tax-year folder can carry a date_range and route dated files by date even with no
+    filename_tag). Used by propose to surface candidate matches by date for loose bills/photos.
     """
     out = []
     # The walk is unrolled to EXACTLY three levels on purpose — it mirrors the
@@ -598,7 +664,7 @@ def _enumerate_project_metadata(root: Path) -> list:
             continue
         # Direct-level project (legacy flat)
         meta = _project_metadata(top)
-        if meta.get("filename_tag"):
+        if meta.get("filename_tag") or meta.get("date_range"):
             out.append({"path": top.name, **meta})
         # Two-level (new nested: WORK/COMPANY/PROJECT, PERSONAL/PERSONAL X)
         try:
@@ -608,7 +674,7 @@ def _enumerate_project_metadata(root: Path) -> list:
                 if _is_external(mid):
                     continue
                 meta_mid = _project_metadata(mid)
-                if meta_mid.get("filename_tag"):
+                if meta_mid.get("filename_tag") or meta_mid.get("date_range"):
                     out.append({"path": f"{top.name}/{mid.name}", **meta_mid})
                 # Three-level (e.g. WORK/ACME/ACME Project Alpha/)
                 try:
@@ -618,7 +684,7 @@ def _enumerate_project_metadata(root: Path) -> list:
                         if _is_external(deep):
                             continue
                         meta_deep = _project_metadata(deep)
-                        if meta_deep.get("filename_tag"):
+                        if meta_deep.get("filename_tag") or meta_deep.get("date_range"):
                             out.append({"path": f"{top.name}/{mid.name}/{deep.name}", **meta_deep})
                 except (PermissionError, OSError):
                     pass
@@ -1558,14 +1624,19 @@ def cmd_scan(args):
     unchanged = 0
     to_process = []  # (filepath, fsize, mtime) — files that genuinely need hashing
 
-    # Pass 1 (sequential): respect caps, trigger cloud downloads, and decide which
-    # files still need a fresh hash. Skip-rehash drops unchanged files here.
+    # Pass 1a (sequential SELECTION): respect caps + skip-rehash to decide which files
+    # this batch will process. No download/poll happens here — cloud-only files are only
+    # SELECTED now; their bytes are kicked + awaited together in the batched pre-trigger
+    # (Pass 1b) so the network waits overlap each other instead of running one file at a
+    # time. The cap uses the placeholder-reported size here; the real size/mtime is
+    # re-captured after materialisation.
+    selected = []  # (filepath, fsize, cur_mtime, placeholder)
     for priority in range(1, 7):
         if stopped_at_priority:
             break
         files = sorted(buckets[priority], key=lambda x: str(x[0]))
         for filepath, fsize, placeholder in files:
-            if len(to_process) >= file_limit:
+            if len(selected) >= file_limit:
                 stopped_at_priority = priority
                 break
             try:
@@ -1579,65 +1650,86 @@ def cmd_scan(args):
             if ex and ex[0] and ex[1] == fsize and ex[2] == cur_mtime:
                 unchanged += 1
                 continue  # unchanged + already registered — no work
-            # First-admission exception, scoped PER SCAN CALL (the `and to_process` guard):
+            # First-admission exception, scoped PER SCAN CALL (the `and selected` guard):
             # admit the FIRST file of this call even if it alone exceeds the GB cap — else a
             # single file larger than the cap is rejected on every scan and never processed
-            # (permanent stall). Once this call has admitted anything (`to_process` non-empty),
+            # (permanent stall). Once this call has admitted anything (`selected` non-empty),
             # the cap applies strictly. It is per-call, not per-file: a too-big file deferred
             # this call is re-considered (and again first-admitted) on the NEXT scan call.
-            if total_bytes + fsize > byte_limit and to_process:
+            if total_bytes + fsize > byte_limit and selected:
                 stopped_at_priority = priority
                 break
-
-            # Trigger download if cloud-only — open() forces OneDrive to materialise.
-            if placeholder:
-                try:
-                    with open(filepath, "rb") as f:
-                        f.read(1)
-                except OSError as e:
-                    print(f"  skip {filepath}: download failed: {e}", file=sys.stderr)
-                    skipped += 1
-                    continue
-                # Poll until the file materialises (or times out) instead of a
-                # single fixed 0.5s check — a file slower than one tick used to be
-                # skipped and deferred to a future scan, forcing extra passes.
-                if _is_placeholder(filepath):
-                    _wstart = time.monotonic()
-                    waited = 0.0
-                    while _is_placeholder(filepath) and waited < DOWNLOAD_POLL_TIMEOUT:
-                        time.sleep(DOWNLOAD_POLL_INTERVAL)
-                        waited += DOWNLOAD_POLL_INTERVAL
-                    t_download += time.monotonic() - _wstart
-
-                # Never hash a partially-downloaded file. Confirm it is (a) no longer
-                # dataless AND (b) byte-stable across two reads — a still-streaming
-                # OneDrive file can clear the dataless flag while its size is still
-                # climbing. If unconfirmed, defer to a future scan rather than commit
-                # a hash of partial bytes.
-                if _is_placeholder(filepath):
-                    print(f"  skip {filepath}: still online-only after {DOWNLOAD_POLL_TIMEOUT:.0f}s", file=sys.stderr)
-                    skipped += 1
-                    continue
-                try:
-                    s1 = filepath.stat()
-                    time.sleep(DOWNLOAD_POLL_INTERVAL)
-                    s2 = filepath.stat()
-                except OSError as e:
-                    print(f"  skip {filepath}: vanished during materialise check: {e}", file=sys.stderr)
-                    skipped += 1
-                    continue
-                if _is_placeholder(filepath) or s1.st_size != s2.st_size:
-                    print(f"  skip {filepath}: not fully materialised (size unstable), deferring", file=sys.stderr)
-                    skipped += 1
-                    continue
-                # Re-capture size/mtime now that the real bytes are present — the
-                # placeholder-reported values may differ from the materialised file.
-                fsize = s2.st_size
-                cur_mtime = s2.st_mtime_ns
-                triggered_count += 1
-
-            to_process.append((filepath, fsize, cur_mtime))
+            selected.append((filepath, fsize, cur_mtime, placeholder))
             total_bytes += fsize
+
+    # Pass 1b (BATCHED cloud pre-trigger): kick EVERY selected cloud-only placeholder's
+    # download up front (open+read(1) forces OneDrive/File-Provider to start materialising),
+    # then poll the whole set once — so N downloads proceed concurrently (and overlap the
+    # hashing in Pass 2) instead of the old one-file-at-a-time trigger→poll that serialised
+    # every network wait. Tunable via DRIVE_ORG_DL_TIMEOUT.
+    to_process = []           # (filepath, fsize, cur_mtime) — files ready to hash
+    pending_dl = []           # placeholders we kicked and still need to confirm materialised
+    for filepath, fsize, cur_mtime, placeholder in selected:
+        if not placeholder:
+            to_process.append((filepath, fsize, cur_mtime))
+            continue
+        # Trigger download — open() forces materialisation; do NOT wait here.
+        try:
+            with open(filepath, "rb") as f:
+                f.read(1)
+        except OSError as e:
+            print(f"  skip {filepath}: download failed: {e}", file=sys.stderr)
+            skipped += 1
+            continue
+        pending_dl.append(filepath)
+
+    if pending_dl:
+        # Single batch poll: one wall-clock wait for the WHOLE set to clear the
+        # placeholder marker (instead of a per-file poll). A file slower than one tick
+        # is no longer deferred to a future scan — but a still-online-only file after
+        # the timeout is.
+        _wstart = time.monotonic()
+        waited = 0.0
+        remaining = [p for p in pending_dl if _is_placeholder(p)]
+        while remaining and waited < DOWNLOAD_POLL_TIMEOUT:
+            time.sleep(DOWNLOAD_POLL_INTERVAL)
+            waited += DOWNLOAD_POLL_INTERVAL
+            remaining = [p for p in remaining if _is_placeholder(p)]
+        t_download += time.monotonic() - _wstart
+
+        # Batched stability check: stat the whole set, sleep ONCE, stat again — so the
+        # byte-stable confirmation also runs as a single wait, not one interval per file.
+        # Never hash a partially-downloaded file: a still-streaming file can clear the
+        # dataless flag while its size is still climbing, so confirm (a) no longer
+        # dataless AND (b) byte-stable across the two reads; otherwise defer.
+        first_stat = {}
+        for filepath in pending_dl:
+            if _is_placeholder(filepath):
+                print(f"  skip {filepath}: still online-only after {DOWNLOAD_POLL_TIMEOUT:.0f}s", file=sys.stderr)
+                skipped += 1
+                continue
+            try:
+                first_stat[filepath] = filepath.stat()
+            except OSError as e:
+                print(f"  skip {filepath}: vanished during materialise check: {e}", file=sys.stderr)
+                skipped += 1
+        if first_stat:
+            time.sleep(DOWNLOAD_POLL_INTERVAL)
+        for filepath, s1 in first_stat.items():
+            try:
+                s2 = filepath.stat()
+            except OSError as e:
+                print(f"  skip {filepath}: vanished during materialise check: {e}", file=sys.stderr)
+                skipped += 1
+                continue
+            if _is_placeholder(filepath) or s1.st_size != s2.st_size:
+                print(f"  skip {filepath}: not fully materialised (size unstable), deferring", file=sys.stderr)
+                skipped += 1
+                continue
+            # Re-capture size/mtime now that the real bytes are present — the
+            # placeholder-reported values may differ from the materialised file.
+            triggered_count += 1
+            to_process.append((filepath, s2.st_size, s2.st_mtime_ns))
 
     # Pass 2 (parallel): hash + content-peek the selected files concurrently. Hashing
     # is I/O-bound, so a small thread pool overlaps reads (flagged in Phase 4C).
@@ -3495,6 +3587,92 @@ class _SilentHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
 
+def _cowork_or_headless() -> bool:
+    """True when the localhost browser viewer cannot be reached — a Cowork/remote
+    session or an explicitly-headless run. The localhost HTTP viewer (port 5002/5003)
+    is unreachable from Cowork (the user's browser is not on this host), so scan should
+    fall back to the static review file instead of starting a server nobody can open.
+    Signalled by DRIVE_ORG_HEADLESS=1, or any Cowork environment marker."""
+    if os.environ.get("DRIVE_ORG_HEADLESS", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    return any(os.environ.get(v) for v in ("CLAUDE_COWORK", "COWORK", "CLAUDE_CODE_COWORK"))
+
+
+def _emit_static_review(proposals: list) -> Path:
+    """Cowork-reachable fallback for the localhost viewer: write a self-contained,
+    editable HTML review file (no server, no localhost POST) PLUS a pre-filled
+    proposals_approved.json (every file defaulted to 'approved' at its proposed
+    destination). The user reviews/edits in the HTML and clicks Download to produce an
+    updated approved.json, OR edits the pre-filled JSON directly, then runs
+    process-return. Returns the HTML path. The approved entry schema matches what the
+    browser viewer POSTs (id / current_path / para_subfolder / new_filename / action),
+    so the downstream consumer is identical — only the transport differs."""
+    out_dir = APPROVED_JSON_PATH.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pre-fill proposals_approved.json (all approved) so "accept everything" needs no
+    # browser at all — the user can run process-return immediately, or edit first.
+    prefilled = []
+    for p in proposals:
+        prefilled.append({
+            "id": p.get("id"),
+            "current_path": p.get("current_path") or p.get("original_path"),
+            "para_subfolder": p.get("para_subfolder", ""),
+            "new_filename": p.get("new_filename") or p.get("filename"),
+            "action": "approved",
+            "file_date": p.get("file_date"),
+            "vision_desc": p.get("vision_desc"),
+        })
+    _atomic_write(APPROVED_JSON_PATH, json.dumps(prefilled, indent=2))
+
+    # Self-contained editable HTML — the Download button builds the same
+    # {approved, flagged, skipped} payload the localhost viewer POSTs, as a client-side
+    # Blob the user saves over proposals_approved.json. No network, so it works wherever
+    # the file can be opened (Cowork file preview, a copied-out browser, etc.).
+    review_html = out_dir / "proposals_review.html"
+    rows = json.dumps(proposals)
+    appr_path_js = json.dumps(str(APPROVED_JSON_PATH))
+    html = """<!doctype html><meta charset="utf-8"><title>Drive Organizer — static review</title>
+<style>body{font:14px system-ui,sans-serif;margin:1.5rem;max-width:1100px}
+table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px 6px;vertical-align:top}
+th{background:#f3f3f3;text-align:left}select,input{font:inherit;width:100%;box-sizing:border-box}
+.path{color:#555;font-size:12px;word-break:break-all}button{font:inherit;padding:.5rem 1rem;margin:.5rem 0}
+.hint{background:#fffbe6;border:1px solid #e6d27a;padding:.6rem .8rem;border-radius:4px}</style>
+<h2>Drive Organizer — static review (Cowork / headless)</h2>
+<div class="hint">The localhost viewer is unreachable here. Review below, then <b>Download approved.json</b>
+and save it over:<br><code id="ap"></code><br>then run <code>process-return</code>.
+A pre-filled <code>proposals_approved.json</code> (everything approved) was already written there —
+if you just want to accept all, skip this file and run <code>process-return</code> now.</div>
+<button onclick="dl()">⬇ Download approved.json</button>
+<table id="t"><thead><tr><th>#</th><th>File</th><th>Action</th><th>Destination</th><th>New filename</th><th>Why</th></tr></thead><tbody></tbody></table>
+<script>
+const P=__ROWS__, AP=__AP__;document.getElementById('ap').textContent=AP;
+const tb=document.querySelector('#t tbody');
+P.forEach((p,i)=>{const tr=document.createElement('tr');
+const cp=p.current_path||p.original_path||'';
+tr.innerHTML=`<td>${i+1}</td><td class=path>${cp.replace(/</g,'&lt;')}</td>
+<td><select data-i=${i} class=act><option value=approved selected>approve</option>
+<option value=rejected>reject</option><option value=inbox>inbox</option>
+<option value=flagged>flag</option><option value=skip>skip</option></select></td>
+<td><input data-i=${i} class=dest value="${(p.para_subfolder||'').replace(/"/g,'&quot;')}"></td>
+<td><input data-i=${i} class=fn value="${(p.new_filename||p.filename||'').replace(/"/g,'&quot;')}"></td>
+<td>${(p.reason||'').replace(/</g,'&lt;')}</td>`;tb.appendChild(tr);});
+function dl(){const approved=[],flagged=[],skipped=[];
+P.forEach((p,i)=>{const act=document.querySelector(`.act[data-i="${i}"]`).value;
+const dest=document.querySelector(`.dest[data-i="${i}"]`).value;
+const fn=document.querySelector(`.fn[data-i="${i}"]`).value;
+if(act==='flagged'){flagged.push(p.id);return;}
+if(act==='skip'){skipped.push(p.id);return;}
+approved.push({id:p.id,current_path:p.current_path||p.original_path,para_subfolder:dest,
+new_filename:fn,action:act,file_date:p.file_date,vision_desc:p.vision_desc});});
+const blob=new Blob([JSON.stringify({approved,flagged,skipped},null,2)],{type:'application/json'});
+const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='proposals_approved.json';a.click();}
+</script>"""
+    html = html.replace("__ROWS__", rows).replace("__AP__", appr_path_js)
+    _atomic_write(review_html, html)
+    return review_html
+
+
 def cmd_generate_viewer(args):
     proposals_path = Path(args.proposals)
     if not proposals_path.exists():
@@ -3508,6 +3686,18 @@ def cmd_generate_viewer(args):
 
     # Bubble-sort by destination so files going to the same leaf appear together
     proposals = _bubble_sort_proposals(proposals)
+
+    # Cowork-reachable fallback: if asked for --static, or a Cowork/headless session is
+    # detected, emit a static editable review file instead of a localhost server nobody
+    # on this host can open.
+    if getattr(args, "static", False) or _cowork_or_headless():
+        review_html = _emit_static_review(proposals)
+        print("Static review mode (localhost viewer not reachable here).")
+        print(f"  Review + edit:        {review_html}")
+        print(f"  Pre-filled approvals: {APPROVED_JSON_PATH}  ({len(proposals)} files, all 'approved')")
+        print("  Edit in the HTML and Download, or edit the JSON directly, then run process-return.")
+        print("  (To force the localhost server instead, re-run without --static and unset DRIVE_ORG_HEADLESS.)")
+        return
 
     port = int(args.port) if args.port else 5002
 
@@ -3604,7 +3794,8 @@ def cmd_generate_viewer(args):
     print(f"Approved output will be written to: {APPROVED_JSON_PATH}")
     print("Press Ctrl+C to stop.")
 
-    webbrowser.open(url)
+    if not getattr(args, "no_open", False):
+        webbrowser.open(url)
 
     try:
         shutdown_event.wait()
@@ -4237,7 +4428,10 @@ def cmd_csv_export(args):
 def _read_entities(root: "Path | None" = None) -> dict:
     """Per-drive entity metadata at <root>/.organizer/entities.json. Optional;
     absent => today's behaviour. Maps entity name -> {entity_type, locked,
-    aliases, relation, policy, notes}. Never raises."""
+    aliases, relation, policy, notes, date_range?}. `date_range` (a
+    {"start","end"} ISO-date dict, Phase-3) lets ANY entity — not just project
+    folders — route loose dated files (bills/statements/photos) to it by date.
+    All keys pass through unfiltered. Never raises."""
     root = root or _EFFECTIVE_ROOT
     if not root:
         return {}
@@ -5023,6 +5217,23 @@ _RULES_VIEWER_HTML = r"""<!DOCTYPE html>
    <b>notes</b> — anything else worth recording about the rule.
   </div>
  </details>
+ <details class="legend" id="settingspanel"><summary>⚙ Settings</summary>
+  <div class="legendbody">
+   <div class="meta" style="grid-template-columns:auto 1fr;max-width:560px">
+    <label title="Let classification agents open file CONTENTS (text/PDF). Off → classify from the pre-extracted snippet + name/path/rules only.">peek (read file contents)</label>
+    <span><input type="checkbox" id="set_peek" style="width:auto"></span>
+    <label title="Let classification agents SEE images. Off → route images by name/path/rules + EXIF date.">vision (see images)</label>
+    <span><input type="checkbox" id="set_vision" style="width:auto"></span>
+    <label title="Mark deterministic W1 fast-path matches auto_approved so you may skip the viewer for them (still audited in auto-routed.csv). Default off.">auto-approve W1 fast-path</label>
+    <span><input type="checkbox" id="set_autoapprove" style="width:auto"></span>
+    <label title="Never open these extensions — route by name/path/rules only. Comma-separated, e.g. .mov, .raw">skip file types</label>
+    <input id="set_skiptypes" placeholder=".mov, .raw">
+    <label title="Never open files larger than this many MB — route by name/path/rules only. Blank = no cap.">skip files over (MB)</label>
+    <input id="set_skipmb" type="number" min="0" step="1" placeholder="(no cap)">
+   </div>
+   <div class="row"><button class="btn sm" onclick="saveSettings()">Save settings</button><span id="set_out" style="font-size:12px;color:var(--ok)"></span></div>
+  </div>
+ </details>
 </header>
 <div id="bulkbar" class="bulkbar" style="display:none">
  <span id="bulkn" class="pill">0 selected</span>
@@ -5085,6 +5296,7 @@ function card(e){
    <label title="How this entity relates to you or to another entity (free text).">relation</label><input value="${esc(e.relation||'')}" placeholder="e.g. collaborator, client, partner, employer" onchange="metaEdit('${jsq(e.entity)}','relation',this.value)">
    <label title="A routing behaviour for this entity's files (optional). Distinct from the 'policy' type: this is the specific rule.">behaviour</label><input value="${esc(e.policy||'')}" placeholder="e.g. event-group (group photos by date/event)" onchange="metaEdit('${jsq(e.entity)}','policy',this.value)">
    <label title="Free notes — what this rule is for, or why it exists.">notes</label><input value="${esc(e.notes||'')}" placeholder="free notes, e.g. 'primary contact for Project X'" onchange="metaEdit('${jsq(e.entity)}','notes',this.value)">
+   <label title="Date range this entity's dated files fall in (optional). Routes loose dated files (bills, statements, photos) to this entity by date — generalised off projects-only. Leave both blank to clear.">date range</label><span style="display:flex;gap:4px"><input type="date" value="${esc((e.date_range||{}).start||'')}" onchange="drEdit('${jsq(e.entity)}','start',this.value)"><input type="date" value="${esc((e.date_range||{}).end||'')}" onchange="drEdit('${jsq(e.entity)}','end',this.value)"></span>
   </div>
   ${occ}
   ${conf.length?`<div class="conflict">⚠ overlaps: ${conf.map(c=>esc(c.with)+' ['+c.shared.join(',')+']').join('; ')}</div>`:''}
@@ -5113,9 +5325,41 @@ function render(){
      p.innerHTML=`<button class="btn sm ghost" onclick="flip('${t}',-1)">‹</button><span>page ${pages[t]+1}/${Math.ceil(ents.length/PAGE)}</span><button class="btn sm ghost" onclick="flip('${t}',1)">›</button>`;main.appendChild(p);}
  }
  renderBulk();markDirty();
+ renderSettings();
+}
+function renderSettings(){
+ const s=DATA.settings||{};
+ document.getElementById('set_peek').checked = s.peek!==false;
+ document.getElementById('set_vision').checked = s.vision!==false;
+ document.getElementById('set_autoapprove').checked = !!s.auto_approve;
+ document.getElementById('set_skiptypes').value = (s.skip_types||[]).join(', ');
+ document.getElementById('set_skipmb').value = (s.skip_over_mb==null?'':s.skip_over_mb);
+}
+function saveSettings(){
+ const out=document.getElementById('set_out'); out.textContent='saving…';
+ const mb=document.getElementById('set_skipmb').value.trim();
+ const settings={
+   peek: document.getElementById('set_peek').checked,
+   vision: document.getElementById('set_vision').checked,
+   auto_approve: document.getElementById('set_autoapprove').checked,
+   skip_types: document.getElementById('set_skiptypes').value,
+   skip_over_mb: mb===''?null:Number(mb),
+ };
+ fetch('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings})})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok){DATA.settings=d.settings;renderSettings();out.textContent='saved ✓';setTimeout(()=>out.textContent='',2500);}
+    else{out.style.color='var(--bad)';out.textContent='error: '+(d.error||'failed');}
+  }).catch(e=>{out.style.color='var(--bad)';out.textContent='error: '+e;});
 }
 function flip(t,d){const m=byType();const n=Math.ceil(Math.min(m[t].length,CAP)/PAGE);pages[t]=Math.max(0,Math.min(n-1,pages[t]+d));render();}
 function metaEdit(e,k,v){changes.entities[e]=changes.entities[e]||{};changes.entities[e][k]=v;markDirty();}
+function drEdit(ent,which,val){
+ const cur=(changes.entities[ent]&&changes.entities[ent].date_range)||((DATA.entities.find(x=>x.entity===ent)||{}).date_range)||{};
+ const dr={start:cur.start||'',end:cur.end||''}; dr[which]=val;
+ changes.entities[ent]=changes.entities[ent]||{};
+ changes.entities[ent].date_range=(dr.start||dr.end)?{start:dr.start,end:dr.end}:null;
+ markDirty();
+}
 function signalEdit(e,v){changes.rule_edits[e]={entity:e,description:v};markDirty();}
 function delEntity(e){if(confirm('Delete the routing rule for "'+e+'" everywhere? (files/folders are NOT deleted)')){changes.deletes[e]=true;markDirty();render();}}
 function rethinkEntity(e){changes.rethink[e]=true;markDirty();render();}
@@ -5213,6 +5457,7 @@ class _RulesHandler(BaseHTTPRequestHandler):
             "coverage_gaps": _coverage_gaps(root, dest_set),
             "cluster_order": _CLUSTER_ORDER,
             "cluster_label": _CLUSTER_LABEL,
+            "settings": _settings_for_viewer(root),
         }
         data_js = json.dumps(payload).replace("</", "<\\/")
         html = _RULES_VIEWER_HTML.replace("__DATA__", data_js)
@@ -5232,6 +5477,18 @@ class _RulesHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._send(400, {"error": "bad json"}); return
         root = self.__class__._root
+
+        if self.path == "/config":
+            # Settings panel: merge the submitted user-editable config keys into
+            # <root>/.organizer/config.json and return the new effective settings. Separate
+            # from /save and /apply (which handle rule/entity edits) so saving settings never
+            # touches the rule set and vice-versa.
+            try:
+                new_settings = _write_user_config(payload.get("settings") or {}, root)
+            except Exception as e:
+                self._send(500, {"error": f"could not write settings: {e}"}); return
+            self._send(200, {"ok": True, "settings": new_settings})
+            return
 
         if self.path == "/test":
             # test-a-file: run the W1 matcher on a pasted filename (read-only)
@@ -5254,7 +5511,7 @@ class _RulesHandler(BaseHTTPRequestHandler):
 
         if self.path in ("/save", "/apply"):
             keepalive = (self.path == "/apply") or bool(payload.get("keepalive"))
-            META_KEYS = ("entity_type", "locked", "aliases", "relation", "policy", "notes", "review")
+            META_KEYS = ("entity_type", "locked", "aliases", "relation", "policy", "notes", "review", "date_range")
             agg = {e["entity"]: e for e in _aggregate_rules(root)}
             results = {"meta": 0, "rule_edits": 0, "deletes": 0, "rethink": 0,
                        "renames": [], "merges": [], "areas": None}
@@ -5717,6 +5974,10 @@ def main():
     p_viewer = sub.add_parser("generate-viewer")
     p_viewer.add_argument("--proposals", required=True, help="Path to proposals JSON file")
     p_viewer.add_argument("--port", type=int, default=5002, help="Local port (default 5002)")
+    p_viewer.add_argument("--no-open", action="store_true", dest="no_open",
+                          help="Run the localhost server but do not auto-open a browser (headless testing)")
+    p_viewer.add_argument("--static", action="store_true",
+                          help="Cowork-reachable fallback: write an editable static review file + pre-filled proposals_approved.json instead of starting the localhost server (auto-enabled when a Cowork/headless session is detected)")
 
     p_cleanup = sub.add_parser("cleanup")
     p_cleanup.add_argument("path", nargs="?", help="root path")
