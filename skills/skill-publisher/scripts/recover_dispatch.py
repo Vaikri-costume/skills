@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Recover skill-publisher's cold-audit dispatch result from a session JSONL after compaction.
 
-skill-publisher recovery rule 2 (`audit run-N`): when a ship run was interrupted
+skill-publisher recovery Rule A (`audit run-N`): when a ship run was interrupted
 after the Step-3 CCVW audit Agent was dispatched but before its result was
 recorded, the dispatch + its result live in the harness session JSONL. This script
 finds them so the orchestrator doesn't hand-parse raw JSONL by eye (error-prone,
@@ -14,7 +14,7 @@ agent's "launched" ack instead of its real result).
     each dispatching skill owns its copy and may diverge, because the dispatch
     SHAPE differs — skill-tracer recovers THREE trace directions
     (forward/backward/executor); skill-publisher recovers ONE audit dispatch.
-    Do NOT add this to check_vendored_sync.py. The shared, proven part is the
+    Do NOT add this to check_shared_sync.py. The shared, proven part is the
     scan core (most-recent-wins tool_use→tool_result pairing + the background-Agent
     task-notification edge case); only the description match + expected count are
     skill-specific. <<<
@@ -35,8 +35,15 @@ Pure-stdlib. The orchestrator still owns the JUDGMENT this script does NOT do:
 whether the recovered audit text is usable (vs re-dispatch). This script only
 LOCATES and PAIRS.
 
+Recovers EITHER single cold dispatch, selected by --kind:
+  - audit     (Step 3) — description "skill-creator-ccvw audit of <skill>"
+  - changelog (Step 7) — description "changelog proposal for <skill>"
+Both are single dispatches with a constant description; only the description pattern
+and the result label differ, so they share the scan core below.
+
 Usage:
-    recover_dispatch.py --skill <skill-name> [--project-dir <dir>] [--jsonl <path>]
+    recover_dispatch.py --skill <skill-name> [--kind audit|changelog] [--project-dir <dir>] [--jsonl <path>]
+        --kind defaults to audit.
         --project-dir defaults to $HOME/.claude/projects/<encoded-cwd> (encoded
         from the current working directory: '/'->'-', leading '-').
         --jsonl overrides auto-location (else newest *.jsonl in project-dir).
@@ -60,12 +67,16 @@ import re
 import sys
 from pathlib import Path
 
-DIRECTIONS = ("audit",)
-# SYNC CONTRACT: this pattern must match the audit Agent's `description` exactly as
-# set by the Step-3 dispatch (audit-prompt.md "Audit Agent dispatch parameters":
-# `description` = "skill-creator-ccvw audit of <skill>"). If that dispatch description
-# is ever reworded, recovery silently finds nothing — update both together.
-DESC_RE = re.compile(r"^skill-creator-ccvw\s+audit\s+of\s+(.+)$")
+# Two recoverable single cold dispatches, selected by --kind:
+#   audit     (Step 3) — description "skill-creator-ccvw audit of <skill>"  (audit-prompt.md)
+#   changelog (Step 7) — description "changelog proposal for <skill>"        (changelog-agent-prompt.md)
+# SYNC CONTRACT: each pattern must match its dispatch's `description` EXACTLY as set
+# by the dispatching step — if a dispatch description is reworded, recovery silently
+# finds nothing, so update the step and the pattern here together.
+KINDS = {
+    "audit": re.compile(r"^skill-creator-ccvw\s+audit\s+of\s+(.+)$"),
+    "changelog": re.compile(r"^changelog\s+proposal\s+for\s+(.+)$"),
+}
 
 
 def encoded_cwd() -> str:
@@ -78,7 +89,8 @@ def newest_jsonl(project_dir: Path) -> Path | None:
     return cands[0] if cands else None
 
 
-def recover(jsonl_path: Path, skill: str) -> dict:
+def recover(jsonl_path: Path, skill: str, label: str, desc_re: re.Pattern) -> dict:
+    directions = (label,)
     # most-recent-wins: overwrite as we scan top→bottom so the LAST match stays.
     found: dict[str, dict] = {}
     tuid_to_dir: dict[str, str] = {}
@@ -87,7 +99,7 @@ def recover(jsonl_path: Path, skill: str) -> dict:
     tasknotif_line: dict[str, int] = {}
     tasknotif_text: dict[str, str] = {}
 
-    with jsonl_path.open() as fh:
+    with jsonl_path.open(encoding="utf-8") as fh:
         for lineno, line in enumerate(fh, start=1):
             try:
                 obj = json.loads(line)
@@ -103,11 +115,24 @@ def recover(jsonl_path: Path, skill: str) -> dict:
                             continue
                         if block.get("type") == "tool_use" and block.get("name") in ("Agent", "Task"):
                             desc = (block.get("input") or {}).get("description", "") or ""
-                            m = DESC_RE.match(desc.strip())
+                            m = desc_re.match(desc.strip())
                             if m and m.group(1).strip() == skill:
-                                d = "audit"
+                                d = label
                                 tuid = block.get("id")
-                                # most-recent-wins: replace any earlier (discarded) dispatch
+                                # most-recent-wins: replace any earlier (discarded) dispatch.
+                                # Remove the OLD tuid so a late-arriving result for the
+                                # discarded dispatch cannot overwrite the retry's result —
+                                # AND drop any result/notification ALREADY recorded for the
+                                # discarded dispatch (keyed by direction `d`), so a retry
+                                # that has no result yet is reported as missing, not paired
+                                # with the discarded dispatch's stale result.
+                                if d in found:
+                                    old_tuid = found[d]["tuid"]
+                                    tuid_to_dir.pop(old_tuid, None)
+                                    result_line.pop(d, None)
+                                    result_text.pop(d, None)
+                                    tasknotif_line.pop(d, None)
+                                    tasknotif_text.pop(d, None)
                                 found[d] = {"tuid": tuid, "dispatch_line": lineno, "result_line": None}
                                 tuid_to_dir[tuid] = d
 
@@ -149,7 +174,7 @@ def recover(jsonl_path: Path, skill: str) -> dict:
     out_found = {}
     out_text = {}
     missing = []
-    for d in DIRECTIONS:
+    for d in directions:
         if d not in found:
             missing.append(d)
             continue
@@ -162,13 +187,15 @@ def recover(jsonl_path: Path, skill: str) -> dict:
             missing.append(d)  # dispatched but no result yet
         else:
             out_text[d] = tasknotif_text.get(d) or result_text.get(d, "")
-    missing = sorted(set(missing), key=lambda x: DIRECTIONS.index(x))
+    missing = sorted(set(missing), key=lambda x: directions.index(x))
     return {"jsonl": str(jsonl_path), "found": out_found, "missing": missing, "result_text": out_text}
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Recover skill-publisher cold audit dispatch from session JSONL")
-    ap.add_argument("--skill", required=True, help="audited skill name (matches 'skill-creator-ccvw audit of <skill>')")
+    ap = argparse.ArgumentParser(description="Recover a skill-publisher cold dispatch (audit or changelog) from session JSONL")
+    ap.add_argument("--skill", required=True, help="target skill name (matches the dispatch description's <skill>)")
+    ap.add_argument("--kind", choices=sorted(KINDS), default="audit",
+                    help="which dispatch to recover: 'audit' (Step 3) or 'changelog' (Step 7)")
     ap.add_argument("--project-dir", default=None, help="harness project dir (default: $HOME/.claude/projects/<encoded-cwd>)")
     ap.add_argument("--jsonl", default=None, help="explicit JSONL path (default: newest in project-dir)")
     args = ap.parse_args()
@@ -189,7 +216,7 @@ def main() -> int:
             print(f"ERROR: no *.jsonl in {pdir}", file=sys.stderr)
             return 2
 
-    result = recover(jsonl_path, args.skill)
+    result = recover(jsonl_path, args.skill, args.kind, KINDS[args.kind])
     print(json.dumps(result, indent=2))
     return 1 if result["missing"] else 0
 

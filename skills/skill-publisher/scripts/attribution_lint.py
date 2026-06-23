@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """CCVW attribution lint — static scan of a skill against the attribution-spec.
 
-VENDORED COPY — sync contract. Canonical source:
-  ~/.claude/skills/skill-creator-ccvw/scripts/attribution_lint.py
-A deliberate copy so skill-publisher runs standalone (without skill-creator-ccvw
-installed). MUST stay behaviorally in sync with the canonical source — this lint
-ENFORCES skill-creator-ccvw's attribution-spec, so a drifted copy would judge
-lineage against a different standard than the builder authored. Check drift:
-  diff ~/.claude/skills/skill-creator-ccvw/scripts/attribution_lint.py \\
-       ~/.claude/skills/skill-publisher/scripts/attribution_lint.py
-Re-copy from canonical when it changes. (Vendored 2026-05-30.)
+INDEPENDENT COPY — skill-publisher's own copy of a script skill-creator-ccvw also
+has, so the publisher runs standalone (without skill-creator-ccvw installed). The
+sync contract is RETIRED (2026-06-20): the two copies are no longer kept in sync
+and may freely diverge — edit this one for skill-publisher's needs without touching
+the other. (check_shared_sync.py remains only as a dormant manual drift-inspection
+tool; it is not run anywhere and nothing requires the copies to match.)
 
 Sibling to portability_lint.py:
 - portability_lint: tier portability (paths, Claude extensions, mandatory fields) — reads SKILL.md
@@ -412,10 +409,19 @@ def lint_see_also_advisory(skill_path, body, category):
     ]
 
     body_lower = body.lower()
-    references_section_idx = max(
-        body_lower.find("## references"),
-        body_lower.find("## see also"),
-    )
+    _ref_idx = body_lower.find("## references")
+    _see_idx = body_lower.find("## see also")
+    # Use the EARLIER section so both ## References and ## See also content is searched.
+    # max() would select the later section, causing false advisories when ## References
+    # appears before ## See also and the skill name is only in the earlier block.
+    if _ref_idx >= 0 and _see_idx >= 0:
+        references_section_idx = min(_ref_idx, _see_idx)
+    elif _ref_idx >= 0:
+        references_section_idx = _ref_idx
+    elif _see_idx >= 0:
+        references_section_idx = _see_idx
+    else:
+        references_section_idx = -1
     references_section = body[references_section_idx:] if references_section_idx >= 0 else ""
 
     # Determine the current skill's own name from its directory; exclude
@@ -452,13 +458,13 @@ def main():
         }, indent=2))
         sys.exit(1)
 
-    hist_fm, _ = parse_frontmatter(history_md.read_text())
+    hist_fm, _ = parse_frontmatter(history_md.read_text(encoding="utf-8"))
 
     # The see-also advisory check reads SKILL.md's body (References section is there).
     skill_md = skill_path / "SKILL.md"
     skill_body = ""
     if skill_md.is_file():
-        _, skill_body = parse_frontmatter(skill_md.read_text())
+        _, skill_body = parse_frontmatter(skill_md.read_text(encoding="utf-8"))
 
     category = infer_category(hist_fm)
     author_violations, primary_author = lint_author(hist_fm)
