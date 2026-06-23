@@ -1558,14 +1558,19 @@ def cmd_scan(args):
     unchanged = 0
     to_process = []  # (filepath, fsize, mtime) — files that genuinely need hashing
 
-    # Pass 1 (sequential): respect caps, trigger cloud downloads, and decide which
-    # files still need a fresh hash. Skip-rehash drops unchanged files here.
+    # Pass 1a (sequential SELECTION): respect caps + skip-rehash to decide which files
+    # this batch will process. No download/poll happens here — cloud-only files are only
+    # SELECTED now; their bytes are kicked + awaited together in the batched pre-trigger
+    # (Pass 1b) so the network waits overlap each other instead of running one file at a
+    # time. The cap uses the placeholder-reported size here; the real size/mtime is
+    # re-captured after materialisation.
+    selected = []  # (filepath, fsize, cur_mtime, placeholder)
     for priority in range(1, 7):
         if stopped_at_priority:
             break
         files = sorted(buckets[priority], key=lambda x: str(x[0]))
         for filepath, fsize, placeholder in files:
-            if len(to_process) >= file_limit:
+            if len(selected) >= file_limit:
                 stopped_at_priority = priority
                 break
             try:
@@ -1579,65 +1584,86 @@ def cmd_scan(args):
             if ex and ex[0] and ex[1] == fsize and ex[2] == cur_mtime:
                 unchanged += 1
                 continue  # unchanged + already registered — no work
-            # First-admission exception, scoped PER SCAN CALL (the `and to_process` guard):
+            # First-admission exception, scoped PER SCAN CALL (the `and selected` guard):
             # admit the FIRST file of this call even if it alone exceeds the GB cap — else a
             # single file larger than the cap is rejected on every scan and never processed
-            # (permanent stall). Once this call has admitted anything (`to_process` non-empty),
+            # (permanent stall). Once this call has admitted anything (`selected` non-empty),
             # the cap applies strictly. It is per-call, not per-file: a too-big file deferred
             # this call is re-considered (and again first-admitted) on the NEXT scan call.
-            if total_bytes + fsize > byte_limit and to_process:
+            if total_bytes + fsize > byte_limit and selected:
                 stopped_at_priority = priority
                 break
-
-            # Trigger download if cloud-only — open() forces OneDrive to materialise.
-            if placeholder:
-                try:
-                    with open(filepath, "rb") as f:
-                        f.read(1)
-                except OSError as e:
-                    print(f"  skip {filepath}: download failed: {e}", file=sys.stderr)
-                    skipped += 1
-                    continue
-                # Poll until the file materialises (or times out) instead of a
-                # single fixed 0.5s check — a file slower than one tick used to be
-                # skipped and deferred to a future scan, forcing extra passes.
-                if _is_placeholder(filepath):
-                    _wstart = time.monotonic()
-                    waited = 0.0
-                    while _is_placeholder(filepath) and waited < DOWNLOAD_POLL_TIMEOUT:
-                        time.sleep(DOWNLOAD_POLL_INTERVAL)
-                        waited += DOWNLOAD_POLL_INTERVAL
-                    t_download += time.monotonic() - _wstart
-
-                # Never hash a partially-downloaded file. Confirm it is (a) no longer
-                # dataless AND (b) byte-stable across two reads — a still-streaming
-                # OneDrive file can clear the dataless flag while its size is still
-                # climbing. If unconfirmed, defer to a future scan rather than commit
-                # a hash of partial bytes.
-                if _is_placeholder(filepath):
-                    print(f"  skip {filepath}: still online-only after {DOWNLOAD_POLL_TIMEOUT:.0f}s", file=sys.stderr)
-                    skipped += 1
-                    continue
-                try:
-                    s1 = filepath.stat()
-                    time.sleep(DOWNLOAD_POLL_INTERVAL)
-                    s2 = filepath.stat()
-                except OSError as e:
-                    print(f"  skip {filepath}: vanished during materialise check: {e}", file=sys.stderr)
-                    skipped += 1
-                    continue
-                if _is_placeholder(filepath) or s1.st_size != s2.st_size:
-                    print(f"  skip {filepath}: not fully materialised (size unstable), deferring", file=sys.stderr)
-                    skipped += 1
-                    continue
-                # Re-capture size/mtime now that the real bytes are present — the
-                # placeholder-reported values may differ from the materialised file.
-                fsize = s2.st_size
-                cur_mtime = s2.st_mtime_ns
-                triggered_count += 1
-
-            to_process.append((filepath, fsize, cur_mtime))
+            selected.append((filepath, fsize, cur_mtime, placeholder))
             total_bytes += fsize
+
+    # Pass 1b (BATCHED cloud pre-trigger): kick EVERY selected cloud-only placeholder's
+    # download up front (open+read(1) forces OneDrive/File-Provider to start materialising),
+    # then poll the whole set once — so N downloads proceed concurrently (and overlap the
+    # hashing in Pass 2) instead of the old one-file-at-a-time trigger→poll that serialised
+    # every network wait. Tunable via DRIVE_ORG_DL_TIMEOUT.
+    to_process = []           # (filepath, fsize, cur_mtime) — files ready to hash
+    pending_dl = []           # placeholders we kicked and still need to confirm materialised
+    for filepath, fsize, cur_mtime, placeholder in selected:
+        if not placeholder:
+            to_process.append((filepath, fsize, cur_mtime))
+            continue
+        # Trigger download — open() forces materialisation; do NOT wait here.
+        try:
+            with open(filepath, "rb") as f:
+                f.read(1)
+        except OSError as e:
+            print(f"  skip {filepath}: download failed: {e}", file=sys.stderr)
+            skipped += 1
+            continue
+        pending_dl.append(filepath)
+
+    if pending_dl:
+        # Single batch poll: one wall-clock wait for the WHOLE set to clear the
+        # placeholder marker (instead of a per-file poll). A file slower than one tick
+        # is no longer deferred to a future scan — but a still-online-only file after
+        # the timeout is.
+        _wstart = time.monotonic()
+        waited = 0.0
+        remaining = [p for p in pending_dl if _is_placeholder(p)]
+        while remaining and waited < DOWNLOAD_POLL_TIMEOUT:
+            time.sleep(DOWNLOAD_POLL_INTERVAL)
+            waited += DOWNLOAD_POLL_INTERVAL
+            remaining = [p for p in remaining if _is_placeholder(p)]
+        t_download += time.monotonic() - _wstart
+
+        # Batched stability check: stat the whole set, sleep ONCE, stat again — so the
+        # byte-stable confirmation also runs as a single wait, not one interval per file.
+        # Never hash a partially-downloaded file: a still-streaming file can clear the
+        # dataless flag while its size is still climbing, so confirm (a) no longer
+        # dataless AND (b) byte-stable across the two reads; otherwise defer.
+        first_stat = {}
+        for filepath in pending_dl:
+            if _is_placeholder(filepath):
+                print(f"  skip {filepath}: still online-only after {DOWNLOAD_POLL_TIMEOUT:.0f}s", file=sys.stderr)
+                skipped += 1
+                continue
+            try:
+                first_stat[filepath] = filepath.stat()
+            except OSError as e:
+                print(f"  skip {filepath}: vanished during materialise check: {e}", file=sys.stderr)
+                skipped += 1
+        if first_stat:
+            time.sleep(DOWNLOAD_POLL_INTERVAL)
+        for filepath, s1 in first_stat.items():
+            try:
+                s2 = filepath.stat()
+            except OSError as e:
+                print(f"  skip {filepath}: vanished during materialise check: {e}", file=sys.stderr)
+                skipped += 1
+                continue
+            if _is_placeholder(filepath) or s1.st_size != s2.st_size:
+                print(f"  skip {filepath}: not fully materialised (size unstable), deferring", file=sys.stderr)
+                skipped += 1
+                continue
+            # Re-capture size/mtime now that the real bytes are present — the
+            # placeholder-reported values may differ from the materialised file.
+            triggered_count += 1
+            to_process.append((filepath, s2.st_size, s2.st_mtime_ns))
 
     # Pass 2 (parallel): hash + content-peek the selected files concurrently. Hashing
     # is I/O-bound, so a small thread pool overlaps reads (flagged in Phase 4C).
@@ -3495,6 +3521,92 @@ class _SilentHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
 
+def _cowork_or_headless() -> bool:
+    """True when the localhost browser viewer cannot be reached — a Cowork/remote
+    session or an explicitly-headless run. The localhost HTTP viewer (port 5002/5003)
+    is unreachable from Cowork (the user's browser is not on this host), so scan should
+    fall back to the static review file instead of starting a server nobody can open.
+    Signalled by DRIVE_ORG_HEADLESS=1, or any Cowork environment marker."""
+    if os.environ.get("DRIVE_ORG_HEADLESS", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    return any(os.environ.get(v) for v in ("CLAUDE_COWORK", "COWORK", "CLAUDE_CODE_COWORK"))
+
+
+def _emit_static_review(proposals: list) -> Path:
+    """Cowork-reachable fallback for the localhost viewer: write a self-contained,
+    editable HTML review file (no server, no localhost POST) PLUS a pre-filled
+    proposals_approved.json (every file defaulted to 'approved' at its proposed
+    destination). The user reviews/edits in the HTML and clicks Download to produce an
+    updated approved.json, OR edits the pre-filled JSON directly, then runs
+    process-return. Returns the HTML path. The approved entry schema matches what the
+    browser viewer POSTs (id / current_path / para_subfolder / new_filename / action),
+    so the downstream consumer is identical — only the transport differs."""
+    out_dir = APPROVED_JSON_PATH.parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pre-fill proposals_approved.json (all approved) so "accept everything" needs no
+    # browser at all — the user can run process-return immediately, or edit first.
+    prefilled = []
+    for p in proposals:
+        prefilled.append({
+            "id": p.get("id"),
+            "current_path": p.get("current_path") or p.get("original_path"),
+            "para_subfolder": p.get("para_subfolder", ""),
+            "new_filename": p.get("new_filename") or p.get("filename"),
+            "action": "approved",
+            "file_date": p.get("file_date"),
+            "vision_desc": p.get("vision_desc"),
+        })
+    _atomic_write(APPROVED_JSON_PATH, json.dumps(prefilled, indent=2))
+
+    # Self-contained editable HTML — the Download button builds the same
+    # {approved, flagged, skipped} payload the localhost viewer POSTs, as a client-side
+    # Blob the user saves over proposals_approved.json. No network, so it works wherever
+    # the file can be opened (Cowork file preview, a copied-out browser, etc.).
+    review_html = out_dir / "proposals_review.html"
+    rows = json.dumps(proposals)
+    appr_path_js = json.dumps(str(APPROVED_JSON_PATH))
+    html = """<!doctype html><meta charset="utf-8"><title>Drive Organizer — static review</title>
+<style>body{font:14px system-ui,sans-serif;margin:1.5rem;max-width:1100px}
+table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:4px 6px;vertical-align:top}
+th{background:#f3f3f3;text-align:left}select,input{font:inherit;width:100%;box-sizing:border-box}
+.path{color:#555;font-size:12px;word-break:break-all}button{font:inherit;padding:.5rem 1rem;margin:.5rem 0}
+.hint{background:#fffbe6;border:1px solid #e6d27a;padding:.6rem .8rem;border-radius:4px}</style>
+<h2>Drive Organizer — static review (Cowork / headless)</h2>
+<div class="hint">The localhost viewer is unreachable here. Review below, then <b>Download approved.json</b>
+and save it over:<br><code id="ap"></code><br>then run <code>process-return</code>.
+A pre-filled <code>proposals_approved.json</code> (everything approved) was already written there —
+if you just want to accept all, skip this file and run <code>process-return</code> now.</div>
+<button onclick="dl()">⬇ Download approved.json</button>
+<table id="t"><thead><tr><th>#</th><th>File</th><th>Action</th><th>Destination</th><th>New filename</th><th>Why</th></tr></thead><tbody></tbody></table>
+<script>
+const P=__ROWS__, AP=__AP__;document.getElementById('ap').textContent=AP;
+const tb=document.querySelector('#t tbody');
+P.forEach((p,i)=>{const tr=document.createElement('tr');
+const cp=p.current_path||p.original_path||'';
+tr.innerHTML=`<td>${i+1}</td><td class=path>${cp.replace(/</g,'&lt;')}</td>
+<td><select data-i=${i} class=act><option value=approved selected>approve</option>
+<option value=rejected>reject</option><option value=inbox>inbox</option>
+<option value=flagged>flag</option><option value=skip>skip</option></select></td>
+<td><input data-i=${i} class=dest value="${(p.para_subfolder||'').replace(/"/g,'&quot;')}"></td>
+<td><input data-i=${i} class=fn value="${(p.new_filename||p.filename||'').replace(/"/g,'&quot;')}"></td>
+<td>${(p.reason||'').replace(/</g,'&lt;')}</td>`;tb.appendChild(tr);});
+function dl(){const approved=[],flagged=[],skipped=[];
+P.forEach((p,i)=>{const act=document.querySelector(`.act[data-i="${i}"]`).value;
+const dest=document.querySelector(`.dest[data-i="${i}"]`).value;
+const fn=document.querySelector(`.fn[data-i="${i}"]`).value;
+if(act==='flagged'){flagged.push(p.id);return;}
+if(act==='skip'){skipped.push(p.id);return;}
+approved.push({id:p.id,current_path:p.current_path||p.original_path,para_subfolder:dest,
+new_filename:fn,action:act,file_date:p.file_date,vision_desc:p.vision_desc});});
+const blob=new Blob([JSON.stringify({approved,flagged,skipped},null,2)],{type:'application/json'});
+const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='proposals_approved.json';a.click();}
+</script>"""
+    html = html.replace("__ROWS__", rows).replace("__AP__", appr_path_js)
+    _atomic_write(review_html, html)
+    return review_html
+
+
 def cmd_generate_viewer(args):
     proposals_path = Path(args.proposals)
     if not proposals_path.exists():
@@ -3508,6 +3620,18 @@ def cmd_generate_viewer(args):
 
     # Bubble-sort by destination so files going to the same leaf appear together
     proposals = _bubble_sort_proposals(proposals)
+
+    # Cowork-reachable fallback: if asked for --static, or a Cowork/headless session is
+    # detected, emit a static editable review file instead of a localhost server nobody
+    # on this host can open.
+    if getattr(args, "static", False) or _cowork_or_headless():
+        review_html = _emit_static_review(proposals)
+        print("Static review mode (localhost viewer not reachable here).")
+        print(f"  Review + edit:        {review_html}")
+        print(f"  Pre-filled approvals: {APPROVED_JSON_PATH}  ({len(proposals)} files, all 'approved')")
+        print("  Edit in the HTML and Download, or edit the JSON directly, then run process-return.")
+        print("  (To force the localhost server instead, re-run without --static and unset DRIVE_ORG_HEADLESS.)")
+        return
 
     port = int(args.port) if args.port else 5002
 
@@ -3604,7 +3728,8 @@ def cmd_generate_viewer(args):
     print(f"Approved output will be written to: {APPROVED_JSON_PATH}")
     print("Press Ctrl+C to stop.")
 
-    webbrowser.open(url)
+    if not getattr(args, "no_open", False):
+        webbrowser.open(url)
 
     try:
         shutdown_event.wait()
@@ -5717,6 +5842,10 @@ def main():
     p_viewer = sub.add_parser("generate-viewer")
     p_viewer.add_argument("--proposals", required=True, help="Path to proposals JSON file")
     p_viewer.add_argument("--port", type=int, default=5002, help="Local port (default 5002)")
+    p_viewer.add_argument("--no-open", action="store_true", dest="no_open",
+                          help="Run the localhost server but do not auto-open a browser (headless testing)")
+    p_viewer.add_argument("--static", action="store_true",
+                          help="Cowork-reachable fallback: write an editable static review file + pre-filled proposals_approved.json instead of starting the localhost server (auto-enabled when a Cowork/headless session is detected)")
 
     p_cleanup = sub.add_parser("cleanup")
     p_cleanup.add_argument("path", nargs="?", help="root path")
