@@ -2,6 +2,9 @@
 version: "2.6.1"
 category: C
 parent-version: "2.6.0"
+version: "2.7.0"
+category: C
+parent-version: "2.6.1"
 author:
   primary: "Vaikri-costume"
   history:
@@ -23,6 +26,21 @@ inspirations:
 # History — drive-organizer
 
 ## Changelog
+
+### 2.7.0 — 2026-06-24
+
+#### Added
+- **rules-viewer Settings panel (Phase 3 — the configurability gating feature).** A collapsible
+  **⚙ Settings** panel is now embedded in the rules-viewer (`rules-viewer`, port 5003). It reads the
+  current effective config via a new `_settings_for_viewer()` helper (defaults applied; legacy
+  top-level `vision` normalised into `model_capabilities`) and writes back via `_write_user_config()`,
+  which atomically merges changes into `<root>/.organizer/config.json` while preserving unrelated keys
+  (`areas`, `root`, `profile`). Editable settings: `peek` (read file contents), `vision` (see images),
+  `auto_approve` (W1 fast-path auto-approval), `skip_types` (normalised to a deduped sorted `.ext`
+  list), `skip_over_mb` (cleared when blank). "Save settings" POSTs to a new `/config` route — entirely
+  separate from `/save` and `/apply` — so settings changes never touch the rule set and vice-versa. The
+  GET payload now carries a `settings` object the panel renders on load. This panel is the designated
+  single settings surface: every future toggle/dial wires in here.
 
 ### 2.6.1 — 2026-06-24
 

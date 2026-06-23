@@ -362,6 +362,70 @@ def _read_user_config(root: "Path | None" = None) -> dict:
         return {}
 
 
+# Settings the rules-viewer Settings panel exposes (Phase 3 gating feature). v1 covers the
+# keys that are ALREADY config-backed; each later elevation item adds its control here, per
+# the standing rule "no new config/property ships without its control wired into this panel".
+def _settings_for_viewer(root: "Path | None" = None) -> dict:
+    """Current effective values of the user-editable config keys, with defaults applied —
+    the shape the Settings panel renders and POSTs back. Reads <root>/.organizer/config.json
+    via _read_user_config (never raises)."""
+    cfg = _read_user_config(root)
+    caps = cfg.get("model_capabilities")
+    if isinstance(caps, dict):
+        peek = bool(caps.get("peek", True))
+        vision = bool(caps.get("vision", cfg.get("vision", True)))
+    else:
+        peek = True
+        vision = bool(cfg.get("vision", True))  # legacy top-level `vision`
+    return {
+        "peek": peek,
+        "vision": vision,
+        "auto_approve": bool(cfg.get("auto_approve", False)),
+        "skip_types": list(cfg.get("skip_types", []) or []),
+        "skip_over_mb": cfg.get("skip_over_mb"),  # number or null
+    }
+
+
+def _write_user_config(updates: dict, root: "Path | None" = None) -> dict:
+    """Merge `updates` (the Settings-panel shape from _settings_for_viewer) into
+    <root>/.organizer/config.json, atomically, preserving every other key already in the
+    file (e.g. `areas`, `root`, `profile`). Normalises into the canonical config shape the
+    rest of the backend reads: capabilities under `model_capabilities`, the rest top-level.
+    Returns the new effective settings. Raises only on an unwritable config dir."""
+    root = root or _EFFECTIVE_ROOT
+    if not root:
+        raise RuntimeError("no active drive root — run `status` to set one before saving settings")
+    cfg_path = Path(root) / ".organizer" / "config.json"
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cur = _read_user_config(root)  # {} if absent/unparseable
+    caps = dict(cur.get("model_capabilities") or {})
+    if "peek" in updates:
+        caps["peek"] = bool(updates["peek"])
+    if "vision" in updates:
+        caps["vision"] = bool(updates["vision"])
+        cur.pop("vision", None)  # collapse the legacy top-level `vision` into model_capabilities
+    if caps:
+        cur["model_capabilities"] = caps
+    if "auto_approve" in updates:
+        cur["auto_approve"] = bool(updates["auto_approve"])
+    if "skip_types" in updates:
+        # accept a list or a comma string; normalise to a deduped sorted list of '.ext'
+        raw = updates["skip_types"]
+        if isinstance(raw, str):
+            raw = [t for t in raw.split(",")]
+        exts = sorted({(t.strip().lower() if t.strip().startswith(".") else "." + t.strip().lower())
+                       for t in (raw or []) if t and t.strip()})
+        cur["skip_types"] = exts
+    if "skip_over_mb" in updates:
+        v = updates["skip_over_mb"]
+        if v in (None, "", 0, "0"):
+            cur.pop("skip_over_mb", None)
+        else:
+            cur["skip_over_mb"] = float(v) if not float(v).is_integer() else int(float(v))
+    _atomic_write(cfg_path, json.dumps(cur, ensure_ascii=False, indent=2))
+    return _settings_for_viewer(root)
+
+
 _TEMPLATES_CACHE = None
 
 def _load_templates() -> dict:
@@ -568,9 +632,11 @@ def _project_metadata(project_path: Path) -> dict:
 def _enumerate_project_metadata(root: Path) -> list:
     """
     Walk top-level project folders under root and collect their metadata.
-    Returns list of {path (relative), filename_tag, date_range} entries
-    for every folder whose .tidy-rules.json carries a filename_tag.
-    Used by propose to surface candidate matches by date for loose bills.
+    Returns list of {path (relative), filename_tag?, date_range?} entries for every folder
+    whose .tidy-rules.json carries a filename_tag **OR a date_range** (Phase-3 generalisation:
+    date-first routing is no longer projects-only — an area, an event folder, a course-term or
+    tax-year folder can carry a date_range and route dated files by date even with no
+    filename_tag). Used by propose to surface candidate matches by date for loose bills/photos.
     """
     out = []
     # The walk is unrolled to EXACTLY three levels on purpose — it mirrors the
@@ -598,7 +664,7 @@ def _enumerate_project_metadata(root: Path) -> list:
             continue
         # Direct-level project (legacy flat)
         meta = _project_metadata(top)
-        if meta.get("filename_tag"):
+        if meta.get("filename_tag") or meta.get("date_range"):
             out.append({"path": top.name, **meta})
         # Two-level (new nested: WORK/COMPANY/PROJECT, PERSONAL/PERSONAL X)
         try:
@@ -608,7 +674,7 @@ def _enumerate_project_metadata(root: Path) -> list:
                 if _is_external(mid):
                     continue
                 meta_mid = _project_metadata(mid)
-                if meta_mid.get("filename_tag"):
+                if meta_mid.get("filename_tag") or meta_mid.get("date_range"):
                     out.append({"path": f"{top.name}/{mid.name}", **meta_mid})
                 # Three-level (e.g. WORK/ACME/ACME Project Alpha/)
                 try:
@@ -618,7 +684,7 @@ def _enumerate_project_metadata(root: Path) -> list:
                         if _is_external(deep):
                             continue
                         meta_deep = _project_metadata(deep)
-                        if meta_deep.get("filename_tag"):
+                        if meta_deep.get("filename_tag") or meta_deep.get("date_range"):
                             out.append({"path": f"{top.name}/{mid.name}/{deep.name}", **meta_deep})
                 except (PermissionError, OSError):
                     pass
@@ -4362,7 +4428,10 @@ def cmd_csv_export(args):
 def _read_entities(root: "Path | None" = None) -> dict:
     """Per-drive entity metadata at <root>/.organizer/entities.json. Optional;
     absent => today's behaviour. Maps entity name -> {entity_type, locked,
-    aliases, relation, policy, notes}. Never raises."""
+    aliases, relation, policy, notes, date_range?}. `date_range` (a
+    {"start","end"} ISO-date dict, Phase-3) lets ANY entity — not just project
+    folders — route loose dated files (bills/statements/photos) to it by date.
+    All keys pass through unfiltered. Never raises."""
     root = root or _EFFECTIVE_ROOT
     if not root:
         return {}
@@ -5148,6 +5217,23 @@ _RULES_VIEWER_HTML = r"""<!DOCTYPE html>
    <b>notes</b> — anything else worth recording about the rule.
   </div>
  </details>
+ <details class="legend" id="settingspanel"><summary>⚙ Settings</summary>
+  <div class="legendbody">
+   <div class="meta" style="grid-template-columns:auto 1fr;max-width:560px">
+    <label title="Let classification agents open file CONTENTS (text/PDF). Off → classify from the pre-extracted snippet + name/path/rules only.">peek (read file contents)</label>
+    <span><input type="checkbox" id="set_peek" style="width:auto"></span>
+    <label title="Let classification agents SEE images. Off → route images by name/path/rules + EXIF date.">vision (see images)</label>
+    <span><input type="checkbox" id="set_vision" style="width:auto"></span>
+    <label title="Mark deterministic W1 fast-path matches auto_approved so you may skip the viewer for them (still audited in auto-routed.csv). Default off.">auto-approve W1 fast-path</label>
+    <span><input type="checkbox" id="set_autoapprove" style="width:auto"></span>
+    <label title="Never open these extensions — route by name/path/rules only. Comma-separated, e.g. .mov, .raw">skip file types</label>
+    <input id="set_skiptypes" placeholder=".mov, .raw">
+    <label title="Never open files larger than this many MB — route by name/path/rules only. Blank = no cap.">skip files over (MB)</label>
+    <input id="set_skipmb" type="number" min="0" step="1" placeholder="(no cap)">
+   </div>
+   <div class="row"><button class="btn sm" onclick="saveSettings()">Save settings</button><span id="set_out" style="font-size:12px;color:var(--ok)"></span></div>
+  </div>
+ </details>
 </header>
 <div id="bulkbar" class="bulkbar" style="display:none">
  <span id="bulkn" class="pill">0 selected</span>
@@ -5210,6 +5296,7 @@ function card(e){
    <label title="How this entity relates to you or to another entity (free text).">relation</label><input value="${esc(e.relation||'')}" placeholder="e.g. collaborator, client, partner, employer" onchange="metaEdit('${jsq(e.entity)}','relation',this.value)">
    <label title="A routing behaviour for this entity's files (optional). Distinct from the 'policy' type: this is the specific rule.">behaviour</label><input value="${esc(e.policy||'')}" placeholder="e.g. event-group (group photos by date/event)" onchange="metaEdit('${jsq(e.entity)}','policy',this.value)">
    <label title="Free notes — what this rule is for, or why it exists.">notes</label><input value="${esc(e.notes||'')}" placeholder="free notes, e.g. 'primary contact for Project X'" onchange="metaEdit('${jsq(e.entity)}','notes',this.value)">
+   <label title="Date range this entity's dated files fall in (optional). Routes loose dated files (bills, statements, photos) to this entity by date — generalised off projects-only. Leave both blank to clear.">date range</label><span style="display:flex;gap:4px"><input type="date" value="${esc((e.date_range||{}).start||'')}" onchange="drEdit('${jsq(e.entity)}','start',this.value)"><input type="date" value="${esc((e.date_range||{}).end||'')}" onchange="drEdit('${jsq(e.entity)}','end',this.value)"></span>
   </div>
   ${occ}
   ${conf.length?`<div class="conflict">⚠ overlaps: ${conf.map(c=>esc(c.with)+' ['+c.shared.join(',')+']').join('; ')}</div>`:''}
@@ -5238,9 +5325,41 @@ function render(){
      p.innerHTML=`<button class="btn sm ghost" onclick="flip('${t}',-1)">‹</button><span>page ${pages[t]+1}/${Math.ceil(ents.length/PAGE)}</span><button class="btn sm ghost" onclick="flip('${t}',1)">›</button>`;main.appendChild(p);}
  }
  renderBulk();markDirty();
+ renderSettings();
+}
+function renderSettings(){
+ const s=DATA.settings||{};
+ document.getElementById('set_peek').checked = s.peek!==false;
+ document.getElementById('set_vision').checked = s.vision!==false;
+ document.getElementById('set_autoapprove').checked = !!s.auto_approve;
+ document.getElementById('set_skiptypes').value = (s.skip_types||[]).join(', ');
+ document.getElementById('set_skipmb').value = (s.skip_over_mb==null?'':s.skip_over_mb);
+}
+function saveSettings(){
+ const out=document.getElementById('set_out'); out.textContent='saving…';
+ const mb=document.getElementById('set_skipmb').value.trim();
+ const settings={
+   peek: document.getElementById('set_peek').checked,
+   vision: document.getElementById('set_vision').checked,
+   auto_approve: document.getElementById('set_autoapprove').checked,
+   skip_types: document.getElementById('set_skiptypes').value,
+   skip_over_mb: mb===''?null:Number(mb),
+ };
+ fetch('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings})})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok){DATA.settings=d.settings;renderSettings();out.textContent='saved ✓';setTimeout(()=>out.textContent='',2500);}
+    else{out.style.color='var(--bad)';out.textContent='error: '+(d.error||'failed');}
+  }).catch(e=>{out.style.color='var(--bad)';out.textContent='error: '+e;});
 }
 function flip(t,d){const m=byType();const n=Math.ceil(Math.min(m[t].length,CAP)/PAGE);pages[t]=Math.max(0,Math.min(n-1,pages[t]+d));render();}
 function metaEdit(e,k,v){changes.entities[e]=changes.entities[e]||{};changes.entities[e][k]=v;markDirty();}
+function drEdit(ent,which,val){
+ const cur=(changes.entities[ent]&&changes.entities[ent].date_range)||((DATA.entities.find(x=>x.entity===ent)||{}).date_range)||{};
+ const dr={start:cur.start||'',end:cur.end||''}; dr[which]=val;
+ changes.entities[ent]=changes.entities[ent]||{};
+ changes.entities[ent].date_range=(dr.start||dr.end)?{start:dr.start,end:dr.end}:null;
+ markDirty();
+}
 function signalEdit(e,v){changes.rule_edits[e]={entity:e,description:v};markDirty();}
 function delEntity(e){if(confirm('Delete the routing rule for "'+e+'" everywhere? (files/folders are NOT deleted)')){changes.deletes[e]=true;markDirty();render();}}
 function rethinkEntity(e){changes.rethink[e]=true;markDirty();render();}
@@ -5338,6 +5457,7 @@ class _RulesHandler(BaseHTTPRequestHandler):
             "coverage_gaps": _coverage_gaps(root, dest_set),
             "cluster_order": _CLUSTER_ORDER,
             "cluster_label": _CLUSTER_LABEL,
+            "settings": _settings_for_viewer(root),
         }
         data_js = json.dumps(payload).replace("</", "<\\/")
         html = _RULES_VIEWER_HTML.replace("__DATA__", data_js)
@@ -5357,6 +5477,18 @@ class _RulesHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._send(400, {"error": "bad json"}); return
         root = self.__class__._root
+
+        if self.path == "/config":
+            # Settings panel: merge the submitted user-editable config keys into
+            # <root>/.organizer/config.json and return the new effective settings. Separate
+            # from /save and /apply (which handle rule/entity edits) so saving settings never
+            # touches the rule set and vice-versa.
+            try:
+                new_settings = _write_user_config(payload.get("settings") or {}, root)
+            except Exception as e:
+                self._send(500, {"error": f"could not write settings: {e}"}); return
+            self._send(200, {"ok": True, "settings": new_settings})
+            return
 
         if self.path == "/test":
             # test-a-file: run the W1 matcher on a pasted filename (read-only)
@@ -5379,7 +5511,7 @@ class _RulesHandler(BaseHTTPRequestHandler):
 
         if self.path in ("/save", "/apply"):
             keepalive = (self.path == "/apply") or bool(payload.get("keepalive"))
-            META_KEYS = ("entity_type", "locked", "aliases", "relation", "policy", "notes", "review")
+            META_KEYS = ("entity_type", "locked", "aliases", "relation", "policy", "notes", "review", "date_range")
             agg = {e["entity"]: e for e in _aggregate_rules(root)}
             results = {"meta": 0, "rule_edits": 0, "deletes": 0, "rethink": 0,
                        "renames": [], "merges": [], "areas": None}

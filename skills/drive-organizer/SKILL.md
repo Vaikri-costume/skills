@@ -214,7 +214,7 @@ If the script exits with `Error: root path not found: <path>`, confirm the path 
 
 ### propose
 
-Beyond emitting the raw file records JSON, `propose` writes a sidecar at `~/.claude/drive-organizer/project_metadata.json` listing every project on disk that carries a `filename_tag` in its `.tidy-rules.json`, with that project's `date_range`. Load this sidecar at the start of every classification pass — it's how the cascading Q routes loose bills/invoices to the right project by date.
+Beyond emitting the raw file records JSON, `propose` writes a sidecar at `~/.claude/drive-organizer/project_metadata.json` listing every **folder** on disk that carries a `filename_tag` **or a `date_range`** in its `.tidy-rules.json` (date-first routing is no longer projects-only — an area, an event folder, a course-term or tax-year folder can carry a `date_range`), with that folder's `date_range`. Load this sidecar at the start of every classification pass — it's how the cascading Q routes loose dated files (bills/invoices/statements/photos) to the right destination by date. **Entities can also carry a `date_range`** (in `entities.json`): a file whose date falls in an entity's range routes to that entity's folder, exactly like a folder date_range — see `references/classify-prompt.md`.
 
 ```bash
 python3 ~/.claude/drive-organizer/organizer.py propose --limit 250
@@ -408,6 +408,7 @@ Three commands operate on the *rules* (not files), all reading the aggregated vi
 
 - **`rules`** — clustered one-line-per-entity summary (Areas / Projects / People / Subfolders / Policies / Atomic / Unknown). `rules --json` feeds the viewer.
 - **`rules-viewer`** (`--port 5003`) — browser editor: clustered cards (250/session, 25/page), per-entity type/aliases/relation/behaviour/notes + signal, usage stats, dead-rule flag, why-routed, conflict warnings, test-a-file, coverage gaps, full CRUD + rename/merge/bulk, **rethink** (flag for re-inference, ≠ delete), area add/rename/remove, level-promotion dry-run, **Apply (keep open)** / **Preview** (per-change undo) / **Save & close**. Adapts to light/dark.
+  - **⚙ Settings panel** — a collapsible panel that reads/writes the per-drive `<root>/.organizer/config.json` settings: `peek` / `vision` (model_capabilities), `auto_approve`, `skip_types`, `skip_over_mb`. "Save settings" POSTs to a separate `/config` endpoint — independent of the rule-edit Save/Apply, so changing settings never touches the rule set. This panel is the single settings surface: any new toggle/dial added later is wired in here too.
 - **`bootstrap`** — reverse-engineer rules from an existing tree, for a new or partly-organised drive.
 
 ### bootstrap (setup walkthrough)
