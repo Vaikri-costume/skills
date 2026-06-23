@@ -52,3 +52,33 @@ learning loop has run, most `_Inbox/` files should find a home. You are read-onl
 ]
 ```
 Every input `id` appears exactly once. `verdict` is **exactly one of** `confirm_inbox` / `reroute_high` / `reroute_low` — a closed set; emit no other value. Do not emit `para_category`. Verdicts only.
+
+---
+
+## When + how the orchestrator runs the sweep (SKILL.md's `propose` points here)
+
+`_Inbox/` is where files with no fit land. Because the rule set grows as you organise, files
+inboxed earlier often become placeable later. **When the registry's `_Inbox/` population reaches
+~100 files** (check `organizer.py inbox-list` → `count`), run a reclamation sweep over **all** of
+them (not just this round's). The `~100` is a soft batching guideline, not a hard gate: the sweep is
+correct at any count — `~100` simply amortizes dispatch into ~4 parallel arbiters of 25. Re-judging
+files a prior sweep returned `confirm_inbox` is **intentional**: `confirm_inbox` means "unplaceable
+under the rules that existed *then*", and the rule set has grown since — re-judging is how such a
+file gets placed once a fitting rule exists, so the sweep carries no "already-arbitrated" marker that
+would freeze a file in `_Inbox/` forever.
+
+- Get the list: `organizer.py inbox-list` → `{count, files:[{id, filename, current_path}]}`. (`count`
+  is the number of files already **executed** into `_Inbox/` — rows with `status='organized'` and a
+  `_Inbox` path; files merely classified-to-`_Inbox` this round but not yet executed don't count.)
+  Fill the arbiter batch directly from those records into `[INBOX_BATCH_JSON]` — `inbox-list` emits
+  exactly the fields this template expects. Split `files` into batches of ≤25 (so ~4 arbiters at 100)
+  and dispatch one arbiter per batch **in parallel**, each filled from this template — including its
+  `[CAPABILITIES]` slot, filled from propose's `Model capabilities: peek=… vision=…` stderr line
+  exactly as the classify fan-out does, so arbiters under a no-vision / no-peek model degrade the same
+  way (route by name/path + EXIF, never open files they can't).
+- Each arbiter re-judges its files against the *current* taxonomy and returns the verdict object above.
+- Apply: `confirm_inbox` → leave in `_Inbox/`; `reroute_high` → build an approved entry
+  (`para_subfolder` = the new destination; `new_filename` = the arbiter's clean name when it returned
+  one, else omit so execute keeps the current filename) and `execute` it directly; `reroute_low` →
+  add it to the next `proposals_classified.json` so it surfaces in the **viewer** for the user to
+  confirm — never moved silently. Re-run `inbox-list` after to confirm the count dropped.
