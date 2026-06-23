@@ -4,6 +4,8 @@
 
 Drive Organizer sorts the files on a drive — cloud-synced (OneDrive, iCloud, Dropbox, Google Drive), external, or local — into a nested folder structure of top-level groupings (by default ENTERTAINMENT, PERSONAL, WORK, EDUCATION, RESOURCES — the set is user-configurable) that *you* define and that the skill *learns* from your corrections over time. It reads file content (and images, via vision) to decide where each file belongs, proposes a destination + a clean filename for every file, and lets you approve or correct them in a browser before anything moves. A Python backend keeps a SQLite registry (mirrored to a human-readable CSV) so nothing is ever lost and duplicates are caught across batches.
 
+![The browser proposal-review viewer — grouped destinations, inline-editable folder and filename fields, and per-row approve / reject / flag / inbox / delete actions.](assets/viewer.png)
+
 Concrete use cases:
 
 - **Rolling batch organise** — trigger: "organise my drive" / `/drive-organizer` → steps: scan a 250-file/20GB batch, classify each file via the cascading-Q model, review proposals in the browser viewer, execute the approved moves, clean up empty folders, repeat → result: an inbox-zero drive sorted into your taxonomy.
@@ -39,8 +41,9 @@ It deliberately prioritises, and a fix that trades any of these away should be s
 
 ## How to invoke
 
-- Slash command: `/drive-organizer` (no subcommand = backend check + status + scan), or a subcommand: `status`, `scan`, `propose`, `generate-viewer`, `process-return`, `execute`, `cleanup`, `reconcile`, `duplicates`, `variants`, `merge`, `flagged`, `csv-export`, `rules`, `rules-viewer`, `bootstrap`, `exif`, `merge-category`, `download-batch`.
+- Slash command: `/drive-organizer` (no subcommand = backend check + status + scan), or a subcommand: `status`, `scan`, `propose`, `generate-viewer`, `process-return`, `execute`, `cleanup`, `reconcile`, `duplicates`, `variants`, `merge`, `flagged`, `csv-export`, `rules`, `rules-viewer`, `bootstrap`, `exif`, `merge-category`, `folder-tree`, `download-batch`.
 - Natural language: "organise my drive", "sort these files into folders", "my folder structure got messed up — fix it", "find duplicate files", "show me the folder tree", "set up rules from my existing folders" (`bootstrap`), "edit my routing rules" (`rules-viewer`).
+- Cowork / headless review: `/drive-organizer generate-viewer --static` (or set `DRIVE_ORG_HEADLESS=1`) writes an editable static review file instead of the localhost viewer; `--no-open` runs the server without auto-opening a browser.
 
 Example:
 ```
@@ -54,9 +57,9 @@ Example:
 
 **Main batch loop** — the core workflow that fills, classifies, reviews, and moves a batch of up to 250 files / 20 GB. Trigger: `/drive-organizer` (no subcommand), or "organise my drive" / "sort these files into folders". Runs scan → propose → generate-viewer → process-return → execute → cleanup in a repeating loop until the drive is sorted.
 
-- **scan** — fills the next batch by priority (rules-bearing folders first, then loose root files, then unruled folders; cloud-only files are downloaded inline). Reports new files, duplicates, and the batch stop state. Trigger: `/drive-organizer scan`.
+- **scan** — fills the next batch by priority (rules-bearing folders first, then loose root files, then unruled folders). Cloud-only files are downloaded in a batch: scan selects the whole batch first, then kicks every selected download up front and polls the set once, so the network waits overlap each other and the hashing. Reports new files, duplicates, and the batch stop state. Trigger: `/drive-organizer scan`.
 - **propose** — classifies the scanned batch via the cascading-Q model (Q1 top-level grouping → Q2 thing inside → Q3 functional area → Q4 leaf type), fanning out to one sub-agent per 25 files. Deterministic rule matches are fast-pathed. Trigger: `/drive-organizer propose`.
-- **generate-viewer** — serves a paginated browser UI (localhost:5002) of every proposed move + filename, grouped by destination; approve / reject / flag / inbox / delete, and edit destinations and filenames inline. Trigger: `/drive-organizer generate-viewer`, or "launch the viewer".
+- **generate-viewer** — serves a paginated browser UI (localhost:5002) of every proposed move + filename, grouped by destination; approve / reject / flag / inbox / delete, and edit destinations and filenames inline. Trigger: `/drive-organizer generate-viewer`, or "launch the viewer". **Cowork / headless** (`--static`, or `DRIVE_ORG_HEADLESS=1` / auto-detected Cowork env): instead of the localhost server it writes an editable static review file (`proposals_review.html`) plus a pre-filled `proposals_approved.json` — review/edit and Download, or accept-all unattended, then continue to process-return. `--no-open` runs the server without auto-opening a browser.
 - **process-return** — processes the viewer submission: learns rules from edited approvals, reclassifies rejections against the updated rules, peeks flagged files, and prepares the next batch. Trigger: `/drive-organizer process-return`, or "I've submitted" / "done reviewing".
 - **execute** — moves approved files, updates the registry, widens project date ranges, and routes delete-marked files to `Archive/_To Delete/` (never permanently deleted). Trigger: `/drive-organizer execute`.
 - **cleanup** — removes empty directories left after execute; `cleanup --evict` additionally dehydrates the organised grouping folders to online-only to free local disk (per-OS, best-effort). Trigger: `/drive-organizer cleanup`.
@@ -81,20 +84,22 @@ drive-organizer/
 ├── SKILL.md                    ← runtime workflow (the spine — read this first)
 ├── README.md                   ← user-facing docs (what you're reading)
 ├── HISTORY.md                  ← changelog and provenance
+├── assets/
+│   └── viewer.png              ← screenshot of the browser proposal-review viewer
 ├── references/                 ← mechanics loaded on demand
-│   ├── classify-prompt.md      ← canonical template briefing each classification sub-agent
-│   ├── arbiter-prompt.md       ← template for _Inbox/ reclamation sweeps
+│   ├── classify-prompt.md      ← classification sub-agent template + the per-file routing logic
+│   ├── arbiter-prompt.md       ← _Inbox/ reclamation sweep template + when/how the sweep runs
 │   ├── file-type-routing.md    ← per-extension handling (vision vs metadata, atomic units, sidecars)
 │   ├── filename-conventions.md ← naming patterns per grouping, date extraction, proposals JSON shape
 │   ├── subfolder-templates.json← shipped taxonomy skeleton (Q1–Q4 groupings + compound children)
 │   ├── tidy-builtin-categories.json ← fallback category signals when no rule matches
-│   ├── subcommands.md          ← full docs for utility / final-pass subcommands
+│   ├── subcommands.md          ← lower-frequency subcommands + viewer submit-recovery + learning-loop detail
 │   └── glossary.md             ← term definitions (cascading-Q, atomic-unit folder, content_peek, …)
 └── scripts/
     └── organizer.py            ← Python backend: file I/O, SQLite registry, CSV mirror, all subcommands
 ```
 
-**SKILL.md** is the workflow spine — the batch loop, every subcommand's sequence, classification logic, and the learning loop. **references/** is grouped by theme: the classification templates (`classify-prompt.md` + `arbiter-prompt.md`) the skill fills and dispatches to sub-agents; the routing specs (`file-type-routing.md` + `tidy-builtin-categories.json`) for per-type handling and no-rule fallbacks; the naming + taxonomy pair (`filename-conventions.md` + `subfolder-templates.json`); `subcommands.md` for the lower-frequency commands; and `glossary.md`. **scripts/organizer.py** is copied once to `~/.claude/drive-organizer/organizer.py` at first run; the skill then invokes that runtime copy.
+**SKILL.md** is the workflow spine — the batch loop and the high-frequency subcommands (scan / propose / generate-viewer / process-return / execute / cleanup) in full. Point-of-use and sub-agent-facing detail lives in `references/` and is pulled in only when needed, keeping always-loaded context lean: the classification templates (`classify-prompt.md` carries the per-file routing logic the fan-out agents apply; `arbiter-prompt.md` carries the `_Inbox/` reclamation sweep) the skill fills and dispatches; the routing specs (`file-type-routing.md` + `tidy-builtin-categories.json`); the naming + taxonomy pair (`filename-conventions.md` + `subfolder-templates.json`); `subcommands.md` for the lower-frequency commands plus viewer submit-recovery and the process-return learning-loop accelerators; and `glossary.md`. **scripts/organizer.py** is copied once to `~/.claude/drive-organizer/organizer.py` at first run; the skill then invokes that runtime copy.
 
 Outputs live outside the skill directory:
 
