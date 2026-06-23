@@ -262,7 +262,15 @@ When the user asks to see the folder tree (any wording — "show me the folder t
 
 ## cleanup (per-sync-app eviction recipes)
 
-After `cleanup` removes empty folders, tell the user how to free local disk space by evicting the grouping folders this batch wrote to (the top-level groupings — e.g. `WORK/`, `PERSONAL/` — **not** the `_Inbox/`/`Archive/` staging folders), using their sync app:
+After `cleanup` removes empty folders, free local disk space by evicting the organised grouping folders (the top-level groupings — e.g. `WORK/`, `PERSONAL/` — **not** the `_Inbox/`/`Archive/` staging folders) to online-only; the cloud copies stay and re-download on demand.
+
+**Automated — `cleanup --evict`** (v2.3.0+): dehydrates those grouping folders for you, per-OS and best-effort:
+- **macOS**: `brctl evict <folder>` — works for File-Provider/iCloud-backed drives (verified path). OneDrive-on-macOS has no eviction CLI, so it fails cleanly and falls back to the manual recipe below.
+- **Windows**: `attrib +U -P <folder> /s /d` — unpins OneDrive Files-On-Demand to online-only (best-effort, unverified).
+- **Linux / other**: no standard eviction command → prints the manual recipe.
+Per-folder failures, a missing tool, or an unsupported OS never error the run — `--evict` reports what it evicted and points to the manual recipe for the rest. Without `--evict`, `cleanup` only removes empty folders; tell the user the manual recipe.
+
+**Manual recipe (fallback):**
 - **OneDrive**: right-click folder → *Free up space*
 - **iCloud Drive**: right-click folder → *Remove Download*
 - **Dropbox Smart Sync**: right-click folder → Smart Sync → *Online only*
