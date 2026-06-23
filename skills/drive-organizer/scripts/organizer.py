@@ -1558,14 +1558,19 @@ def cmd_scan(args):
     unchanged = 0
     to_process = []  # (filepath, fsize, mtime) — files that genuinely need hashing
 
-    # Pass 1 (sequential): respect caps, trigger cloud downloads, and decide which
-    # files still need a fresh hash. Skip-rehash drops unchanged files here.
+    # Pass 1a (sequential SELECTION): respect caps + skip-rehash to decide which files
+    # this batch will process. No download/poll happens here — cloud-only files are only
+    # SELECTED now; their bytes are kicked + awaited together in the batched pre-trigger
+    # (Pass 1b) so the network waits overlap each other instead of running one file at a
+    # time. The cap uses the placeholder-reported size here; the real size/mtime is
+    # re-captured after materialisation.
+    selected = []  # (filepath, fsize, cur_mtime, placeholder)
     for priority in range(1, 7):
         if stopped_at_priority:
             break
         files = sorted(buckets[priority], key=lambda x: str(x[0]))
         for filepath, fsize, placeholder in files:
-            if len(to_process) >= file_limit:
+            if len(selected) >= file_limit:
                 stopped_at_priority = priority
                 break
             try:
@@ -1579,65 +1584,86 @@ def cmd_scan(args):
             if ex and ex[0] and ex[1] == fsize and ex[2] == cur_mtime:
                 unchanged += 1
                 continue  # unchanged + already registered — no work
-            # First-admission exception, scoped PER SCAN CALL (the `and to_process` guard):
+            # First-admission exception, scoped PER SCAN CALL (the `and selected` guard):
             # admit the FIRST file of this call even if it alone exceeds the GB cap — else a
             # single file larger than the cap is rejected on every scan and never processed
-            # (permanent stall). Once this call has admitted anything (`to_process` non-empty),
+            # (permanent stall). Once this call has admitted anything (`selected` non-empty),
             # the cap applies strictly. It is per-call, not per-file: a too-big file deferred
             # this call is re-considered (and again first-admitted) on the NEXT scan call.
-            if total_bytes + fsize > byte_limit and to_process:
+            if total_bytes + fsize > byte_limit and selected:
                 stopped_at_priority = priority
                 break
-
-            # Trigger download if cloud-only — open() forces OneDrive to materialise.
-            if placeholder:
-                try:
-                    with open(filepath, "rb") as f:
-                        f.read(1)
-                except OSError as e:
-                    print(f"  skip {filepath}: download failed: {e}", file=sys.stderr)
-                    skipped += 1
-                    continue
-                # Poll until the file materialises (or times out) instead of a
-                # single fixed 0.5s check — a file slower than one tick used to be
-                # skipped and deferred to a future scan, forcing extra passes.
-                if _is_placeholder(filepath):
-                    _wstart = time.monotonic()
-                    waited = 0.0
-                    while _is_placeholder(filepath) and waited < DOWNLOAD_POLL_TIMEOUT:
-                        time.sleep(DOWNLOAD_POLL_INTERVAL)
-                        waited += DOWNLOAD_POLL_INTERVAL
-                    t_download += time.monotonic() - _wstart
-
-                # Never hash a partially-downloaded file. Confirm it is (a) no longer
-                # dataless AND (b) byte-stable across two reads — a still-streaming
-                # OneDrive file can clear the dataless flag while its size is still
-                # climbing. If unconfirmed, defer to a future scan rather than commit
-                # a hash of partial bytes.
-                if _is_placeholder(filepath):
-                    print(f"  skip {filepath}: still online-only after {DOWNLOAD_POLL_TIMEOUT:.0f}s", file=sys.stderr)
-                    skipped += 1
-                    continue
-                try:
-                    s1 = filepath.stat()
-                    time.sleep(DOWNLOAD_POLL_INTERVAL)
-                    s2 = filepath.stat()
-                except OSError as e:
-                    print(f"  skip {filepath}: vanished during materialise check: {e}", file=sys.stderr)
-                    skipped += 1
-                    continue
-                if _is_placeholder(filepath) or s1.st_size != s2.st_size:
-                    print(f"  skip {filepath}: not fully materialised (size unstable), deferring", file=sys.stderr)
-                    skipped += 1
-                    continue
-                # Re-capture size/mtime now that the real bytes are present — the
-                # placeholder-reported values may differ from the materialised file.
-                fsize = s2.st_size
-                cur_mtime = s2.st_mtime_ns
-                triggered_count += 1
-
-            to_process.append((filepath, fsize, cur_mtime))
+            selected.append((filepath, fsize, cur_mtime, placeholder))
             total_bytes += fsize
+
+    # Pass 1b (BATCHED cloud pre-trigger): kick EVERY selected cloud-only placeholder's
+    # download up front (open+read(1) forces OneDrive/File-Provider to start materialising),
+    # then poll the whole set once — so N downloads proceed concurrently (and overlap the
+    # hashing in Pass 2) instead of the old one-file-at-a-time trigger→poll that serialised
+    # every network wait. Tunable via DRIVE_ORG_DL_TIMEOUT.
+    to_process = []           # (filepath, fsize, cur_mtime) — files ready to hash
+    pending_dl = []           # placeholders we kicked and still need to confirm materialised
+    for filepath, fsize, cur_mtime, placeholder in selected:
+        if not placeholder:
+            to_process.append((filepath, fsize, cur_mtime))
+            continue
+        # Trigger download — open() forces materialisation; do NOT wait here.
+        try:
+            with open(filepath, "rb") as f:
+                f.read(1)
+        except OSError as e:
+            print(f"  skip {filepath}: download failed: {e}", file=sys.stderr)
+            skipped += 1
+            continue
+        pending_dl.append(filepath)
+
+    if pending_dl:
+        # Single batch poll: one wall-clock wait for the WHOLE set to clear the
+        # placeholder marker (instead of a per-file poll). A file slower than one tick
+        # is no longer deferred to a future scan — but a still-online-only file after
+        # the timeout is.
+        _wstart = time.monotonic()
+        waited = 0.0
+        remaining = [p for p in pending_dl if _is_placeholder(p)]
+        while remaining and waited < DOWNLOAD_POLL_TIMEOUT:
+            time.sleep(DOWNLOAD_POLL_INTERVAL)
+            waited += DOWNLOAD_POLL_INTERVAL
+            remaining = [p for p in remaining if _is_placeholder(p)]
+        t_download += time.monotonic() - _wstart
+
+        # Batched stability check: stat the whole set, sleep ONCE, stat again — so the
+        # byte-stable confirmation also runs as a single wait, not one interval per file.
+        # Never hash a partially-downloaded file: a still-streaming file can clear the
+        # dataless flag while its size is still climbing, so confirm (a) no longer
+        # dataless AND (b) byte-stable across the two reads; otherwise defer.
+        first_stat = {}
+        for filepath in pending_dl:
+            if _is_placeholder(filepath):
+                print(f"  skip {filepath}: still online-only after {DOWNLOAD_POLL_TIMEOUT:.0f}s", file=sys.stderr)
+                skipped += 1
+                continue
+            try:
+                first_stat[filepath] = filepath.stat()
+            except OSError as e:
+                print(f"  skip {filepath}: vanished during materialise check: {e}", file=sys.stderr)
+                skipped += 1
+        if first_stat:
+            time.sleep(DOWNLOAD_POLL_INTERVAL)
+        for filepath, s1 in first_stat.items():
+            try:
+                s2 = filepath.stat()
+            except OSError as e:
+                print(f"  skip {filepath}: vanished during materialise check: {e}", file=sys.stderr)
+                skipped += 1
+                continue
+            if _is_placeholder(filepath) or s1.st_size != s2.st_size:
+                print(f"  skip {filepath}: not fully materialised (size unstable), deferring", file=sys.stderr)
+                skipped += 1
+                continue
+            # Re-capture size/mtime now that the real bytes are present — the
+            # placeholder-reported values may differ from the materialised file.
+            triggered_count += 1
+            to_process.append((filepath, s2.st_size, s2.st_mtime_ns))
 
     # Pass 2 (parallel): hash + content-peek the selected files concurrently. Hashing
     # is I/O-bound, so a small thread pool overlaps reads (flagged in Phase 4C).
