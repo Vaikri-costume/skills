@@ -1,7 +1,7 @@
 ---
-version: "2.8.0"
+version: "2.7.0"
 category: C
-parent-version: "2.7.0"
+parent-version: "2.6.1"
 author:
   primary: "Vaikri-costume"
   history:
@@ -23,29 +23,6 @@ inspirations:
 # History — drive-organizer
 
 ## Changelog
-
-### 2.8.0 — 2026-06-24
-
-#### Added
-- **`date_range` generalized off projects-only (Phase 3 Tier-1).** Date-first routing no longer
-  requires a `filename_tag` project:
-  - `_enumerate_project_metadata` now includes ANY folder whose `.tidy-rules.json` carries a
-    `date_range` — areas, event folders, course-term and tax-year folders route loose dated files
-    (bills/invoices/statements/photos) by date. (`_date_matches_period` was already generic.)
-  - **Entities can carry a `date_range`** (`{"start","end"}` ISO-date dict in `entities.json`): a file
-    whose date falls in an entity's range routes to that entity's folder, parallel to a folder
-    `date_range`. `_read_entities` passes the key through; `references/classify-prompt.md` + SKILL.md
-    document both as routing sources.
-  - The rules-viewer **entity cards gain a `date_range` editor** (two date inputs + a `drEdit` JS
-    helper); `date_range` added to the `/save` handler's `META_KEYS` so it persists to `entities.json`
-    (clearing both inputs removes it). This wires the new property into the rules-viewer settings
-    surface, per the standing "every new property gets a control here" rule.
-
-#### Changed
-- SKILL.md `propose` and `references/classify-prompt.md` document the generalized routing model
-  (folder + entity `date_range` as dual routing sources). Date-range **auto-widening** on execute
-  stays project-scoped (keyed on `filename_tag`); entity/area date_ranges are user-curated via the
-  panel, not auto-widened — routing (read) is generalized, widening (write) is unchanged.
 
 ### 2.7.0 — 2026-06-24
 
