@@ -49,7 +49,14 @@ You are read-only: you emit verdicts; the orchestrator executes them.
   event folder, course-term, tax-year) carrying a `date_range`; and an **entity** in `[ENTITIES_PATH]`
   may carry its own `date_range` (a `{"start","end"}` dict) — a file whose date falls in an entity's
   range routes to that entity's folder, exactly like a folder date_range.
-- Entity aliases / negatives / types / `date_range`: `[ENTITIES_PATH]`
+- Entity aliases / negatives / types / `date_range` / `policy`: `[ENTITIES_PATH]`
+- **Policy-driven routing** — an entity in `[ENTITIES_PATH]` may carry a `policy` behaviour string that
+  shapes WHERE its files land inside its folder. The one recognised behaviour is **`event-group`**: when a
+  file routes to such an entity, do not drop it loose in the entity root — place it in a **date-derived
+  subfolder** under that entity, exactly like the loose-photo rule: `<entity-path>/YYYY/Month YY/` keyed on
+  the file's date (`file_date` / EXIF / filename date), OR, if the file already sits in a named event
+  subfolder, preserve that event folder under the entity. Any other (unrecognised) `policy` string is a
+  free-text note only — apply no special routing.
 - **Cascading-Q model** (the destination cascade — apply it to every file): **Q1** which top-level
   grouping (from the active groupings above)? → **Q2** which thing inside it (project / company /
   person / category)? → **Q3** which functional area (Bills / Scripts / References / …)? → **Q4**
@@ -152,6 +159,11 @@ file whose handling isn't obvious. The load-bearing rules you must not miss:
   `[Person] Photos/Summer Party 2024/`) keeps that event folder under
   `PERSONAL/PERSONAL Photos/<event>/`; only loose photos bucket into
   `PERSONAL/PERSONAL Photos/YYYY/Month YY/`.
+- **Entity `policy` behaviour**: before finalising a verdict that routes a file to an entity, check that
+  entity's `policy` in `[ENTITIES_PATH]`. `event-group` ⇒ append a date-derived subfolder
+  (`<entity>/YYYY/Month YY/`, or the file's existing named event folder) to `para_subfolder`; this is the
+  same date-bucketing the loose-photo rule applies, generalised to any entity the user has tagged. An
+  unrecognised policy string changes nothing.
 - **Documents**: `content_peek` is the strongest project-ID signal — scan it for
   project/person/client/company names. Fall through to `tidy-builtin-categories.json` only when no
   Q*n* match exists anywhere.
