@@ -1,0 +1,12 @@
+{
+  "dir_names": ["node_modules", ".git", "venv", ".venv", "env", "__pycache__", ".tox", "site-packages", "Pods", "vendor", "OSCAR_Data", "Backups.backupdb"],
+  "suffixes": [".app", ".framework", ".bundle", ".xcodeproj", ".photoslibrary", ".imovielibrary", ".tvlibrary", ".aplibrary"],
+  "marker_files": [
+    {"probe": "pyvenv.cfg", "kind": "file", "marker": "venv"},
+    {"probe": "zotero.sqlite", "kind": "file", "marker": "zotero"},
+    {"probe": ".git", "kind": "dir", "marker": "git-repo"}
+  ],
+  "marker_pairs": [
+    {"probes": ["Assets", "ProjectSettings"], "kind": "dir", "marker": "unity"}
+  ]
+}
