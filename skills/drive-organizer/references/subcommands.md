@@ -18,6 +18,39 @@ Consult this file when invoking any of the commands below, hitting their errors,
 - [merge-category](#merge-category) — add one taxonomy category via a JSON diff
 - [folder-tree](#folder-tree-on-demand-view) — on-demand: render the organised tree (rules ∩ disk)
 - [cleanup recipes](#cleanup-per-sync-app-eviction-recipes) — per-sync-app eviction commands
+- [inbox-list](#inbox-list) — list files currently in `_Inbox/` (feeds the arbiter sweep)
+
+---
+
+## inbox-list
+
+```bash
+python3 ~/.claude/drive-organizer/organizer.py inbox-list
+```
+
+Returns a JSON object enumerating files that have been executed into `_Inbox/` (rows with `status='organized'` and a path containing `_Inbox`). Used by the orchestrator to decide when to trigger the arbiter sweep (see SKILL.md "Inbox arbiter sweep") and to build the `[INBOX_BATCH_JSON]` slot in `references/arbiter-prompt.md`.
+
+**Output shape:**
+```json
+{
+  "count": 42,
+  "files": [
+    {
+      "id": 7,
+      "filename": "scan-report-2024.pdf",
+      "current_path": "/abs/path/_Inbox/scan-report-2024.pdf",
+      "file_date": "2024-03-15",
+      "is_image": false,
+      "is_raw": false
+    }
+  ]
+}
+```
+
+Fields:
+- `count` — number of files currently in `_Inbox/` (already executed; files only classified-to-`_Inbox` this round but not yet executed are NOT counted)
+- `files` — array of all `_Inbox` records; each entry carries exactly the fields the arbiter template expects; fill `[INBOX_BATCH_JSON]` directly from this array
+- `is_image` — true only for non-RAW images (IMAGE_EXTS only); RAW files have `is_image: false` + `is_raw: true`; this encodes vision-readability for the arbiter's capability gate
 
 ---
 
@@ -27,7 +60,7 @@ Consult this file when invoking any of the commands below, hitting their errors,
 python3 ~/.claude/drive-organizer/organizer.py status
 ```
 
-Reports the active root, total files in the registry, and counts by status. The complete status set the backend writes is: `pending` (scanned, awaiting classification), `organized` (moved to its destination), `duplicate` (byte-identical to a kept copy), `flagged` (marked `?` in the viewer), `to_delete` (execute routed it to `Archive/_To Delete/`), `deleted` (reconcile `--prune` marked a confirmed-gone row), and `archived` (a merged original moved to `Archive/_Merged-Originals/`). `cmd_status` prints whatever statuses are present; since the backend only ever writes these seven, any status in the output is one of them (no other value exists — closed set). Run at the start of any session to confirm which drive is configured.
+Reports the active root, total files in the registry, and counts by status. The complete status set the backend writes is: `pending` (scanned, awaiting classification), `organized` (moved to its destination), `duplicate` (byte-identical to a kept copy), `flagged` (marked `?` in the viewer), `to_delete` (execute routed it to `Archive/_To Delete/`), `deleted` (reconcile `--prune` marked a confirmed-gone row), `archived` (a merged original moved to `Archive/_Merged-Originals/`), and `missing` (execute crash-recovery: the file was `pending` but the physical path no longer exists — marked so it is not re-proposed as a ghost). `cmd_status` reflects whatever status values are present in the registry (it does a GROUP BY status query); since the backend only ever writes these eight, any status in the output is one of them (no other value exists — closed set). If a hand-edited or schema-drifted row carries an unrecognised status, it will appear unflagged in the output. Run at the start of any session to confirm which drive is configured.
 
 To switch roots, pass `--root /path/to/folder` once (the new root persists for future calls — see SKILL.md "No subcommand").
 
@@ -66,10 +99,10 @@ Flagged files are excluded from propose. To reclassify: peek/classify each, add 
 To manually clear a flag: UPDATE files SET status='pending' WHERE id=<N>;
 ```
 
-When empty, prints: `"No flagged files."` — skip this step in the process-return flow.
+When empty, prints: `"No flagged files."` — see SKILL.md process-return step 7 for what to do in that case (skip the step).
 
 For each flagged file:
-1. Peek at content: use the Read tool for images (vision); for documents, get the text the same way scan does — the simplest path is to re-run `scan` (it re-extracts `content_peek` for the file into the registry, then read it back), or extract directly per the per-format procedure in `references/file-type-routing.md` (e.g. `.docx`/`.xlsx`/`.pptx` → read the relevant XML members from the zip; `.pdf` → PyMuPDF text; plain text → raw read). Don't invent a format-specific reader — file-type-routing.md is the source of truth for which bytes/members to read.
+1. Peek at content: use the Read tool for images (vision); for documents, get the text the same way scan does — extract directly per the per-format procedure in `references/file-type-routing.md` (do NOT expect a re-run of `scan` to re-peek a flagged file: scan's `organized_paths` query skips any file whose registry `status` is already `flagged`, so it will not re-extract `content_peek` for it) (e.g. `.docx`/`.xlsx`/`.pptx` → read the relevant XML members from the zip; `.pdf` → PyMuPDF text; plain text → raw read). Don't invent a format-specific reader — file-type-routing.md is the source of truth for which bytes/members to read.
 2. Classify it (same logic as propose: generate `para_subfolder`, `new_filename`, `reason`)
 3. Add it to the `proposals_classified.json` batch alongside new pending files — it goes back through the viewer, not executed directly
 
@@ -287,9 +320,11 @@ Per-folder failures, a missing tool, or an unsupported OS never error the run �
 <!-- SKILL.md's generate-viewer section points here for the after-submit log-line interpretation. -->
 
 **Check the server's final log line before continuing.** The server writes `proposals_approved.json`
-AND `proposals_flagged.json` to disk *before* it prints its final lines, so once you see
-`Server shutting down.` both sidecar files are guaranteed present (the case-3 recovery below can
-always read `proposals_flagged.json`). One of these cases holds:
+AND `proposals_flagged.json` to disk *before* it prints `Approved proposals written to: <path>`
+followed by `Server shutting down.` (both printed, in that order, by the `do_POST` handler of the
+viewer server that `cmd_generate_viewer` starts in `organizer.py` — grep those two log-line strings
+to locate them). Once you see `Server shutting down.` both sidecar files are
+guaranteed present (the case-3 recovery below can always read `proposals_flagged.json`). One of these cases holds:
 
 - **Write failure — no `Server shutting down.` line at all**, instead `ERROR: could not write review
   output (…); submit NOT saved` on stderr and an HTTP 500 in the browser: the write failed, the
@@ -318,6 +353,8 @@ regenerate `proposals_classified.json` first. If `Error: port <N> is already in 
 
 <!-- SKILL.md's process-return section points here for the W5 accelerators, the ordering rationale,
      and the delete-routing note. The numbered pipeline stays in SKILL.md. -->
+
+**Replay / crash-recovery:** If process-return is re-run after a crash (e.g. execute completed partially, then the session died), re-running execute on an already-consumed `proposals_approved.json` will produce `MISSING` errors for files already moved in the prior run. This is safe replay noise — not a real error. The files are at their correct destination; the registry row is already `status='organized'`. Skip those MISSING entries and continue; do not treat them as lost or corrupt files. Generate a fresh proposals batch for the next round as normal.
 
 **Why learnings come before reclassification:** A rejection means the proposed destination was wrong,
 but *what* the right destination is often depends on a pattern the user just demonstrated by editing
@@ -351,3 +388,13 @@ row, delete included.) For all other entries (approved, inbox, reclassified), ro
   fast-path** auto-routed files (the deterministic rule match — not a classifier `confidence` verdict)
   are flagged `auto_approved` — you may execute them without a viewer pass (still audited in
   `auto-routed.csv`). Default OFF: human review stays the norm unless the user opts in.
+
+**W5 routing-note format.** When the orchestrator annotates a `proposals_classified.json` entry with a routing note (e.g. to record why a file was auto-approved or why a rule was inferred), append a `routing_note` key to that entry with a plain-text string value:
+```json
+{
+  "id": 42,
+  "para_subfolder": "WORK/[COMPANY]/Admin",
+  "routing_note": "W5 auto-infer: tokens [company, admin] matched 3 approved files"
+}
+```
+The key name is `routing_note` (singular); the value is a free-text one-line explanation. This field is informational only — `cmd_execute` and `cmd_generate_viewer` ignore it; it is for audit/debugging purposes and is NOT written to the registry or `auto-routed.csv` automatically (if audit trail is needed, append it there manually).
