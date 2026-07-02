@@ -1,16 +1,7 @@
 ---
-version: "2.5.0"
+version: "2.9.0"
 category: C
-parent-version: "2.4.0"
-version: "2.6.0"
-category: C
-parent-version: "2.5.0"
-version: "2.6.1"
-category: C
-parent-version: "2.6.0"
-version: "2.7.0"
-category: C
-parent-version: "2.6.1"
+parent-version: "2.8.0"
 author:
   primary: "Vaikri-costume"
   history:
@@ -32,6 +23,61 @@ inspirations:
 # History — drive-organizer
 
 ## Changelog
+
+### 2.9.0 — 2026-06-26
+
+#### Added
+- **Per-entity `policy` field now drives routing (Phase 3 Tier-1 #2 — policy behaviour hook).**
+  The previously dormant `policy` field in `entities.json` is now active:
+  - `references/classify-prompt.md`: classification agents read each entity's `policy` value and
+    apply behaviour-specific routing. The recognised behaviour **`event-group`** routes that
+    entity's dated files into a date-derived subfolder (`<entity>/YYYY/Month YY/`) rather than
+    loose directly under the entity folder — the same date-bucketing pattern already used by the
+    loose-photo rule, now generalised to any entity. Unrecognised policy strings are noted in the
+    classification output but leave routing unchanged.
+  - `scripts/organizer.py`: `propose` prints an **"Active entity policies (N): name=behaviour"**
+    summary line so configured policies are visible in the proposal output. The rules-viewer
+    entity-card help text notes `event-group` as the recognised value.
+  - `SKILL.md`: `propose`-section gains a note pointing to `classify-prompt.md` for
+    "Policy-driven routing" details.
+  - No change to existing routing — this is purely additive; entities without a `policy` field
+    continue to behave as before.
+
+#### Fixed
+- **Merged ~90 correctness fixes from an independent skill-tracer audit** (sandbox rounds
+  8–12, converged round 13) — crash-recovery safety (move-journal reconciliation,
+  `_bootstrap_apply` path-traversal + `_auto_classify_entry` false-positive guards),
+  `_rename_entity`/`_merge_entities` invariant and error-reporting fixes, `_para_category`
+  uppercase-normalization, `_Inbox` SQL wildcard escaping, RAW-vs-vision blocking-reason
+  clarity, and dozens of doc/cross-reference corrections across `SKILL.md` and
+  `references/*.md`. Notably **`_find_project_for_destination` now accepts a
+  `date_range`-only ancestor** (previously required `filename_tag`), matching the Phase-3
+  date-range generalization — a genuine, user-visible fix to date-range widening on
+  date_range-only folders. Full fix list and rationale:
+  `~/.claude/plans/drive-organizer-cascade-handoff/ledger-fix-checklist.md`.
+
+### 2.8.0 — 2026-06-24
+
+#### Added
+- **`date_range` generalized off projects-only (Phase 3 Tier-1).** Date-first routing no longer
+  requires a `filename_tag` project:
+  - `_enumerate_project_metadata` now includes ANY folder whose `.tidy-rules.json` carries a
+    `date_range` — areas, event folders, course-term and tax-year folders route loose dated files
+    (bills/invoices/statements/photos) by date. (`_date_matches_period` was already generic.)
+  - **Entities can carry a `date_range`** (`{"start","end"}` ISO-date dict in `entities.json`): a file
+    whose date falls in an entity's range routes to that entity's folder, parallel to a folder
+    `date_range`. `_read_entities` passes the key through; `references/classify-prompt.md` + SKILL.md
+    document both as routing sources.
+  - The rules-viewer **entity cards gain a `date_range` editor** (two date inputs + a `drEdit` JS
+    helper); `date_range` added to the `/save` handler's `META_KEYS` so it persists to `entities.json`
+    (clearing both inputs removes it). This wires the new property into the rules-viewer settings
+    surface, per the standing "every new property gets a control here" rule.
+
+#### Changed
+- SKILL.md `propose` and `references/classify-prompt.md` document the generalized routing model
+  (folder + entity `date_range` as dual routing sources). Date-range **auto-widening** on execute
+  stays project-scoped (keyed on `filename_tag`); entity/area date_ranges are user-curated via the
+  panel, not auto-widened — routing (read) is generalized, widening (write) is unchanged.
 
 ### 2.7.0 — 2026-06-24
 
