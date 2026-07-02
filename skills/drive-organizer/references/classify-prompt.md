@@ -13,7 +13,11 @@ You are read-only: you emit verdicts; the orchestrator executes them.
 [CAPABILITIES]
 <!-- The orchestrator fills this from `organizer.py propose`'s "Model capabilities:" line.
      It declares whether THIS running model can open file contents (peek) and see images
-     (vision). Apply the matching rung of the degradation ladder below. -->
+     (vision). Apply the matching rung of the degradation ladder below.
+     FALLBACK: if that stderr line is absent or suppressed and cannot be re-derived, fill
+     this slot with the conservative default `peek=off vision=off` — never dispatch with an
+     unfilled [CAPABILITIES] slot. Degrading to name/path/EXIF routing is always safe;
+     assuming a capability the model lacks is not. -->
 - **peek ON** — you may open document/text contents yourself (Read) to classify.
 - **peek OFF** — you may NOT open file contents. Classify every document from its
   pre-extracted `content_peek` + filename + path + rules only. Never open the file.
@@ -41,6 +45,9 @@ You are read-only: you emit verdicts; the orchestrator executes them.
 
 ## Read these yourself for the taxonomy + logic (do NOT expect them inlined)
 - Active groupings (the only valid top-level destinations): [GROUPINGS]
+  <!-- [GROUPINGS] is filled by the orchestrator from `organizer.py rules --json` → top-level `areas` array
+       (the resolved active set from `_active_groupings()`, which honours any `config.json "areas"` override).
+       Do NOT read `templates` `Q1_groupings` here — it misses the override and its entries may be strings or dicts. -->
 - Merged taxonomy shape (run it): `[TEMPLATES_CMD]`
 - On-disk rules: `cat` the `.tidy-rules.json` in each folder your files touch, under `[ROOT]`
 - Dated-destination metadata — route loose dated files (bills/invoices/statements/photos) by
@@ -49,7 +56,14 @@ You are read-only: you emit verdicts; the orchestrator executes them.
   event folder, course-term, tax-year) carrying a `date_range`; and an **entity** in `[ENTITIES_PATH]`
   may carry its own `date_range` (a `{"start","end"}` dict) — a file whose date falls in an entity's
   range routes to that entity's folder, exactly like a folder date_range.
-- Entity aliases / negatives / types / `date_range`: `[ENTITIES_PATH]`
+- Entity aliases / negatives / types / `date_range` / `policy`: `[ENTITIES_PATH]`
+- **Policy-driven routing** — an entity in `[ENTITIES_PATH]` may carry a `policy` behaviour string that
+  shapes WHERE its files land inside its folder. The one recognised behaviour is **`event-group`**: when a
+  file routes to such an entity, do not drop it loose in the entity root — place it in a **date-derived
+  subfolder** under that entity, exactly like the loose-photo rule: `<entity-path>/YYYY/Month YY/` keyed on
+  the file's date (`file_date` / EXIF / filename date), OR, if the file already sits in a named event
+  subfolder, preserve that event folder under the entity. Any other (unrecognised) `policy` string is a
+  free-text note only — apply no special routing.
 - **Cascading-Q model** (the destination cascade — apply it to every file): **Q1** which top-level
   grouping (from the active groupings above)? → **Q2** which thing inside it (project / company /
   person / category)? → **Q3** which functional area (Bills / Scripts / References / …)? → **Q4**
@@ -65,7 +79,20 @@ You are read-only: you emit verdicts; the orchestrator executes them.
 
 ## Your batch (≤25 files)
 [BATCH_JSON]
-<!-- list of {id, filename, current_path, is_image, route_by_name_only, content_peek?} -->
+<!-- list of {id, filename, current_path, is_image, is_raw, route_by_name_only, open_blocked_reason?, content_peek?}
+     `is_raw` is pre-computed by the server (true when the file extension is in RAW_EXTS). The
+     server already applied the RAW vision-block before dispatch — do NOT re-apply it; treat
+     `is_raw: true` files as route_by_name_only. `is_raw` is false (key always present) when the
+     file is not RAW — use `entry.get('is_raw')` or `entry['is_raw']`, not `'is_raw' in entry`,
+     to read it.
+     `open_blocked_reason` is present only when `route_by_name_only` is true. It is **always a JSON
+     array** (never a single string, even when only one reason applies). Its values are drawn from
+     the closed set: `"raw-not-decodable"` (RAW permanent block — distinct from the vision toggle),
+     `"vision-off"` (non-RAW image blocked by the user's vision-off setting), `"skip-type"`, and
+     `">{N}MB"` (e.g. `["raw-not-decodable"]`, `["vision-off","skip-type"]`, or `[">200MB"]`). The
+     array may contain multiple reasons simultaneously. The array explains WHY the file cannot be
+     opened; it does not change what you do — `route_by_name_only: true` is the gate you act on.
+     The array is informational context only (useful for the `reason` field). -->
 
 ## Output — return EXACTLY this JSON array, one object per input id, and nothing else
 ```json
@@ -76,7 +103,7 @@ You are read-only: you emit verdicts; the orchestrator executes them.
     "new_filename": "<clean name per the filename conventions>",
     "reason": "<one short human-readable phrase for the viewer — why this destination, e.g. 'invoice from Acme, dated 2024-03'>",
     "signal": "<the distinctive token(s) that decided this. If ≥2 files in your batch share a token AND route to the same (especially new) folder, put that shared token here so the orchestrator can write ONE rule from it (W5 auto-infer).>",
-    "confidence": "high|low",   // exactly one of these two — a closed set, emit no other value (e.g. no "medium")
+    "confidence": "high|low",   // exactly one of these two — a CLOSED set; emit no other value (e.g. never "medium"); the classifier always emits exactly high or low, nothing else
     "file_date": "<the document's own date as YYYY-MM-DD if you can read it from the filename or content_peek (e.g. an invoice/statement date), else omit>",
     "vision_desc": "<one sentence — ONLY if you opened the image with vision; else omit>"
   }
@@ -85,6 +112,13 @@ You are read-only: you emit verdicts; the orchestrator executes them.
 Every input `id` appears exactly once. `para_subfolder` must be an existing-taxonomy path or
 `_Inbox`. Do **not** emit `para_category` — the backend derives it from the path. No prose,
 no file contents, verdicts only.
+
+**_Inbox fallback:** when no destination can be decided (the file's content and name give no
+useful signal, or the signal conflicts with multiple rules), emit:
+```json
+{"id": <id>, "para_subfolder": "_Inbox", "confidence": "low", "reason": "<why undecidable>", ...}
+```
+Never omit an entry — every input id must appear in the output, even if the verdict is `_Inbox`.
 
 ---
 
@@ -105,7 +139,7 @@ folder's rules on demand.
 
 Also query the path vocabulary to catch approved names from previous batches:
 ```bash
-sqlite3 <root>/.organizer/registry.db \
+sqlite3 [ROOT]/.organizer/registry.db \
   "SELECT segment, position, use_count FROM path_vocab ORDER BY position, use_count DESC"
 ```
 Prefer exact spellings already in `.tidy-rules.json` or path_vocab — proposing novel names when
@@ -152,6 +186,11 @@ file whose handling isn't obvious. The load-bearing rules you must not miss:
   `[Person] Photos/Summer Party 2024/`) keeps that event folder under
   `PERSONAL/PERSONAL Photos/<event>/`; only loose photos bucket into
   `PERSONAL/PERSONAL Photos/YYYY/Month YY/`.
+- **Entity `policy` behaviour**: before finalising a verdict that routes a file to an entity, check that
+  entity's `policy` in `[ENTITIES_PATH]`. `event-group` ⇒ append a date-derived subfolder
+  (`<entity>/YYYY/Month YY/`, or the file's existing named event folder) to `para_subfolder`; this is the
+  same date-bucketing the loose-photo rule applies, generalised to any entity the user has tagged. An
+  unrecognised policy string changes nothing.
 - **Documents**: `content_peek` is the strongest project-ID signal — scan it for
   project/person/client/company names. Fall through to `tidy-builtin-categories.json` only when no
   Q*n* match exists anywhere.
