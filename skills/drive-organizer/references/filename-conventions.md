@@ -53,27 +53,62 @@ Each project's `.tidy-rules.json` carries two metadata fields used by `propose` 
 - **`filename_tag`** — canonical tag inserted into `new_filename` for files routed into this project. For Admin / Branding folders the tag is just the company name (`[COMPANY]`, `[COMPANY]`, `[COMPANY]`) — Admin/Brand sub-tags add no information. For projects it's `<Company>_<ProjectTag>` (e.g. `[COMPANY]_[PROJ]`, `[COMPANY]_[PROJ]`).
 - **`date_range`** — `{start, end}` date range. Used during propose to route loose bills, invoices, and receipts: if a file's date falls inside a project's date range, it's a candidate match for that project. Multiple matching projects → ask via the viewer.
 
-**Learn-as-you-go:** `date_range` starts as `null` for any project where the dates aren't known yet. As files get approved into a project, `process-return` expands the period to span the min/max approved file dates (with a buffer at each end — see SKILL.md "Date-range auto-expansion" for the authoritative buffer value). After a few approval rounds, every project has a calibrated date range without you ever specifying dates manually. If you do know a date range up front, set it in the rules file and propose will use it from the start.
+**Learn-as-you-go:** `date_range` starts as `null` for any project where the dates aren't known yet. As files get approved into a project, `process-return` expands the period to span the min/max approved file dates (with a buffer at each end — the authoritative buffer value is the `buffer_days=30` default of `_expand_date_range` in `scripts/organizer.py`; the code is the single source of truth). After a few approval rounds, every project has a calibrated date range without you ever specifying dates manually. If you do know a date range up front, set it in the rules file and propose will use it from the start.
 
 ## `proposals_classified.json` shape
 
-Claude writes the enriched proposals to `~/.claude/drive-organizer/proposals_classified.json`. Each entry has the raw fields from the script plus the classification fields Claude adds:
+Claude writes the enriched proposals to `~/.claude/drive-organizer/proposals_classified.json`. Every entry carries the base fields from `propose`'s stdout **plus** its lane fields. The two lanes are disjoint — a file is `auto_routed` OR `needs_classification`, never both.
 
+**Base fields** (present on every entry):
 ```json
 {
   "id": 1,
   "current_path": "/abs/path/to/file.jpg",
   "filename": "00000097-PHOTO-2024-04-17.jpg",
+  "extension": ".jpg",
+  "file_size": 2048576,
+  "file_date": "2024-04-17",
   "is_image": true,
+  "is_raw": false,
+  "content_peek": null
+}
+```
+
+**Auto-routed lane** (`auto_routed: true`):
+```json
+{
+  "auto_routed": true,
+  "para_subfolder": "PERSONAL/PERSONAL Photos/2024/April 24",
+  "proposed_subfolder": "PERSONAL/PERSONAL Photos/2024/April 24",
+  "auto_reason": "already in ruled folder",
+  "auto_approved": true
+}
+```
+(`auto_approved` only present when `auto_approve` is enabled in config.)
+
+**Needs-classification lane** (`needs_classification: true`):
+```json
+{
+  "needs_classification": true,
+  "classify_batch": 0,
   "para_subfolder": "PERSONAL/PERSONAL Photos/2024/April 24",
   "new_filename": "20240417_outdoor_dinner_group.jpg",
   "vision_desc": "Group of people at an outdoor dinner celebration",
   "file_date": "2024-04-17",
-  "reason": "personal photo"
+  "reason": "personal photo",
+  "signal": "personal-photo",
+  "confidence": "high"
+}
+```
+When the file was cost-toggle blocked, also include:
+```json
+{
+  "route_by_name_only": true,
+  "open_blocked_reason": ["vision-off"]
 }
 ```
 
-`para_subfolder` is the only routing field — it's a path relative to the drive root. No top-level category bucket is needed; the prefix on the path encodes everything. (`para_category` is **not** part of the verdict Claude writes: it's a derived registry column the viewer/execute set automatically from the path's top segment — so it's absent from the shape above by design, not omission.)
+`para_subfolder` is the only routing field — it's a path relative to the drive root. No top-level category bucket is needed; the prefix on the path encodes everything. (`para_category` is **not** part of the verdict Claude writes: it's a derived registry column the viewer/execute set automatically from the path's top segment — so it's absent from the shape above by design, not omission.) `signal` and `confidence` are present on classified entries only — the backend never reads `confidence` to set `auto_approved` (that flag is W1 fast-path only).
 
 ---
 
@@ -107,4 +142,4 @@ The viewer writes `~/.claude/drive-organizer/proposals_approved.json` on submit 
 ]
 ```
 
-`action` values are a **closed set**: exactly `"approved"` | `"rejected"` | `"inbox"` | `"delete"` — the viewer emits no others, and any other value is a contract violation (execute defaults an unrecognized/absent `action` to `"approved"` via `entry.get("action", "approved")`, so a malformed action silently routes by `para_subfolder` rather than erroring — don't rely on that). Flagged entries (`?`) are **not** in this file — they go directly to the registry as `status='flagged'`. Rejected entries must have their `para_subfolder` corrected and written back before execute. `new_filename` is always populated.
+`action` values are a **closed set**: exactly `"approved"` | `"rejected"` | `"inbox"` | `"delete"` — the viewer emits no others, and any other value is a contract violation (execute defaults an unrecognized/absent `action` to `"approved"` via `entry.get("action", "approved")`, so a malformed action silently routes by `para_subfolder` rather than erroring — don't rely on that). Flagged entries (`?`) are **not** in this file — they go directly to the registry as `status='flagged'`. The closed `action` set above applies to `proposals_approved.json` (post-viewer); entries in `proposals_classified.json` (pre-viewer — including arbiter `reroute_low` entries) carry **no** `action` field — the viewer assigns `action` on submit, so a classified entry must not carry one. Rejected entries must have their `para_subfolder` corrected and written back before execute. `new_filename` is populated when the classifier or arbiter assigns a clean name; it may be absent when the arbiter omits it (execute falls back to `src.name` — the basename of the entry's `current_path` at execute time, which reflects any prior move — not the scan-time `entry["filename"]`, which is never updated after the original scan).
