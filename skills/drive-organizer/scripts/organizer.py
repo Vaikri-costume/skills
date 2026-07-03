@@ -2174,6 +2174,15 @@ def cmd_propose(args):
     _atomic_write(sidecar, json.dumps(metadata, indent=2))
     print(f"Project metadata sidecar: {sidecar} ({len(metadata)} projects)", file=sys.stderr)
 
+    # Surface active entity policies (Phase-3 Tier-1): a non-empty `policy` on an
+    # entity now drives routing (see references/classify-prompt.md "Policy-driven
+    # routing"); list them so the field is observable, not silently dormant.
+    policies = {name: m["policy"] for name, m in _read_entities(_EFFECTIVE_ROOT).items()
+                if isinstance(m, dict) and m.get("policy")}
+    if policies:
+        print(f"Active entity policies ({len(policies)}): "
+              + ", ".join(f"{n}={p}" for n, p in sorted(policies.items())), file=sys.stderr)
+
     print(json.dumps(result, indent=2))
 
 
@@ -5294,7 +5303,7 @@ function card(e){
    <label title="Which cluster this entity belongs to. See the 'What goes where' legend at the top.">type</label><select onchange="metaEdit('${jsq(e.entity)}','entity_type',this.value)">${types.map(t=>`<option value="${t}" ${t==e.entity_type?'selected':''}>${t} — ${TYPE_HELP[t]}</option>`).join('')}</select>
    <label title="Other names this same thing is known by, so they auto-route to it.">aliases</label><input value="${esc((e.aliases||[]).join(', '))}" placeholder="other names, e.g. Bob, R.S." onchange="metaEdit('${jsq(e.entity)}','aliases',this.value.split(',').map(s=>s.trim()).filter(Boolean))">
    <label title="How this entity relates to you or to another entity (free text).">relation</label><input value="${esc(e.relation||'')}" placeholder="e.g. collaborator, client, partner, employer" onchange="metaEdit('${jsq(e.entity)}','relation',this.value)">
-   <label title="A routing behaviour for this entity's files (optional). Distinct from the 'policy' type: this is the specific rule.">behaviour</label><input value="${esc(e.policy||'')}" placeholder="e.g. event-group (group photos by date/event)" onchange="metaEdit('${jsq(e.entity)}','policy',this.value)">
+   <label title="A routing behaviour for this entity's files (optional). Distinct from the 'policy' type: this is the specific rule. Recognised: 'event-group' files this entity's dated files into date-derived subfolders (YYYY/Month YY). Any other text is just a note.">behaviour</label><input value="${esc(e.policy||'')}" placeholder="e.g. event-group (group photos by date/event)" onchange="metaEdit('${jsq(e.entity)}','policy',this.value)">
    <label title="Free notes — what this rule is for, or why it exists.">notes</label><input value="${esc(e.notes||'')}" placeholder="free notes, e.g. 'primary contact for Project X'" onchange="metaEdit('${jsq(e.entity)}','notes',this.value)">
    <label title="Date range this entity's dated files fall in (optional). Routes loose dated files (bills, statements, photos) to this entity by date — generalised off projects-only. Leave both blank to clear.">date range</label><span style="display:flex;gap:4px"><input type="date" value="${esc((e.date_range||{}).start||'')}" onchange="drEdit('${jsq(e.entity)}','start',this.value)"><input type="date" value="${esc((e.date_range||{}).end||'')}" onchange="drEdit('${jsq(e.entity)}','end',this.value)"></span>
   </div>
