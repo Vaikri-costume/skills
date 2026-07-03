@@ -132,7 +132,7 @@ def _aggregate_rules(root: "Path") -> list:
     whole tree. Each returned entity carries its cross-folder occurrences, inferred
     or explicit entity_type (the clustering key), project metadata, registry usage
     count, and a dead-rule flag. This is the single source the viewer/bootstrap read."""
-    from drive_organizer.cleanup_reconcile import _active_groupings
+    from drive_organizer.routing import _active_groupings
     root = Path(root)
     entities_meta = _read_entities(root)
     groupings = _active_groupings()
@@ -289,7 +289,7 @@ def cmd_rules(args):
     """Aggregate the .tidy-rules.json cascade by entity across the tree. Default
     output is a human one-line-per-entity summary, semantically clustered by
     entity_type. `--json` emits the full structure consumed by the rules viewer."""
-    from drive_organizer.cleanup_reconcile import _active_groupings
+    from drive_organizer.routing import _active_groupings
     root = Path(paths_config._EFFECTIVE_ROOT)
     agg = _aggregate_rules(root)
     if getattr(args, "json", False):
@@ -377,7 +377,7 @@ def _should_prune_subdir(d: str, cp: Path, locked_atomic: set, root: "Path | Non
 def _coverage_gaps(root: Path, dest_set: set) -> list:
     """Folders that physically hold files but have no rule routing into them —
     candidates for 'create a rule' (feeds reconcile)."""
-    from drive_organizer.cleanup_reconcile import _active_groupings
+    from drive_organizer.routing import _active_groupings
     gaps = []
     groupings = _active_groupings()
     locked_atomic = _locked_atomic_names(root)
@@ -428,7 +428,7 @@ def _edit_rule_across_occurrences(root: Path, entity: str, occurrences: list,
     and files on disk are NOT touched — this edits routing rules only.
     create_if_missing: when a folderName isn't present in its rules file (e.g. a
     synthesized area card with no root rule yet), append a new rule for it."""
-    from drive_organizer.cleanup_reconcile import _ensure_in_suffix
+    from drive_organizer.routing import _ensure_in_suffix
     changed = 0
     by_file = {}
     for occ in occurrences:
@@ -510,7 +510,7 @@ def _rename_entity(root: Path, entity: str, occurrences: list, new_name: str,
                    apply: bool = False) -> dict:
     """Rename an entity (rule folderName leaf) across all its occurrences, and rename
     the on-disk folder + update the registry. dry-run unless apply=True."""
-    from drive_organizer.cleanup_reconcile import _active_groupings, _para_category
+    from drive_organizer.routing import _active_groupings, _para_category
     plan, did = [], {"rules": 0, "folders": 0, "rows": 0}
     # Build the per-occurrence plan first (dry-run is just this).
     for occ in occurrences:
@@ -725,7 +725,7 @@ def _apply_area_changes(root: Path, add: list, rename: list, remove: list) -> di
     list (ALL-CAPS enforced). Removal is refused while files still live under the area
     (guard). On-disk folder renames for a renamed area are reported as a structural
     follow-up, not performed silently."""
-    from drive_organizer.cleanup_reconcile import _active_groupings
+    from drive_organizer.routing import _active_groupings
     cfg_path = root / ".organizer" / "config.json"
     cfg = {}
     if cfg_path.exists():
@@ -822,7 +822,7 @@ def _promotion_plan(root: Path, entity: str, occurrences: list, target_parent: s
     """Dry-run plan for moving a folder up/down a level (e.g. a Q2 thing -> its own Q1
     area). Describes the folder move, the rule rewrites, and the registry path updates
     that --apply would perform. Never moves anything here (the user confirms)."""
-    from drive_organizer.cleanup_reconcile import _normalize_grouping
+    from drive_organizer.routing import _normalize_grouping
     steps = []
     target_parent = _normalize_grouping(target_parent.strip("/")) if target_parent else ""
     for occ in occurrences:

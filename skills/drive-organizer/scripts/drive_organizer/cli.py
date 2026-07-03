@@ -33,13 +33,10 @@ from drive_organizer.duplicates_variants import (
 from drive_organizer.viewer_propose import (
     cmd_generate_viewer,
 )
-from drive_organizer.cleanup_reconcile import (
-    cmd_cleanup,
-    cmd_flag_from,
-    cmd_flagged,
-    cmd_reconcile,
-    cmd_status,
-)
+from drive_organizer.cleanup import cmd_cleanup
+from drive_organizer.flagged import cmd_flag_from, cmd_flagged
+from drive_organizer.reconcile import cmd_reconcile
+from drive_organizer.status import cmd_status
 from drive_organizer.csv_export import (
     cmd_csv_export,
 )

@@ -26,7 +26,7 @@ from drive_organizer.csv_export import (
 
 
 def cmd_execute(args):
-    from drive_organizer.cleanup_reconcile import _active_groupings, _normalize_grouping, _para_category
+    from drive_organizer.routing import _active_groupings, _normalize_grouping, _para_category
     from drive_organizer.viewer_propose import _persist_flagged_status
     approved_path = Path(args.approved)
     if not approved_path.exists():

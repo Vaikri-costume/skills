@@ -9,6 +9,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from . import config_dials
+
 
 REGISTRY_DB = Path.home() / ".claude" / "drive-organizer" / "registry.db"  # overridden at startup
 
@@ -91,79 +93,41 @@ def _print_optional_deps_notice():
 # Special staging folders — never cleaned up, never re-scanned as fresh content
 PARA_ROOTS = {"_Inbox", "_To Delete", "_Duplicates", "_Merged-Originals", "Archive"}
 
-PEEK_CHARS = 300   # max chars to extract for content peek — ultimate fallback default;
-                   # see _effective_peek_chars() for the config-aware value used at runtime.
+# Config-dial subsystem (constants, _effective_*() readers, write-side validation,
+# Settings-panel row generation) now lives in config_dials.py, driven by its DIALS
+# descriptor table — see that module's docstring. The names below are re-exported
+# unchanged so every existing `from .paths_config import _effective_batch_size` (etc.)
+# call site across the package keeps working without modification.
+#
+# `download_poll_timeout` keeps its DRIVE_ORG_DL_TIMEOUT env-var precedence layer
+# here (env > config > default) since that's a paths_config-level concern (env
+# resolution), not a generic dial-table concern.
+PEEK_CHARS = config_dials.PEEK_CHARS
+BATCH = config_dials.BATCH
+INBOX_ARBITER_TRIGGER = config_dials.INBOX_ARBITER_TRIGGER
+DOWNLOAD_POLL_INTERVAL = config_dials.DOWNLOAD_POLL_INTERVAL
+_DOWNLOAD_POLL_TIMEOUT_DEFAULT = config_dials._DOWNLOAD_POLL_TIMEOUT_DEFAULT
 
-# Classification fan-out batch size: cmd_propose partitions the to-classify
-# residual into batches of this size, one classification sub-agent per batch.
-# Ultimate fallback default — see _effective_batch_size() for the config-aware value.
-BATCH = 25
+_dial_readers = config_dials.make_effective_readers(lambda root: _read_user_config(root))
 
-# Inbox arbiter sweep trigger — soft guideline for when to reclaim _Inbox/ (see SKILL.md
-# "Inbox arbiter sweep"). Ultimate fallback default — see _effective_inbox_arbiter_trigger().
-INBOX_ARBITER_TRIGGER = 100
-
-# Cloud-download polling. The scan used to do a single fixed 0.5s check after
-# triggering a download and skip the file if it hadn't materialised yet — so any
-# file slower than one tick was deferred to a future scan, which is the main
-# cause of slow multi-pass cycles. Now scan polls up to a timeout so the file
-# downloads within the same pass. Tunable via env (DRIVE_ORG_DL_TIMEOUT seconds) or,
-# persistently per-drive, via config.json's "download_poll_timeout" — see
-# _effective_download_poll_timeout() for the resolution order (env > config > default).
-# NOT a module-level constant: it used to be computed once at import time (before
-# _EFFECTIVE_ROOT is even known), which made a per-drive config value unreachable.
-DOWNLOAD_POLL_INTERVAL = 0.5
-_DOWNLOAD_POLL_TIMEOUT_DEFAULT = 30.0
-
-
-def _effective_batch_size(root: "Path | None" = None) -> int:
-    """Effective classification fan-out batch size: config.json's `classify_batch_size`
-    when it validates, else BATCH (25). Defensive: a non-int or <1 value falls back to
-    the safe default rather than corrupting the fan-out partitioning."""
-    cfg = _read_user_config(root)
-    raw = cfg.get("classify_batch_size")
-    return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1 else BATCH
-
-
-def _effective_peek_chars(root: "Path | None" = None) -> int:
-    """Effective content-peek character cap: config.json's `content_peek_chars` when it
-    validates, else PEEK_CHARS (300). Defensive: a non-int or <1 value falls back to the
-    safe default."""
-    cfg = _read_user_config(root)
-    raw = cfg.get("content_peek_chars")
-    return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1 else PEEK_CHARS
-
-
-_PERIOD_BUFFER_DAYS_DEFAULT = 30  # mirrors date_range._expand_date_range's own default param
-
-
-def _effective_period_buffer_days(root: "Path | None" = None) -> int:
-    """Effective date_range buffer-days padding: config.json's `period_buffer_days` when
-    it validates, else 30. Defensive: a non-int or <1 value falls back to the safe
-    default. `_expand_date_range` keeps its own `buffer_days=30` parameter default too,
-    so it stays safe if ever called without an explicit value."""
-    cfg = _read_user_config(root)
-    raw = cfg.get("period_buffer_days")
-    return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1 else _PERIOD_BUFFER_DAYS_DEFAULT
-
-
-def _effective_inbox_arbiter_trigger(root: "Path | None" = None) -> int:
-    """Effective inbox-arbiter-sweep trigger count: config.json's `inbox_arbiter_trigger`
-    when it validates, else INBOX_ARBITER_TRIGGER (100). Defensive: a non-int or <1 value
-    falls back to the safe default. Purely advisory — exposed to the orchestrator via
-    `inbox-list`'s `arbiter_trigger` field; the backend never gates on it itself."""
-    cfg = _read_user_config(root)
-    raw = cfg.get("inbox_arbiter_trigger")
-    return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1 else INBOX_ARBITER_TRIGGER
+_effective_batch_size = _dial_readers["batch_size"]
+_effective_peek_chars = _dial_readers["peek_chars"]
+_effective_period_buffer_days = _dial_readers["period_buffer_days"]
+_effective_inbox_arbiter_trigger = _dial_readers["inbox_arbiter_trigger"]
+_effective_scan_file_limit = _dial_readers["scan_file_limit"]
+_effective_scan_gb_limit = _dial_readers["scan_gb_limit"]
+_effective_date_floor = _dial_readers["date_floor"]
+_effective_date_ceiling_days = _dial_readers["date_ceiling_days"]
+_effective_viewer_page_size = _dial_readers["viewer_page_size"]
 
 
 def _effective_download_poll_timeout(root: "Path | None" = None) -> float:
     """Effective cloud-download poll timeout in seconds. Precedence: the
     DRIVE_ORG_DL_TIMEOUT env var (explicit per-run operator escape hatch) when set,
-    else config.json's `download_poll_timeout` when it validates, else the 30s default.
-    Called at point of use (not cached at import time) so a per-drive config value is
-    reachable once _EFFECTIVE_ROOT is resolved. Defensive: a non-numeric or <=0 config
-    value falls back to the safe default."""
+    else config.json's `download_poll_timeout` when it validates, else the 30s default
+    (config_dials.DIALS's "download_poll_timeout" row). Called at point of use (not
+    cached at import time) so a per-drive config value is reachable once
+    _EFFECTIVE_ROOT is resolved."""
     env = os.environ.get("DRIVE_ORG_DL_TIMEOUT")
     if env:
         try:
@@ -171,90 +135,7 @@ def _effective_download_poll_timeout(root: "Path | None" = None) -> float:
         except ValueError:
             print(f"WARNING: DRIVE_ORG_DL_TIMEOUT={env!r} is not a number; ignoring it.",
                   file=sys.stderr)
-    cfg = _read_user_config(root)
-    raw = cfg.get("download_poll_timeout")
-    if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
-        return float(raw)
-    return _DOWNLOAD_POLL_TIMEOUT_DEFAULT
-
-
-# Scan caps — per-batch ceiling on how much `scan`/`download-batch`/`propose`/`bootstrap`
-# pull in one pass. Ultimate fallback defaults — see _effective_scan_file_limit() /
-# _effective_scan_gb_limit() for the config-aware values. Mirrors today's argparse
-# defaults exactly (250 files / 20.0 GB) so an unset config reproduces current behavior.
-_SCAN_FILE_LIMIT_DEFAULT = 250
-_SCAN_GB_LIMIT_DEFAULT = 20.0
-
-
-def _effective_scan_file_limit(root: "Path | None" = None) -> int:
-    """Effective per-batch file-count cap: config.json's `scan_file_limit` when it
-    validates, else 250. Defensive: a non-int or <=0 value falls back to the safe
-    default. Precedence at the call site is CLI flag > this config value > 250 — an
-    explicit --limit always wins; this is only consulted when the flag is absent."""
-    cfg = _read_user_config(root)
-    raw = cfg.get("scan_file_limit")
-    return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0 else _SCAN_FILE_LIMIT_DEFAULT
-
-
-def _effective_scan_gb_limit(root: "Path | None" = None) -> float:
-    """Effective per-batch cumulative-size cap in GB: config.json's `scan_gb_limit` when
-    it validates, else 20.0. Defensive: a non-numeric or <=0 value falls back to the safe
-    default. Precedence at the call site is CLI flag > this config value > 20.0."""
-    cfg = _read_user_config(root)
-    raw = cfg.get("scan_gb_limit")
-    if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
-        return float(raw)
-    return _SCAN_GB_LIMIT_DEFAULT
-
-
-_VIEWER_PAGE_SIZE_DEFAULT = 25  # mirrors the hardcoded PAGE_SIZE/PAGE literals in
-                                # viewer_propose.py / rules_viewer.py's generated HTML
-
-
-def _effective_viewer_page_size(root: "Path | None" = None) -> int:
-    """Effective rows-per-page for the proposal-review and rules viewers: config.json's
-    `viewer_page_size` when it validates, else 25. Defensive: a non-int or <1 value falls
-    back to the safe default. Does NOT affect rules_viewer.py's entity CAP (250, out of
-    scope — that stays hardcoded)."""
-    cfg = _read_user_config(root)
-    raw = cfg.get("viewer_page_size")
-    return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1 else _VIEWER_PAGE_SIZE_DEFAULT
-
-
-# date_range clamp bounds — a file date outside [floor, ceiling] is treated as
-# unreliable metadata (pre-digital noise or a clock error) and ignored rather than
-# widening a project's date_range. Ultimate fallback defaults — see
-# _effective_date_floor() / _effective_date_ceiling_days() for the config-aware values.
-# `date_ceiling_days` is a RELATIVE day-offset from "now" (not an absolute date) so the
-# ceiling always tracks the current date, exactly like today's `datetime.now() + timedelta(days=365)`.
-_DATE_FLOOR_DEFAULT = datetime(1990, 1, 1)
-_DATE_CEILING_DAYS_DEFAULT = 365
-
-
-def _effective_date_floor(root: "Path | None" = None) -> "datetime":
-    """Effective lower bound for the date_range clamp: config.json's `date_floor`
-    (an ISO date string, e.g. "1990-01-01") when it parses, else datetime(1990, 1, 1).
-    Defensive: a missing, non-string, or unparseable value falls back to the safe
-    default rather than corrupting the clamp."""
-    cfg = _read_user_config(root)
-    raw = cfg.get("date_floor")
-    if isinstance(raw, str) and raw.strip():
-        try:
-            return datetime.fromisoformat(raw.strip()[:10])
-        except (ValueError, TypeError):
-            pass
-    return _DATE_FLOOR_DEFAULT
-
-
-def _effective_date_ceiling_days(root: "Path | None" = None) -> int:
-    """Effective upper-bound offset (days from now) for the date_range clamp:
-    config.json's `date_ceiling_days` when it validates, else 365. Defensive: a
-    non-int or <1 value falls back to the safe default. Kept as a day-offset (not an
-    absolute date) so the caller can compute `datetime.now() + timedelta(days=...)`
-    and the ceiling always tracks "now"."""
-    cfg = _read_user_config(root)
-    raw = cfg.get("date_ceiling_days")
-    return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 1 else _DATE_CEILING_DAYS_DEFAULT
+    return _dial_readers["download_poll_timeout"](root)
 
 
 # ---------------------------------------------------------------------------
@@ -515,32 +396,28 @@ def _settings_for_viewer(root: "Path | None" = None) -> dict:
     else:
         peek = True
         vision = bool(cfg.get("vision", True))  # legacy top-level `vision`
-    return {
+    result = {
         "peek": peek,
         "vision": vision,
         "auto_approve": bool(cfg.get("auto_approve", False)),
         "skip_types": list(cfg.get("skip_types", []) or []),
         "skip_over_mb": cfg.get("skip_over_mb"),  # number or null
         "variant_tokens": list(cfg.get("variant_tokens", []) or []),
-        # Phase-3 Tier-2 dials — each reads through its _effective_*() helper so the
-        # panel always shows the value the backend would actually use (defaults applied,
-        # malformed overrides ignored), never the raw possibly-invalid config.json value.
-        "classify_batch_size": _effective_batch_size(root),
-        "period_buffer_days": _effective_period_buffer_days(root),
-        "content_peek_chars": _effective_peek_chars(root),
-        "download_poll_timeout": _effective_download_poll_timeout(root),
-        "inbox_arbiter_trigger": _effective_inbox_arbiter_trigger(root),
-        "scan_file_limit": _effective_scan_file_limit(root),
-        "scan_gb_limit": _effective_scan_gb_limit(root),
-        "date_floor": _effective_date_floor(root).date().isoformat(),
-        "date_ceiling_days": _effective_date_ceiling_days(root),
-        "viewer_page_size": _effective_viewer_page_size(root),
         # dir_names/suffixes ONLY (marker_files/marker_pairs are shipped-file-only —
         # see _effective_atomic_signatures). Raw config.json value, not the merged set —
         # the panel edits the USER'S extra list, not the shipped+extra union.
         "atomic_signatures_extra": (cfg.get("atomic_signatures_extra")
                                      if isinstance(cfg.get("atomic_signatures_extra"), dict) else {}),
     }
+    # Phase-3 Tier-2 dials — generated from config_dials.DIALS in one pass (each reads
+    # through its _effective_*() wrapper so the panel always shows the value the backend
+    # would actually use — defaults applied, malformed overrides ignored — never the raw
+    # possibly-invalid config.json value). download_poll_timeout uses the paths_config
+    # wrapper (env-var precedence) rather than the raw dial reader.
+    dial_readers = dict(_dial_readers)
+    dial_readers["download_poll_timeout"] = _effective_download_poll_timeout
+    result.update(config_dials.dial_settings_rows(dial_readers, root))
+    return result
 
 
 def _write_user_config(updates: dict, root: "Path | None" = None) -> dict:
@@ -586,163 +463,16 @@ def _write_user_config(updates: dict, root: "Path | None" = None) -> dict:
             raw = [t for t in raw.split(",")]
         tokens = sorted({t.strip().lower() for t in (raw or []) if t and t.strip()})
         cur["variant_tokens"] = tokens
-    # Phase-3 Tier-2 numeric dials. Each: blank/None/0/"0" clears the override (falls
-    # back to the hardcoded default at read time); a non-blank value is stored ONLY if
-    # it validates for that dial's type — an invalid typed value is dropped (never
-    # written), same effect as leaving it unset, so config.json can never persist a
-    # value that would corrupt behavior at read time.
-    # bool is a subclass of int in Python (int(True) == 1, float(True) == 1.0), so every
-    # numeric dial below must explicitly reject bool BEFORE the int()/float() cast — a
-    # bare int(v) would silently accept a stray JSON true/false as a valid 1/0 and write
-    # a nonsense value to config.json. This guard is required on every branch, not just
-    # some of them, since the /config POST handler forwards raw parsed JSON unchanged.
-    if "classify_batch_size" in updates:
-        v = updates["classify_batch_size"]
-        if v in (None, "", 0, "0"):
-            cur.pop("classify_batch_size", None)
-        else:
-            try:
-                if isinstance(v, bool):
-                    raise TypeError
-                iv = int(v)
-                if iv >= 1:
-                    cur["classify_batch_size"] = iv
-                else:
-                    cur.pop("classify_batch_size", None)
-            except (TypeError, ValueError):
-                cur.pop("classify_batch_size", None)
-    if "period_buffer_days" in updates:
-        v = updates["period_buffer_days"]
-        if v in (None, "", 0, "0"):
-            cur.pop("period_buffer_days", None)
-        else:
-            try:
-                if isinstance(v, bool):
-                    raise TypeError
-                iv = int(v)
-                if iv >= 1:
-                    cur["period_buffer_days"] = iv
-                else:
-                    cur.pop("period_buffer_days", None)
-            except (TypeError, ValueError):
-                cur.pop("period_buffer_days", None)
-    if "content_peek_chars" in updates:
-        v = updates["content_peek_chars"]
-        if v in (None, "", 0, "0"):
-            cur.pop("content_peek_chars", None)
-        else:
-            try:
-                if isinstance(v, bool):
-                    raise TypeError
-                iv = int(v)
-                if iv >= 1:
-                    cur["content_peek_chars"] = iv
-                else:
-                    cur.pop("content_peek_chars", None)
-            except (TypeError, ValueError):
-                cur.pop("content_peek_chars", None)
-    if "download_poll_timeout" in updates:
-        v = updates["download_poll_timeout"]
-        if v in (None, "", 0, "0"):
-            cur.pop("download_poll_timeout", None)
-        else:
-            try:
-                if isinstance(v, bool):
-                    raise TypeError
-                fv = float(v)
-                if fv > 0:
-                    cur["download_poll_timeout"] = fv if not fv.is_integer() else int(fv)
-                else:
-                    cur.pop("download_poll_timeout", None)
-            except (TypeError, ValueError):
-                cur.pop("download_poll_timeout", None)
-    if "inbox_arbiter_trigger" in updates:
-        v = updates["inbox_arbiter_trigger"]
-        if v in (None, "", 0, "0"):
-            cur.pop("inbox_arbiter_trigger", None)
-        else:
-            try:
-                if isinstance(v, bool):
-                    raise TypeError
-                iv = int(v)
-                if iv >= 1:
-                    cur["inbox_arbiter_trigger"] = iv
-                else:
-                    cur.pop("inbox_arbiter_trigger", None)
-            except (TypeError, ValueError):
-                cur.pop("inbox_arbiter_trigger", None)
-    if "scan_file_limit" in updates:
-        v = updates["scan_file_limit"]
-        if v in (None, "", 0, "0"):
-            cur.pop("scan_file_limit", None)
-        else:
-            try:
-                if isinstance(v, bool):
-                    raise TypeError
-                iv = int(v)
-                if iv >= 1:
-                    cur["scan_file_limit"] = iv
-                else:
-                    cur.pop("scan_file_limit", None)
-            except (TypeError, ValueError):
-                cur.pop("scan_file_limit", None)
-    if "scan_gb_limit" in updates:
-        v = updates["scan_gb_limit"]
-        if v in (None, "", 0, "0"):
-            cur.pop("scan_gb_limit", None)
-        else:
-            try:
-                if isinstance(v, bool):
-                    raise TypeError
-                fv = float(v)
-                if fv > 0:
-                    cur["scan_gb_limit"] = fv if not fv.is_integer() else int(fv)
-                else:
-                    cur.pop("scan_gb_limit", None)
-            except (TypeError, ValueError):
-                cur.pop("scan_gb_limit", None)
-    if "date_floor" in updates:
-        v = updates["date_floor"]
-        if v in (None, "", 0, "0"):
-            cur.pop("date_floor", None)
-        else:
-            try:
-                if isinstance(v, bool) or not isinstance(v, str):
-                    raise TypeError
-                datetime.fromisoformat(v.strip()[:10])  # validate only; store the raw ISO string
-                cur["date_floor"] = v.strip()[:10]
-            except (TypeError, ValueError):
-                cur.pop("date_floor", None)
-    if "date_ceiling_days" in updates:
-        v = updates["date_ceiling_days"]
-        if v in (None, "", 0, "0"):
-            cur.pop("date_ceiling_days", None)
-        else:
-            try:
-                if isinstance(v, bool):
-                    raise TypeError
-                iv = int(v)
-                if iv >= 1:
-                    cur["date_ceiling_days"] = iv
-                else:
-                    cur.pop("date_ceiling_days", None)
-            except (TypeError, ValueError):
-                cur.pop("date_ceiling_days", None)
-    if "viewer_page_size" in updates:
-        v = updates["viewer_page_size"]
-        if v in (None, "", 0, "0"):
-            cur.pop("viewer_page_size", None)
-        else:
-            try:
-                if isinstance(v, bool):
-                    raise TypeError
-                iv = int(v)
-                if iv >= 1:
-                    cur["viewer_page_size"] = iv
-                else:
-                    cur.pop("viewer_page_size", None)
-            except (TypeError, ValueError):
-                cur.pop("viewer_page_size", None)
+    # Phase-3 Tier-2 numeric/date dials. Each: blank/None/0/"0" clears the override
+    # (falls back to the hardcoded default at read time); a non-blank value is stored
+    # ONLY if it validates for that dial's type — an invalid typed value is dropped
+    # (never written), same effect as leaving it unset, so config.json can never
+    # persist a value that would corrupt behavior at read time. Generated in one pass
+    # from config_dials.DIALS instead of one hand-copied if-block per dial — every
+    # dial's caster (config_dials._cast_pos_int / _cast_pos_float / _cast_iso_date_str)
+    # explicitly rejects bool BEFORE the int()/float() cast (bool is an int subclass in
+    # Python, so a bare int(v) would silently accept a stray JSON true/false as 1/0).
+    config_dials.apply_all_dial_updates(updates, cur)
     if "atomic_signatures_extra" in updates:
         v = updates["atomic_signatures_extra"]
         # dir_names/suffixes ONLY — marker_files/marker_pairs are deliberately NOT
