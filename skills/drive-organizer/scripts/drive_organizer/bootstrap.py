@@ -8,10 +8,12 @@ from pathlib import Path
 from drive_organizer import paths_config
 from drive_organizer.paths_config import (
     _atomic_write,
-    _effective_atomic_signatures,
     _effective_batch_size,
     _effective_scan_file_limit,
     _safe_dest,
+)
+from drive_organizer.atomic_signatures import (
+    _effective_atomic_signatures,
 )
 from drive_organizer.content_peek import (
     peek_content,

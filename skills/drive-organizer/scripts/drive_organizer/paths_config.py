@@ -37,15 +37,6 @@ CONFIG_PATH = Path.home() / ".claude" / "drive-organizer" / "config.json"
 _EFFECTIVE_ROOT = DEFAULT_ONEDRIVE  # set in main() from --root / config / DEFAULT
 _PATHS_FINALIZED = False  # flipped by _finalize_runtime_paths(); see get_db()
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".heic", ".heif", ".webp", ".tiff", ".tif", ".bmp", ".jfif"}
-# Camera RAW formats (file-type-routing.md "Images and Camera RAW"). RAW is an image for
-# routing purposes (no text peek, route by parent folder + filename) BUT can NEVER be
-# vision-read regardless of the vision toggle — Claude can't decode proprietary RAW. So
-# is_image is TRUE for RAW (the no-peek / image-routing gate) and RAW is permanently
-# vision-blocked (see _open_blocked), making the arbiter route it by name like a JPEG.
-RAW_EXTS = {".nef", ".raf", ".arw", ".cr2", ".cr3", ".dng", ".orf", ".rw2"}
-# RAW formats are not in IMAGE_EXTS — Claude can't vision-read them, and the skill routes
-# them by filename + parent folder via the Documents/RAW process instead.
 SKIP_NAMES = {".DS_Store", ".localized", "desktop.ini", "thumbs.db", ".tidy-rules.json"}
 SKIP_EXTS  = {".tmp", ".partial", ".lnk", ".ini"}
 
@@ -286,62 +277,6 @@ def _is_external(folder_path: Path) -> bool:
     return False
 
 
-def _merge_lists(base_list: list, override_list: list) -> list:
-    """
-    Merge two lists for the template override. If every element is a dict with a
-    "name" key, merge by name (override replaces the same-named base entry, new
-    names append) — so a user override of `ENTERTAINMENT` cleanly replaces the
-    skeleton's `ENTERTAINMENT` rather than duplicating it. Otherwise concatenate
-    with simple dedup.
-
-    Dedup semantics (by-name branch): keys are the `name` values; within base or
-    override, an earlier same-named entry is dropped in favour of the override's
-    (or, absent an override, the base's first occurrence). If any `name` is
-    unhashable (e.g. a list/dict value), we cannot build the name index, so we
-    fall back to the concat+value-dedup branch rather than crash.
-    """
-    items = base_list + override_list
-    if items and all(isinstance(x, dict) and "name" in x for x in items):
-        try:
-            by_name = {x["name"]: x for x in base_list}
-            for x in override_list:
-                by_name[x["name"]] = x  # override wins
-            result, seen = [], set()
-            for x in base_list + override_list:
-                if x["name"] not in seen:
-                    result.append(by_name[x["name"]])
-                    seen.add(x["name"])
-            return result
-        except TypeError:
-            # An unhashable "name" — can't dedup by name; fall through to concat.
-            pass
-    return base_list + [x for x in override_list if x not in base_list]
-
-
-def _deep_merge(base: dict, override: dict) -> dict:
-    """
-    Recursively merge `override` into a copy of `base`. Dicts merge key-by-key;
-    lists merge via _merge_lists (by "name" when present, else concat+dedup);
-    scalars from the override win. Used to layer a per-user template override
-    over the shipped skeleton.
-
-    The result must NOT alias the cached base or the override: nested dict/list
-    values that are NOT recursively merged are deep-copied so a caller mutating
-    the returned tree can never corrupt the process-wide _TEMPLATES_CACHE base.
-    """
-    out = {k: copy.deepcopy(v) for k, v in base.items()}
-    for k, v in override.items():
-        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
-            out[k] = _deep_merge(out[k], v)
-        elif k in out and isinstance(out[k], list) and isinstance(v, list):
-            # _merge_lists returns elements aliased from base/override; deep-copy
-            # so the merged list can't reach back into the cached base or override.
-            out[k] = copy.deepcopy(_merge_lists(out[k], v))
-        else:
-            out[k] = copy.deepcopy(v)
-    return out
-
-
 def _read_user_config(root: "Path | None" = None) -> dict:
     """
     Per-user / per-drive settings that are NOT shipped with the skill — they live
@@ -509,167 +444,13 @@ def _skill_references_dir() -> Path:
     return base_dir / "references"
 
 
-_TEMPLATES_CACHE = None
-
-def _load_templates() -> dict:
-    """
-    Load the subfolder templates source-of-truth from the skill's references folder,
-    then deep-merge any per-user override at <root>/.organizer/templates.json on top.
-    Returns {} if the shipped file is missing.
-
-    Caching: a long-running viewer server can hold this process while the user
-    edits their override file, so the cache is keyed on the override file's mtime
-    (and existence) — if that changes, we re-read instead of serving stale data.
-
-    The shipped file is a generic skeleton (the five Q1 groupings + universal compound
-    children). Each user grows their own taxonomy lazily via .tidy-rules.json, and may
-    also drop a templates.json beside their registry to extend the skeleton with their
-    own projects/structure — that override is merged here so the shipped skill stays
-    generic while the user's drive carries their specifics.
-    """
-    global _TEMPLATES_CACHE
-    override_path = None
-    if _EFFECTIVE_ROOT:
-        override_path = Path(_EFFECTIVE_ROOT) / ".organizer" / "templates.json"
-    try:
-        override_mtime = override_path.stat().st_mtime if override_path and override_path.exists() else None
-    except OSError:
-        override_mtime = None
-    # Templates live in the skill's references/ at the canonical Claude Code skills
-    # path. First-time-setup copies the drive_organizer/ package plus the thin
-    # organizer.py entrypoint to ~/.claude/drive-organizer/; references/ are NOT
-    # copied, so they are read from the install dir here. If the
-    # skill is installed somewhere non-standard this file won't be found and `base`
-    # stays {} (then _active_groupings falls back to DEFAULT_GROUPINGS and the taxonomy
-    # is the bare skeleton) — a documented degradation, not a crash. Override with the
-    # DRIVE_ORG_SKILL_DIR env var when installed elsewhere.
-    skill_dir = os.environ.get("DRIVE_ORG_SKILL_DIR")
-    base_dir = Path(skill_dir) if skill_dir else (Path.home() / ".claude" / "skills" / "drive-organizer")
-    templates_path = base_dir / "references" / "subfolder-templates.json"
-    try:
-        skeleton_mtime = os.path.getmtime(templates_path) if templates_path.exists() else 0
-    except OSError:
-        skeleton_mtime = 0
-    cache_key = (override_mtime, skeleton_mtime)
-    if _TEMPLATES_CACHE is not None and _TEMPLATES_CACHE[0] == cache_key:
-        return _TEMPLATES_CACHE[1]
-    base = {}
-    if templates_path.exists():
-        try:
-            base = json.loads(templates_path.read_text(encoding="utf-8"))
-        except Exception as e:
-            print(f"WARNING: could not parse shipped templates {templates_path} "
-                  f"({e}); using empty skeleton.", file=sys.stderr)
-            base = {}
-    # Per-user override on the active drive (never shipped with the skill).
-    if override_path and override_path.exists():
-        try:
-            override = json.loads(override_path.read_text(encoding="utf-8"))
-            if isinstance(override, dict):
-                base = _deep_merge(base, override)
-        except Exception as e:
-            print(f"WARNING: could not parse template override {override_path} "
-                  f"({e}); ignoring it.", file=sys.stderr)
-    _TEMPLATES_CACHE = (cache_key, base)
-    return base
-
-
-def cmd_templates(args):
-    """Print the effective templates as JSON — the shipped generic skeleton
-    deep-merged with the per-user <root>/.organizer/templates.json override.
-    The propose flow loads THIS (not the raw shipped file) so the executor sees
-    the user's full taxonomy, not just the generic skeleton."""
-    print(json.dumps(_load_templates(), ensure_ascii=False, indent=2))
-
-
 _FITZ_LOCK = threading.Lock()
 
 
 _XML_PEEK_CAP = 5 * 1024 * 1024  # 5 MB
 
 
-_UF_DATALESS = 0x40000000  # macOS flag set by NSFileProvider on not-yet-downloaded files
-
-# Windows reparse/offline attributes signalling a not-yet-materialised placeholder.
-_WIN_RECALL_ON_DATA_ACCESS = 0x00400000  # FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
-_WIN_OFFLINE              = 0x00001000  # FILE_ATTRIBUTE_OFFLINE
-
-
 CSV_EXPORT_PATH = Path.home() / ".claude" / "drive-organizer" / "registry.csv"  # overridden at startup
-
-# Supplementary category words with NO analog anywhere in tidy-builtin-categories.json's
-# `category` field or `keywords` arrays (computed once by diffing the old hand-typed
-# 41-word _COMMON_CATEGORY_WORDS against that file's derived word set — these 20 are the
-# words that matched nothing, exact or naive-plural-stemmed). Preserved deliberately as
-# genuine supplementary signal, not duplicated from the JSON, since the JSON has no
-# analog to fall back on for them.
-_CATEGORY_WORDS_SUPPLEMENTARY = {
-    "admin", "attachments", "correspondence", "deliverables", "docs", "drafts",
-    "expenses", "exports", "feedback", "financials", "imports", "legal", "misc",
-    "miscellaneous", "notes", "output", "outputs", "planning", "scans", "templates",
-}
-
-
-_CATEGORY_WORDS_CACHE = None
-
-
-def _load_category_words() -> set:
-    """Derive the functional-subfolder word set from the shipped
-    references/tidy-builtin-categories.json: lowercase every entry's `category` field
-    and every string in its `keywords` array, union them all — PLUS the naive plural
-    ('+s') of each single-word entry, since tidy-builtin-categories.json's keywords
-    skew singular ("bill", "invoice", "receipt") while real folder names skew plural
-    ("Bills", "Invoices", "Receipts"); without the stem-expansion those folders would
-    silently stop matching (a real regression vs the old hardcoded plural-heavy list).
-    mtime-cached, same degrade posture as every other references/ loader — an empty
-    set (+ stderr WARNING) if the file is missing/malformed, never a crash."""
-    global _CATEGORY_WORDS_CACHE
-    cat_path = _skill_references_dir() / "tidy-builtin-categories.json"
-    try:
-        mtime = os.path.getmtime(cat_path) if cat_path.exists() else 0
-    except OSError:
-        mtime = 0
-    if _CATEGORY_WORDS_CACHE is not None and _CATEGORY_WORDS_CACHE[0] == mtime:
-        return _CATEGORY_WORDS_CACHE[1]
-    words = set()
-    if cat_path.exists():
-        try:
-            data = json.loads(cat_path.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                for entry in data:
-                    if not isinstance(entry, dict):
-                        continue
-                    cat = entry.get("category")
-                    if isinstance(cat, str) and cat.strip():
-                        words.add(cat.strip().lower())
-                    kws = entry.get("keywords")
-                    if isinstance(kws, list):
-                        words |= {kw.strip().lower() for kw in kws if isinstance(kw, str) and kw.strip()}
-            else:
-                print(f"WARNING: shipped categories {cat_path} is not a JSON list; "
-                      f"category-word signal will be empty (+ supplementary words).", file=sys.stderr)
-        except Exception as e:
-            print(f"WARNING: could not parse shipped categories {cat_path} "
-                  f"({e}); category-word signal will be empty (+ supplementary words).", file=sys.stderr)
-    # Naive plural stem: a single alphabetic word not already ending in 's' also gets
-    # its '+s' form added (bill -> bills, invoice -> invoices). Multi-word phrases
-    # ("job application", "birth certificate") are left alone — pluralizing a phrase
-    # naively is unreliable and folder names for those are rarely bare plurals anyway.
-    for w in list(words):
-        if w.isalpha() and not w.endswith("s"):
-            words.add(w + "s")
-    _CATEGORY_WORDS_CACHE = (mtime, words)
-    return words
-
-
-def _effective_common_category_words() -> set:
-    """Effective functional-subfolder word set consumed by entities_rules._infer_entity_type:
-    the JSON-derived words (_load_category_words) unioned with the small hand-labelled
-    _CATEGORY_WORDS_SUPPLEMENTARY constant. Replaces the old hand-typed 41-word
-    _COMMON_CATEGORY_WORDS literal — computed once from shipped data instead, re-derived
-    whenever the mtime-cache invalidates (never stale after a references/ file edit or a
-    _reset_caches() call)."""
-    return _load_category_words() | _CATEGORY_WORDS_SUPPLEMENTARY
 
 
 _CLUSTER_ORDER = ["area", "project", "person", "category", "policy", "atomic", "unknown"]
@@ -681,115 +462,21 @@ _CLUSTER_LABEL = {
 
 
 def _reset_caches():
-    """Clear the process-level templates + atomic-signatures caches so a live (keepalive)
-    save re-reads config + shipped references and the refreshed view reflects area/config
-    changes. Groupings are derived from _load_templates() on every call and have no
-    independent cache to clear. atomic-signatures is included because
+    """Clear the process-level templates + atomic-signatures + category-words caches so a
+    live (keepalive) save re-reads config + shipped references and the refreshed view
+    reflects area/config changes. Groupings are derived from _load_templates() on every
+    call and have no independent cache to clear. atomic-signatures is included because
     _effective_atomic_signatures() reads config.json's atomic_signatures_extra on every
     call (never cached) but the SHIPPED half (_load_atomic_signatures) is mtime-cached —
     a keepalive-refresh after editing config.json's extra list still needs the shipped
-    half fresh in the (rare) case the shipped file also changed underfoot."""
-    global _TEMPLATES_CACHE, _ATOMIC_SIGNATURES_CACHE, _CATEGORY_WORDS_CACHE
-    _TEMPLATES_CACHE = None
-    _ATOMIC_SIGNATURES_CACHE = None
-    _CATEGORY_WORDS_CACHE = None
+    half fresh in the (rare) case the shipped file also changed underfoot.
 
-
-# Hardcoded fallback — used ONLY when the shipped references/atomic-signatures.json is
-# missing/unparseable, so a broken install never loses atomic-unit protection entirely.
-# This matches the tool's ORIGINAL hardcoded behavior exactly (i.e. WITHOUT the two
-# signatures — OSCAR_Data, Backups.backupdb — added later via the shipped JSON file).
-_ATOMIC_DIR_NAMES_FALLBACK = {"node_modules", ".git", "venv", ".venv", "env", "__pycache__",
-                              ".tox", "site-packages", "Pods", "vendor"}
-_ATOMIC_SUFFIXES_FALLBACK = (".app", ".framework", ".bundle", ".xcodeproj", ".photoslibrary",
-                             ".imovielibrary", ".tvlibrary", ".aplibrary")
-# Must remain a tuple (not a set): str.endswith() requires a tuple for multi-suffix matching.
-_ATOMIC_MARKER_FILES_FALLBACK = [
-    {"probe": "pyvenv.cfg", "kind": "file", "marker": "venv"},
-    {"probe": "zotero.sqlite", "kind": "file", "marker": "zotero"},
-    {"probe": ".git", "kind": "dir", "marker": "git-repo"},
-]
-_ATOMIC_MARKER_PAIRS_FALLBACK = [
-    {"probes": ["Assets", "ProjectSettings"], "kind": "dir", "marker": "unity"},
-]
-
-
-_ATOMIC_SIGNATURES_CACHE = None
-
-
-def _load_atomic_signatures() -> dict:
-    """Load the atomic-unit signature source-of-truth from the skill's references/
-    folder (references/atomic-signatures.json) — same shape/caching/degrade pattern
-    as _load_templates(). Returns a dict with dir_names (list), suffixes (list),
-    marker_files (list of {probe,kind,marker}), marker_pairs (list of
-    {probes,kind,marker}). Degrades to the hardcoded *_FALLBACK constants above
-    (today's exact original behavior, i.e. without OSCAR_Data/Backups.backupdb) if the
-    shipped file is missing/unparseable — a WARNING is printed, never a crash.
-
-    Caching: mtime-keyed on the shipped file only (unlike _load_templates there is no
-    per-drive override merged in HERE — user extension is a separate, narrower surface;
-    see _effective_atomic_signatures)."""
-    global _ATOMIC_SIGNATURES_CACHE
-    sig_path = _skill_references_dir() / "atomic-signatures.json"
-    try:
-        mtime = os.path.getmtime(sig_path) if sig_path.exists() else 0
-    except OSError:
-        mtime = 0
-    if _ATOMIC_SIGNATURES_CACHE is not None and _ATOMIC_SIGNATURES_CACHE[0] == mtime:
-        return _ATOMIC_SIGNATURES_CACHE[1]
-    fallback = {
-        "dir_names": sorted(_ATOMIC_DIR_NAMES_FALLBACK),
-        "suffixes": list(_ATOMIC_SUFFIXES_FALLBACK),
-        "marker_files": list(_ATOMIC_MARKER_FILES_FALLBACK),
-        "marker_pairs": list(_ATOMIC_MARKER_PAIRS_FALLBACK),
-    }
-    data = fallback
-    if sig_path.exists():
-        try:
-            raw = json.loads(sig_path.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                data = {
-                    "dir_names": [x for x in raw.get("dir_names", []) if isinstance(x, str) and x],
-                    "suffixes": [x for x in raw.get("suffixes", []) if isinstance(x, str) and x],
-                    "marker_files": [m for m in raw.get("marker_files", [])
-                                     if isinstance(m, dict) and m.get("probe") and m.get("kind") and m.get("marker")],
-                    "marker_pairs": [m for m in raw.get("marker_pairs", [])
-                                     if isinstance(m, dict) and isinstance(m.get("probes"), list)
-                                     and len(m.get("probes")) >= 1 and m.get("kind") and m.get("marker")],
-                }
-            else:
-                print(f"WARNING: shipped atomic signatures {sig_path} is not a JSON object; "
-                      f"using hardcoded fallback signatures.", file=sys.stderr)
-        except Exception as e:
-            print(f"WARNING: could not parse shipped atomic signatures {sig_path} "
-                  f"({e}); using hardcoded fallback signatures.", file=sys.stderr)
-    _ATOMIC_SIGNATURES_CACHE = (mtime, data)
-    return data
-
-
-def _effective_atomic_signatures(root: "Path | None" = None) -> dict:
-    """Shipped atomic-unit signatures (_load_atomic_signatures) merged with the
-    per-drive user extension at <root>/.organizer/config.json's `atomic_signatures_extra`
-    key (dir_names/suffixes ONLY — marker_files/marker_pairs stay shipped-file-only,
-    since letting arbitrary user JSON define filesystem probe behavior is a different
-    risk tier than a plain string list). Returns the same 4-key shape as
-    _load_atomic_signatures; dir_names/suffixes are the union (shipped ∪ user extra),
-    deduped, order not significant to callers (both are membership tests)."""
-    base = _load_atomic_signatures()
-    cfg = _read_user_config(root)
-    extra = cfg.get("atomic_signatures_extra")
-    extra_dirs, extra_suffixes = [], []
-    if isinstance(extra, dict):
-        raw_dirs = extra.get("dir_names")
-        if isinstance(raw_dirs, list):
-            extra_dirs = [x for x in raw_dirs if isinstance(x, str) and x.strip()]
-        raw_suffixes = extra.get("suffixes")
-        if isinstance(raw_suffixes, list):
-            extra_suffixes = [x for x in raw_suffixes if isinstance(x, str) and x.strip()]
-    return {
-        "dir_names": sorted(set(base["dir_names"]) | set(extra_dirs)),
-        "suffixes": sorted(set(base["suffixes"]) | set(extra_suffixes)),
-        "marker_files": base["marker_files"],
-        "marker_pairs": base["marker_pairs"],
-    }
+    Each cache now lives in its own module (templates.py, atomic_signatures.py,
+    category_words.py); this delegates to each module's own _reset_cache() helper since
+    module-level globals must be cleared through the module namespace, not a rebound
+    local import."""
+    from drive_organizer import atomic_signatures, category_words, templates
+    templates._reset_cache()
+    atomic_signatures._reset_cache()
+    category_words._reset_cache()
 

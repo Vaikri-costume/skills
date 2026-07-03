@@ -54,7 +54,7 @@ from drive_organizer.bootstrap import (
     cmd_bootstrap,
 )
 from drive_organizer import paths_config
-from drive_organizer.paths_config import (
+from drive_organizer.templates import (
     cmd_templates,
 )
 
