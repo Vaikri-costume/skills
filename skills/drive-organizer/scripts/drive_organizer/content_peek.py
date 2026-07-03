@@ -1,5 +1,6 @@
 """drive_organizer.content_peek — split from the original organizer.py (pure structural move, no behavior change)."""
 from __future__ import annotations
+import functools
 import hashlib
 import os
 import re
@@ -7,7 +8,9 @@ import sqlite3
 import sys
 import zipfile
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, Optional
 
 from drive_organizer import paths_config
 from drive_organizer.paths_config import (
@@ -127,48 +130,6 @@ def should_skip(path: Path) -> bool:
 # ---------------------------------------------------------------------------
 # Content peek — extract a short text snippet for classification
 # ---------------------------------------------------------------------------
-
-def peek_content(path: Path) -> str | None:
-    """
-    Extract up to the effective peek-chars cap (config.json's `content_peek_chars`,
-    else PEEK_CHARS=300 — see paths_config._effective_peek_chars) of meaningful text
-    from a file. Returns None for images (handled by vision), audio/video, and
-    unreadable files. The snippet is used by Claude when filename heuristics are weak.
-    """
-    ext = path.suffix.lower()
-
-    if ext in IMAGE_EXTS:
-        return None  # images use Claude vision
-
-    try:
-        if ext == ".pdf":
-            return _peek_pdf(path)
-        elif ext in {".docx", ".odt"}:
-            return _peek_zip_xml(path, _docx_text)
-        elif ext in {".xlsx", ".ods"}:
-            return _peek_zip_xml(path, _xlsx_text)
-        elif ext in {".pptx", ".odp"}:
-            return _peek_zip_xml(path, _pptx_text)
-        elif ext == ".fdx":
-            return _peek_fdx(path)
-        elif ext in {".txt", ".md", ".csv", ".rtf", ".json", ".xml",
-                     ".html", ".htm", ".py", ".js", ".ts"}:
-            return _peek_text(path, ext)
-        elif ext == ".zip":
-            return _peek_zip_listing(path)
-        elif ext in {".mp3", ".m4a", ".m4b", ".flac", ".aac",
-                     ".aif", ".aiff", ".wav", ".ogg", ".opus", ".wma"}:
-            return _peek_audio(path)
-        else:
-            return None
-    except (OSError, ValueError, zipfile.BadZipFile, ET.ParseError,
-            KeyError, UnicodeError, RuntimeError):
-        # Expected, per-file failures (unreadable, malformed container, bad XML) —
-        # peek is best-effort. Deliberately NOT a bare `except Exception`: a
-        # MemoryError (e.g. a pathological parse) must propagate, not be masked as
-        # "no peek" while the process is already in trouble.
-        return None
-
 
 def _peek_audio(path: Path) -> str | None:
     """
@@ -372,6 +333,79 @@ def _peek_zip_listing(path: Path) -> str | None:
 def _clean(text: str) -> str | None:
     text = re.sub(r"\s+", " ", text).strip()
     return text[:_effective_peek_chars()] if text else None
+
+
+# ---------------------------------------------------------------------------
+# Extractor table — mirrors the Dial pattern in config_dials.py: one row per
+# file-type family instead of a hand-written if/elif chain in peek_content().
+# Adding a new file type means adding one row here, not a new elif branch.
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Extractor:
+    """One content-peek extractor descriptor.
+
+    name: short label for the extractor family (diagnostic use only).
+    extensions: the exact set of lowercase suffixes (incl. leading '.') this
+                extractor handles — must match peek_content's original checks
+                exactly.
+    extract: path -> snippet or None. For the zip/XML formats (.docx/.odt,
+             .xlsx/.ods, .pptx/.odp) this is `_peek_zip_xml` pre-bound to the
+             format-specific inner extractor via functools.partial, since
+             `_peek_zip_xml(path, extractor)` takes an extra arg beyond path.
+    """
+    name: str
+    extensions: frozenset[str]
+    extract: Callable[[Path], Optional[str]]
+
+
+EXTRACTORS = [
+    Extractor("pdf", frozenset({".pdf"}), _peek_pdf),
+    Extractor("docx", frozenset({".docx", ".odt"}),
+              functools.partial(_peek_zip_xml, extractor=_docx_text)),
+    Extractor("xlsx", frozenset({".xlsx", ".ods"}),
+              functools.partial(_peek_zip_xml, extractor=_xlsx_text)),
+    Extractor("pptx", frozenset({".pptx", ".odp"}),
+              functools.partial(_peek_zip_xml, extractor=_pptx_text)),
+    Extractor("fdx", frozenset({".fdx"}), _peek_fdx),
+    Extractor("text", frozenset({".txt", ".md", ".csv", ".rtf", ".json", ".xml",
+                                  ".html", ".htm", ".py", ".js", ".ts"}),
+              lambda path: _peek_text(path, path.suffix.lower())),
+    Extractor("zip", frozenset({".zip"}), _peek_zip_listing),
+    Extractor("audio", frozenset({".mp3", ".m4a", ".m4b", ".flac", ".aac",
+                                   ".aif", ".aiff", ".wav", ".ogg", ".opus", ".wma"}),
+              _peek_audio),
+]
+
+_EXTRACTOR_BY_EXT: dict[str, Extractor] = {
+    ext: extractor for extractor in EXTRACTORS for ext in extractor.extensions
+}
+
+
+def peek_content(path: Path) -> str | None:
+    """
+    Extract up to the effective peek-chars cap (config.json's `content_peek_chars`,
+    else PEEK_CHARS=300 — see paths_config._effective_peek_chars) of meaningful text
+    from a file. Returns None for images (handled by vision), audio/video, and
+    unreadable files. The snippet is used by Claude when filename heuristics are weak.
+    """
+    ext = path.suffix.lower()
+
+    if ext in IMAGE_EXTS:
+        return None  # images use Claude vision
+
+    extractor = _EXTRACTOR_BY_EXT.get(ext)
+    if extractor is None:
+        return None
+
+    try:
+        return extractor.extract(path)
+    except (OSError, ValueError, zipfile.BadZipFile, ET.ParseError,
+            KeyError, UnicodeError, RuntimeError):
+        # Expected, per-file failures (unreadable, malformed container, bad XML) —
+        # peek is best-effort. Deliberately NOT a bare `except Exception`: a
+        # MemoryError (e.g. a pathological parse) must propagate, not be masked as
+        # "no peek" while the process is already in trouble.
+        return None
 
 
 # ---------------------------------------------------------------------------
