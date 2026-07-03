@@ -1,7 +1,7 @@
 ---
 version: "2.9.0"
 category: C
-parent-version: "2.7.0"
+parent-version: "2.8.0"
 author:
   primary: "Vaikri-costume"
   history:
@@ -42,6 +42,19 @@ inspirations:
     "Policy-driven routing" details.
   - No change to existing routing — this is purely additive; entities without a `policy` field
     continue to behave as before.
+
+#### Fixed
+- **Merged ~90 correctness fixes from an independent skill-tracer audit** (sandbox rounds
+  8–12, converged round 13) — crash-recovery safety (move-journal reconciliation,
+  `_bootstrap_apply` path-traversal + `_auto_classify_entry` false-positive guards),
+  `_rename_entity`/`_merge_entities` invariant and error-reporting fixes, `_para_category`
+  uppercase-normalization, `_Inbox` SQL wildcard escaping, RAW-vs-vision blocking-reason
+  clarity, and dozens of doc/cross-reference corrections across `SKILL.md` and
+  `references/*.md`. Notably **`_find_project_for_destination` now accepts a
+  `date_range`-only ancestor** (previously required `filename_tag`), matching the Phase-3
+  date-range generalization — a genuine, user-visible fix to date-range widening on
+  date_range-only folders. Full fix list and rationale:
+  `~/.claude/plans/drive-organizer-cascade-handoff/ledger-fix-checklist.md`.
 
 ### 2.8.0 — 2026-06-24
 
