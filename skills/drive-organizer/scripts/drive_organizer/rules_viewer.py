@@ -9,8 +9,6 @@ from pathlib import Path
 
 from drive_organizer import paths_config
 from drive_organizer.paths_config import (
-    IMAGE_EXTS,
-    RAW_EXTS,
     _CLUSTER_LABEL,
     _CLUSTER_ORDER,
     _effective_viewer_page_size,
@@ -19,6 +17,8 @@ from drive_organizer.paths_config import (
     _write_user_config,
 )
 from drive_organizer.content_peek import (
+    IMAGE_EXTS,
+    RAW_EXTS,
     get_db,
 )
 from drive_organizer.classify_propose import (

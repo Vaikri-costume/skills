@@ -12,7 +12,6 @@ from pathlib import Path
 from drive_organizer import paths_config
 from drive_organizer.paths_config import (
     DOWNLOAD_POLL_INTERVAL,
-    IMAGE_EXTS,
     PARA_ROOTS,
     _effective_download_poll_timeout,
     _effective_scan_file_limit,
@@ -21,6 +20,7 @@ from drive_organizer.paths_config import (
     _is_external,
 )
 from drive_organizer.content_peek import (
+    IMAGE_EXTS,
     _cloud_platform_note,
     _is_placeholder,
     extract_photo_date,

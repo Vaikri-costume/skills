@@ -4,7 +4,8 @@ Split out of cleanup_reconcile.py: these are general routing helpers, not reconc
 logic — reconcile.py is simply one of several callers."""
 from __future__ import annotations
 
-from drive_organizer.paths_config import _read_user_config, _load_templates
+from drive_organizer.paths_config import _read_user_config
+from drive_organizer.templates import _load_templates
 
 
 # The five groupings are the DEFAULT, not a hard limit. The active area set is

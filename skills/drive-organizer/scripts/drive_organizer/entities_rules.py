@@ -12,11 +12,15 @@ from drive_organizer.paths_config import (
     _CLUSTER_LABEL,
     _CLUSTER_ORDER,
     _atomic_write,
-    _effective_common_category_words,
     _has_rules,
     _is_external,
-    _load_templates,
     _reset_caches,
+)
+from drive_organizer.category_words import (
+    _effective_common_category_words,
+)
+from drive_organizer.templates import (
+    _load_templates,
 )
 from drive_organizer.content_peek import (
     get_db,

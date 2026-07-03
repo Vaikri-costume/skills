@@ -14,17 +14,30 @@ from typing import Callable, Optional
 
 from drive_organizer import paths_config
 from drive_organizer.paths_config import (
-    IMAGE_EXTS,
     SKIP_EXTS,
     SKIP_NAMES,
     _FITZ_LOCK,
-    _UF_DATALESS,
-    _WIN_OFFLINE,
-    _WIN_RECALL_ON_DATA_ACCESS,
     _XML_PEEK_CAP,
     _effective_peek_chars,
     _finalize_runtime_paths,
 )
+
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".heic", ".heif", ".webp", ".tiff", ".tif", ".bmp", ".jfif"}
+# Camera RAW formats (file-type-routing.md "Images and Camera RAW"). RAW is an image for
+# routing purposes (no text peek, route by parent folder + filename) BUT can NEVER be
+# vision-read regardless of the vision toggle — Claude can't decode proprietary RAW. So
+# is_image is TRUE for RAW (the no-peek / image-routing gate) and RAW is permanently
+# vision-blocked (see _open_blocked), making the arbiter route it by name like a JPEG.
+RAW_EXTS = {".nef", ".raf", ".arw", ".cr2", ".cr3", ".dng", ".orf", ".rw2"}
+# RAW formats are not in IMAGE_EXTS — Claude can't vision-read them, and the skill routes
+# them by filename + parent folder via the Documents/RAW process instead.
+
+_UF_DATALESS = 0x40000000  # macOS flag set by NSFileProvider on not-yet-downloaded files
+
+# Windows reparse/offline attributes signalling a not-yet-materialised placeholder.
+_WIN_RECALL_ON_DATA_ACCESS = 0x00400000  # FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+_WIN_OFFLINE              = 0x00001000  # FILE_ATTRIBUTE_OFFLINE
 
 
 SCHEMA = """

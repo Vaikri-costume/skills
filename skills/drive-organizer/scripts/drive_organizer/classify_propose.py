@@ -9,15 +9,15 @@ from pathlib import Path
 
 from drive_organizer import paths_config
 from drive_organizer.paths_config import (
-    IMAGE_EXTS,
     PARA_ROOTS,
-    RAW_EXTS,
     _atomic_write,
     _effective_batch_size,
     _effective_scan_file_limit,
     _read_user_config,
 )
 from drive_organizer.content_peek import (
+    IMAGE_EXTS,
+    RAW_EXTS,
     extract_photo_date,
     get_db,
 )
