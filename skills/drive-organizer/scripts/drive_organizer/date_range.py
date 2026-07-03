@@ -15,6 +15,39 @@ from drive_organizer.paths_config import (
 )
 
 
+def format_date_subfolder(file_date: str) -> str:
+    """
+    Deterministic date-bucket subfolder string, e.g. "2024-03-15" -> "2024/March 24".
+
+    Canonical format is YYYY/Month YY (full month name, two-digit year). This is the
+    single source of truth for that format — callers (the classify fan-out agent, via
+    `organizer.py date-subfolder`) must call this rather than hand-computing the string,
+    so every dispatch produces byte-identical subfolder names.
+
+    Raises ValueError with a clear message on malformed/unparseable input, so the CLI
+    wrapper can catch it and print a clean error instead of silently returning junk.
+    """
+    if not file_date or not isinstance(file_date, str):
+        raise ValueError(f"format_date_subfolder: expected an ISO date string, got {file_date!r}")
+    try:
+        dt = datetime.fromisoformat(file_date[:10])
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"format_date_subfolder: could not parse {file_date!r} as YYYY-MM-DD: {e}") from e
+    return f"{dt.year}/{dt.strftime('%B')} {dt.strftime('%y')}"
+
+
+def cmd_date_subfolder(args) -> None:
+    """CLI wrapper for format_date_subfolder: `organizer.py date-subfolder <ISO-date>`.
+    Prints the bare YYYY/Month YY string to stdout (no root/DB dependency, standalone
+    like `exif`). On malformed input, prints a clean error to stderr and exits non-zero
+    instead of letting the ValueError traceback leak."""
+    try:
+        print(format_date_subfolder(args.date))
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def _project_metadata(project_path: Path) -> dict:
     """
     Read filename_tag and date_range from a project's .tidy-rules.json.

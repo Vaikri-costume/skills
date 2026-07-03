@@ -32,6 +32,9 @@ from drive_organizer.content_peek import (
 from drive_organizer.bootstrap import (
     _atomic_marker,
 )
+from drive_organizer.paths_config import (
+    _atomic_write,
+)
 from drive_organizer.entities_rules import (
     _locked_atomic_names,
 )
@@ -238,6 +241,53 @@ def _seed_vocab_from_rules(root: Path, conn: sqlite3.Connection):
         print(f"WARNING: _seed_vocab_from_rules: could not seed path_vocab from "
               f"{rules_file} ({type(e).__name__}: {e}); proposal-path autocomplete "
               f"may be incomplete.", file=sys.stderr)
+
+
+_SCAN_SKIP_STATE_NAME = ".scan_skip_state.json"
+
+
+def _scan_skip_state_path(drive: Path) -> Path:
+    return drive / ".organizer" / _SCAN_SKIP_STATE_NAME
+
+
+def _check_and_update_skip_guard(drive: Path, skipped: int, new_pending: int) -> bool:
+    """Compare this run's `skipped` count against the prior run's sidecar (if any
+    and if it matches this root), then persist the current count. Returns True iff
+    the permanent-skip guard has triggered: same Skipped count as last run AND no
+    new pending files added this run. Mirrors the old session-log-grep semantics
+    but owned entirely by `scan` itself, via a small JSON sidecar under
+    <root>/.organizer/ (same directory + atomic-write convention as config.json /
+    registry files — see paths_config._atomic_write)."""
+    state_path = _scan_skip_state_path(drive)
+    triggered = False
+    prior = None
+    if state_path.exists():
+        try:
+            prior = json.loads(state_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            prior = None
+    if prior and prior.get("root") == str(drive):
+        if prior.get("skipped_count") == skipped and new_pending == 0:
+            triggered = True
+    try:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write(
+            state_path,
+            json.dumps(
+                {
+                    "root": str(drive),
+                    "skipped_count": skipped,
+                    "timestamp": datetime.now().isoformat(),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
+    except OSError as e:
+        print(f"WARNING: could not write scan-skip sidecar {state_path} "
+              f"({type(e).__name__}: {e}); permanent-skip guard may misfire next run.",
+              file=sys.stderr)
+    return triggered
 
 
 def cmd_scan(args):
@@ -675,6 +725,17 @@ def cmd_scan(args):
         for name in unknown_folders:
             print(f"    - {name}")
         print("  → Optional: add a .tidy-rules.json to route these by rule; they're scanned at low priority (P5/6) and classified either way.")
+
+    # Permanent-skip guard: compare this run's Skipped count against the sidecar
+    # persisted by the previous scan of this same root. Triggers when Skipped is
+    # unchanged AND this run added no new pending files (new_count == 0) — the same
+    # two-consecutive-equal-Skipped-with-no-new-pending semantics previously tracked
+    # via a session-log grep, now owned by scan itself.
+    guard_triggered = _check_and_update_skip_guard(drive, skipped, new_count)
+    if guard_triggered:
+        print()
+        print(f"PERMANENT_SKIP_GUARD_TRIGGERED: {skipped} files persistently skipped")
+
     export_csv()
 
 

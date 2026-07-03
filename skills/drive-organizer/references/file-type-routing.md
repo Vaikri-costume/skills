@@ -71,7 +71,7 @@ Either way:
    - Receipts / IDs / medical docs photographed: route through their respective categories (Finance / Government / Health) in the fallback JSON.
    - Anything unresolved: `_Inbox/`.
 
-**Preserve event folders for personal photos**: If a photo's `current_path` shows it's already inside a named event subfolder (e.g. `[Person] Photos/Summer Party 2024/IMG_1234.jpg`, `[Person] Photos/Birthday 2023/`, `[Person] Photos/Trip Feb 2024/`), keep that event folder structure under `PERSONAL/PERSONAL Photos/`. Route the file to `PERSONAL/PERSONAL Photos/Summer Party 2024/`, not `PERSONAL/PERSONAL Photos/2024/March 24/`. Only photos that arrive **loose** (no meaningful parent folder, or only inside a year/date-named container) get bucketed into the `PERSONAL/PERSONAL Photos/YYYY/Month YY/` structure. The event folder name carries information the year/month bucket loses.
+**Preserve event folders for personal photos**: If a photo's `current_path` shows it's already inside a named event subfolder (e.g. `[Person] Photos/Summer Party 2024/IMG_1234.jpg`, `[Person] Photos/Birthday 2023/`, `[Person] Photos/Trip Feb 2024/`), keep that event folder structure under `PERSONAL/PERSONAL Photos/`. Route the file to `PERSONAL/PERSONAL Photos/Summer Party 2024/`, not `PERSONAL/PERSONAL Photos/2024/March 24/`. Only photos that arrive **loose** (no meaningful parent folder, or only inside a year/date-named container) get bucketed by date: call `organizer.py date-subfolder <the-chosen-date>` (returns the exact `YYYY/Month YY` string, e.g. `2024/March 24`, deterministically) and route to `PERSONAL/PERSONAL Photos/<that string>/`. The event folder name carries information the year/month bucket loses.
 
 ---
 

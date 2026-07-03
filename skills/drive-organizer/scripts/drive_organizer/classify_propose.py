@@ -510,7 +510,178 @@ def cmd_propose(args):
         print(f"Active entity filename_tags ({len(entity_tags)}): "
               + ", ".join(f"{n}={t}" for n, t in sorted(entity_tags.items())), file=sys.stderr)
 
+    if getattr(args, "save_records", None):
+        # Purely additive: same records written to stdout, also persisted so the
+        # orchestrator can pass this file straight into `merge-proposals --records`
+        # instead of hand-transcribing its own stdout capture. Does not change the
+        # stdout behavior above in any way.
+        save_path = Path(args.save_records).expanduser()
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write(save_path, json.dumps(result, indent=2, ensure_ascii=False))
+        print(f"Records saved: {save_path} ({len(result)} entries)", file=sys.stderr)
+
     print(json.dumps(result, indent=2))
+
+
+# ---------------------------------------------------------------------------
+# merge-proposals
+# ---------------------------------------------------------------------------
+
+def _load_json_file(path: Path, what: str):
+    if not path.exists():
+        sys.exit(f"Error: {what} file not found: {path}")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        sys.exit(f"Error: could not parse {what} file {path} ({e})")
+
+
+def _verdicts_by_id(raw) -> dict:
+    """Accept either a flat JSON array of verdict objects, or a dict keyed by id —
+    different fan-out dispatch styles may produce either shape, so support both
+    defensively rather than picking one and failing on the other."""
+    out = {}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            if not isinstance(v, dict):
+                continue
+            vid = v.get("id", k)
+            try:
+                vid = int(vid)
+            except (TypeError, ValueError):
+                pass
+            out[vid] = v
+    elif isinstance(raw, list):
+        for v in raw:
+            if not isinstance(v, dict) or "id" not in v:
+                continue
+            vid = v["id"]
+            try:
+                vid = int(vid)
+            except (TypeError, ValueError):
+                pass
+            out[vid] = v
+    else:
+        sys.exit("Error: --verdicts must be a JSON array or an object keyed by id.")
+    return out
+
+
+# Verdict fields that get merged onto a needs_classification record, per
+# classify-prompt.md's output contract and references/filename-conventions.md's
+# "Needs-classification lane" shape.
+_VERDICT_FIELDS = ("para_subfolder", "new_filename", "reason", "signal",
+                    "confidence", "file_date", "vision_desc")
+
+
+def cmd_merge_proposals(args):
+    """Mechanizes the hand-built `proposals_classified.json` merge described in
+    SKILL.md's propose section: union auto-routed records (kept as-is),
+    needs_classification records (enriched with their verdict), optional
+    arbiter-sourced entries (a third, distinct shape — neither auto_routed nor
+    needs_classification), and optional reclassified-rejected carry-forward
+    entries from the previous viewer round. Disjoint-by-id across all lanes."""
+    records_path = Path(args.records).expanduser()
+    verdicts_path = Path(args.verdicts).expanduser()
+
+    records = _load_json_file(records_path, "--records")
+    if not isinstance(records, list):
+        sys.exit(f"Error: --records file {records_path} must be a JSON array.")
+
+    verdicts_raw = _load_json_file(verdicts_path, "--verdicts")
+    verdicts = _verdicts_by_id(verdicts_raw)
+
+    reclassified = []
+    if getattr(args, "reclassified", None):
+        reclassified_path = Path(args.reclassified).expanduser()
+        reclassified = _load_json_file(reclassified_path, "--reclassified")
+        if not isinstance(reclassified, list):
+            sys.exit(f"Error: --reclassified file {reclassified_path} must be a JSON array.")
+
+    arbiter = []
+    if getattr(args, "arbiter", None):
+        arbiter_path = Path(args.arbiter).expanduser()
+        arbiter = _load_json_file(arbiter_path, "--arbiter")
+        if not isinstance(arbiter, list):
+            sys.exit(f"Error: --arbiter file {arbiter_path} must be a JSON array.")
+
+    # Disjoint-by-id invariant check across the two propose lanes: a record can't
+    # be both auto_routed and needs_classification. If it is, that's a bug in
+    # propose's own output, not something to silently paper over.
+    bad_ids = [r.get("id") for r in records
+               if r.get("auto_routed") and r.get("needs_classification")]
+    if bad_ids:
+        sys.exit(f"Error: {len(bad_ids)} record(s) are both auto_routed and "
+                  f"needs_classification (ids: {bad_ids}) — this is a bug in "
+                  f"propose's own output, not a merge-time condition to paper over.")
+
+    n_auto = n_classified = n_missing_verdict = 0
+    merged = []
+    seen_ids = set()
+
+    for r in records:
+        rid = r.get("id")
+        if rid in seen_ids:
+            sys.exit(f"Error: duplicate id {rid} in --records file {records_path}.")
+        seen_ids.add(rid)
+
+        if r.get("auto_routed"):
+            merged.append(dict(r))
+            n_auto += 1
+        elif r.get("needs_classification"):
+            entry = dict(r)
+            verdict = verdicts.get(rid)
+            if verdict is None:
+                print(f"Warning: no verdict found for needs_classification id={rid} "
+                      f"({r.get('filename')}) — leaving record unenriched.", file=sys.stderr)
+                n_missing_verdict += 1
+            else:
+                for field in _VERDICT_FIELDS:
+                    if field in verdict and verdict[field] is not None:
+                        entry[field] = verdict[field]
+                n_classified += 1
+            merged.append(entry)
+        else:
+            # Neither lane set — pass through unchanged (defensive; shouldn't
+            # happen from a well-formed propose output, but don't drop data).
+            merged.append(dict(r))
+
+    # Arbiter-sourced entries (reroute_high/reroute_low) are a third, distinct
+    # entry shape that bypasses the propose fan-out entirely — merged in
+    # unchanged, disjoint-by-id from the propose-derived records above.
+    n_arbiter = 0
+    for a in arbiter:
+        aid = a.get("id")
+        if aid in seen_ids:
+            sys.exit(f"Error: arbiter entry id {aid} collides with an existing "
+                      f"--records id — arbiter entries must be disjoint by id.")
+        seen_ids.add(aid)
+        merged.append(dict(a))
+        n_arbiter += 1
+
+    # Reclassified-rejected entries carried forward from the previous viewer
+    # round (process-return step 3) — already-shaped entries with action='approved'.
+    n_reclassified = 0
+    for e in reclassified:
+        eid = e.get("id")
+        if eid in seen_ids:
+            sys.exit(f"Error: reclassified entry id {eid} collides with an "
+                      f"existing --records/--arbiter id — reclassified entries "
+                      f"must be disjoint by id.")
+        seen_ids.add(eid)
+        merged.append(dict(e))
+        n_reclassified += 1
+
+    out_path = Path.home() / ".claude" / "drive-organizer" / "proposals_classified.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(out_path, json.dumps(merged, indent=2, ensure_ascii=False))
+
+    summary = (f"Wrote proposals_classified.json: {n_auto} auto-routed, "
+               f"{n_classified} classified"
+               + (f" ({n_missing_verdict} missing verdict)" if n_missing_verdict else "")
+               + (f", {n_arbiter} arbiter" if n_arbiter else "")
+               + (f", {n_reclassified} reclassified" if n_reclassified else "")
+               + f" -> {out_path}")
+    print(summary)
 
 
 # ---------------------------------------------------------------------------
