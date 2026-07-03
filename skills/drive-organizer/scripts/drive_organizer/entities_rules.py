@@ -220,8 +220,11 @@ def _aggregate_rules(root: "Path") -> list:
             "policy": meta.get("policy"),
             "notes": meta.get("notes"),
             "review": meta.get("review"),   # persisted "rethink" flag — viewer reads e.review
-            "filename_tag": proj.get("filename_tag"),
-            "date_range": proj.get("date_range"),
+            # Entity-level metadata (entities.json) takes precedence over project-folder
+            # metadata (.tidy-rules.json) when both exist — it's the more specific source
+            # and the one the rules-viewer entity card writes to via /save.
+            "filename_tag": meta.get("filename_tag") or proj.get("filename_tag"),
+            "date_range": meta.get("date_range") or proj.get("date_range"),
             "occurrence_count": len(ent["occurrences"]),
             "usage_count": ucount,
             "dead": ucount == 0,
@@ -240,7 +243,7 @@ def _aggregate_rules(root: "Path") -> list:
                 "aliases": meta.get("aliases", []), "relation": meta.get("relation"),
                 "policy": meta.get("policy"), "notes": meta.get("notes"),
                 "review": meta.get("review"),
-                "filename_tag": None, "date_range": None,
+                "filename_tag": meta.get("filename_tag"), "date_range": meta.get("date_range"),
                 "occurrence_count": 0, "usage_count": 0, "dead": True,
             })
 
@@ -266,7 +269,7 @@ def _aggregate_rules(root: "Path") -> list:
             "aliases": m.get("aliases", []), "relation": m.get("relation"),
             "policy": m.get("policy"), "notes": m.get("notes"),
             "review": m.get("review"),
-            "filename_tag": None, "date_range": None,
+            "filename_tag": m.get("filename_tag"), "date_range": m.get("date_range"),
             "occurrence_count": 1, "usage_count": area_usage, "dead": area_usage == 0,
             "synthetic_area": True,
         })

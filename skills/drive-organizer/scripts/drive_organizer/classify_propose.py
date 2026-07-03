@@ -457,6 +457,17 @@ def cmd_propose(args):
         print(f"Active entity policies ({len(policies)}): "
               + ", ".join(f"{n}={p}" for n, p in sorted(policies.items())), file=sys.stderr)
 
+    # Surface active entity filename_tags (Phase-3 Tier-1 item #3): a non-empty
+    # `filename_tag` on an entity is the canonical tag for new_filename — same
+    # purpose as a project's filename_tag, just entity-level (see
+    # references/classify-prompt.md). List them so classify-time agents can use
+    # a fixed tag instead of re-inferring the issuer/person name every round.
+    entity_tags = {name: m["filename_tag"] for name, m in _read_entities(paths_config._EFFECTIVE_ROOT).items()
+                   if isinstance(m, dict) and m.get("filename_tag")}
+    if entity_tags:
+        print(f"Active entity filename_tags ({len(entity_tags)}): "
+              + ", ".join(f"{n}={t}" for n, t in sorted(entity_tags.items())), file=sys.stderr)
+
     print(json.dumps(result, indent=2))
 
 
