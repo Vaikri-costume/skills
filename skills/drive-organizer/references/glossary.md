@@ -6,7 +6,7 @@ See also: [`~/.claude/skills/skill-creator-ccvw/references/ccvw-glossary.md`](..
 
 | Term | Definition |
 |---|---|
-| atomic-unit folder | A directory treated as one indivisible entity (venv, Zotero store, Unity project, .app bundle) — proposed whole, never per-file |
+| atomic-unit folder | A directory treated as one indivisible entity (venv, Zotero store, Unity project, .app bundle, OSCAR_Data CPAP export, Backups.backupdb) — proposed whole, never per-file. Detected via `references/atomic-signatures.json` (dir names, suffixes, marker-file/marker-pair probes), mergeable with a per-drive `atomic_signatures_extra` (dir names/suffixes only) in `config.json` |
 | bubble-sort by destination | Grouping proposals by final destination path before display so same-leaf files appear together in the viewer |
 | cascading-Q | The four-question routing model: Q1 grouping → Q2 thing → Q3 functional area → Q4 leaf type |
 | content_peek | First ~300 chars of extracted text (or audio metadata) stored per file in the registry, used to classify ambiguous files |
@@ -20,7 +20,7 @@ See also: [`~/.claude/skills/skill-creator-ccvw/references/ccvw-glossary.md`](..
 | skip-rehash | The scan optimisation that reuses a file's stored sha256 when its path + size + `mtime` are unchanged, avoiding a re-hash |
 | flagged | A file marked `?` in the viewer (`status='flagged'`) — excluded from propose until peeked and reclassified |
 | learning loop | The propose/process-return mechanism that turns an approved edited destination into a new `.tidy-rules.json` rule |
-| `_Inbox/` | The staging leaf where files with no matching rule land, pending manual resolution |
+| `_Inbox/` | The staging leaf where files with no matching rule land, pending manual resolution. The classifier and arbiter always emit bare `_Inbox` as the destination (never nested). The backend's `inbox-list` query counts both bare `_Inbox` rows and `_Inbox/%` nested rows (LIKE match) to catch any files that ended up under an `_Inbox/` sub-path due to a past execute quirk — nested `_Inbox` paths are not a normally-reachable state from the current classifier, but the query is intentionally broad to catch legacy or edge-case rows without silently dropping them. |
 | para_category / para_subfolder | Registry columns. `para_subfolder` = the full destination path relative to root (the only routing field). `para_category` = that path's top-level grouping segment (first segment, e.g. `WORK`), derived from the path — not a separate routing input |
 | per-user override | Per-machine config + template extensions at `[root]/.organizer/` that deep-merge over the shipped skeleton |
 | prefix propagation | The naming rule that carries a parent's name one level down (e.g. `PERSONAL/PERSONAL Financial/`) |
@@ -33,6 +33,7 @@ See also: [`~/.claude/skills/skill-creator-ccvw/references/ccvw-glossary.md`](..
 | capability degradation | The graceful-degradation ladder: peek off ⇒ classify from `content_peek` + name/path only; vision off ⇒ route images by name/path + `exif` metadata. No file is ever dropped — it falls to `_Inbox/` only when nothing matches |
 | exif (subcommand) | Prints an image's routing metadata (date/camera/dimensions) as JSON for the vision-off path; Pillow-optional, degrades to the filename date, never errors |
 | merge-category | A diff-only taxonomy edit: the model emits a small JSON diff (`{name, description, parent?}`) and Python merges it into the per-user templates override, instead of the model rewriting the whole nested templates file |
+| W1–W5 | Internal shorthand for five distinct feature areas, used throughout code comments and SKILL.md: **W1** = the auto-classify fast-path (deterministic rule match, bypasses the classifier); **W2** = the rules viewer/editor (aggregated, clustered, editable rules in a browser); **W3** = bootstrap's rules-builder (reverse-engineer rules from an existing tree); **W4** = scan's skip-rehash fast-check (reuse a stored hash when path+size+mtime are unchanged); **W5** = the learning-loop accelerators (auto-infer signal from shared tokens, negative-signal learning from rejections, confidence auto-approval). Not a user-facing term — purely an internal labelling convention for cross-referencing which feature area a piece of logic belongs to |
 
 ## When to update this glossary
 
