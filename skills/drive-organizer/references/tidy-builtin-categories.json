@@ -488,7 +488,7 @@
       "mat",
       "npy"
     ],
-    "onedrive_hint": "Almost always part of an atomic-unit folder (device-export backup, research dataset). Route the WHOLE folder, not individual files. If loose: research-tied → EDUCATION/EDUCATION Research/<Topic>/Data/. Medical device data → PERSONAL/PERSONAL Medical/<Person>/. Never propose per-file moves."
+    "onedrive_hint": "Almost always part of an atomic-unit folder (device-export backup, research dataset). Route the WHOLE folder, not individual files. If loose: research-tied → EDUCATION/EDUCATION Research/<Topic>/Data/. Medical device data → PERSONAL/PERSONAL Medical/<Person>/. Never propose per-file moves. TIE-BREAK (.edn/.f/.f90/.h): these extensions appear here only; they have been removed from Code Source. When a loose .edn/.f/.f90/.h file appears in a code/project context rather than a research/data context, use Code Source routing (atomic-unit or _Inbox), not Scientific Data — the atomic-unit parent-folder context is the authoritative tie-break."
   },
   {
     "category": "Legacy Media",
@@ -520,11 +520,6 @@
       "c",
       "cs",
       "doctest",
-      "edn",
-      "f",
-      "f90",
-      "h",
-      "ini",
       "js",
       "json",
       "log",
@@ -544,7 +539,7 @@
       "yaml",
       "yml"
     ],
-    "onedrive_hint": "If inside a Python venv (pyvenv.cfg present in ancestor), Unity Assets/ tree, or node_modules — route the WHOLE folder as an atomic unit. Loose code/config files → _Inbox/ with ? noting 'shouldn't be in OneDrive'."
+    "onedrive_hint": "If inside a Python venv (pyvenv.cfg present in ancestor), Unity Assets/ tree, or node_modules — route the WHOLE folder as an atomic unit. Loose code files (.py/.js/.ts/.go/etc) → _Inbox/ with ? noting 'shouldn't be in OneDrive'. EXCEPTION: .json/.xml/.yaml/.yml are data/config, not code — see references/file-type-routing.md 'Code and config' section, which is authoritative for these four extensions: if inside a project folder, route to that project's Docs/ or References/; if standalone with no context, _Inbox/ (no ? flag — ordinary data file, not a stray script). WHY these four extensions still appear in THIS entry's own 'extensions' array despite file-type-routing.md governing their final routing: this JSON's keyword/extension fallback matching (used to find candidate categories before the onedrive_hint's routing rule is applied) needs them present to recognize a .json/.xml/.yaml/.yml file as belonging to the 'Code Source' category at all — removing them here would make matching miss these files entirely, not just skip the ?-flag treatment. NOTE: .edn/.f/.f90/.h are NOT listed here — they appear in Scientific Data (atomic-folder context wins for those extensions; use Scientific Data routing when the file is loose or context is ambiguous)."
   },
   {
     "category": "Atomic Folder Markers",

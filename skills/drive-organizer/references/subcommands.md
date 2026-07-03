@@ -18,6 +18,89 @@ Consult this file when invoking any of the commands below, hitting their errors,
 - [merge-category](#merge-category) — add one taxonomy category via a JSON diff
 - [folder-tree](#folder-tree-on-demand-view) — on-demand: render the organised tree (rules ∩ disk)
 - [cleanup recipes](#cleanup-per-sync-app-eviction-recipes) — per-sync-app eviction commands
+- [inbox-list](#inbox-list) — list files currently in `_Inbox/` (feeds the arbiter sweep)
+- [rules-viewer](#rules-viewer-request-response-shapes) — request/response field shapes for the localhost rule editor's `/save` and `/apply` endpoints
+
+---
+
+## inbox-list
+
+```bash
+python3 ~/.claude/drive-organizer/organizer.py inbox-list
+```
+
+Returns a JSON object enumerating files that have been executed into `_Inbox/` (rows with `status='organized'` and a path containing `_Inbox`). Used by the orchestrator to decide when to trigger the arbiter sweep (see SKILL.md "Inbox arbiter sweep") and to build the `[INBOX_BATCH_JSON]` slot in `references/arbiter-prompt.md`.
+
+**Output shape:**
+```json
+{
+  "count": 42,
+  "arbiter_trigger": 100,
+  "files": [
+    {
+      "id": 7,
+      "filename": "scan-report-2024.pdf",
+      "current_path": "/abs/path/_Inbox/scan-report-2024.pdf",
+      "file_date": "2024-03-15",
+      "is_image": false,
+      "is_raw": false
+    }
+  ]
+}
+```
+
+Fields:
+- `count` — number of files currently in `_Inbox/` (already executed; files only classified-to-`_Inbox` this round but not yet executed are NOT counted)
+- `files` — array of all `_Inbox` records; each entry carries exactly the fields the arbiter template expects; fill `[INBOX_BATCH_JSON]` directly from this array
+- `is_image` — true only for non-RAW images (IMAGE_EXTS only); RAW files have `is_image: false` + `is_raw: true`; this encodes vision-readability for the arbiter's capability gate
+
+---
+
+## rules-viewer (request/response shapes)
+
+`rules-viewer` (SKILL.md "Three commands operate on the *rules*") is a manual, localhost-only browser tool whose Python backend and JS frontend live in the same file (`scripts/drive_organizer/rules_viewer.py`) — this section documents the wire shapes for maintainers editing either side, so they stay in sync.
+
+**Page-load payload** (served on `GET /`, embedded into the page as `DATA`):
+```json
+{
+  "root": "/abs/path",
+  "areas": ["ENTERTAINMENT", "PERSONAL", "WORK"],
+  "entities": [ /* one row per aggregated rule entity, per the `rules --json` shape */ ],
+  "conflicts": [ /* entities whose rules disagree on destination */ ],
+  "coverage_gaps": [ /* folders on disk with no matching rule — used for the "coverage gaps" panel */ ],
+  "cluster_order": ["Areas", "Projects", "People", "Subfolders", "Policies", "Atomic", "Unknown"],
+  "cluster_label": { "Areas": "Areas", "Projects": "Projects", "...": "..." },
+  "settings": { /* the Settings panel's current config.json values — see SKILL.md "Settings panel" */ }
+}
+```
+
+**`POST /save` and `POST /apply` request** (the rule-edit form; distinct from the Settings panel's separate `/config` endpoint):
+```json
+{
+  "entities": { "<entity name>": { /* metadata edits — see META_KEYS in rules_viewer.py */ } },
+  "rethink": ["<entity name>", "..."],
+  "rule_edits": [{ "entity": "<name>", "description": "<new description>" }],
+  "deletes": ["<entity name>", "..."],
+  "renames": [{ "entity": "<name>", "new_name": "<new name>" }],
+  "merges": [{ "src": "<name>", "dst": "<name>" }],
+  "areas": { "add": ["..."], "rename": [["old", "new"]], "remove": ["..."] },
+  "keepalive": false
+}
+```
+`keepalive` (or a `POST` to `/apply` itself) keeps the viewer session open after saving and returns a fresh `data` payload (same shape as the page-load payload above) so the JS can re-render without a full page reload. `/save` without `keepalive` closes the session.
+
+**Response:**
+```json
+{
+  "ok": true,
+  "results": {
+    "meta": 0, "rule_edits": 0, "deletes": 0, "rethink": 0,
+    "renames": [], "merges": [], "areas": null
+  },
+  "data": { /* only present when keepalive/apply — same shape as the page-load payload */ }
+}
+```
+Each `results` count/list reports how many of that edit-type the backend actually applied, for the UI's summary toast.
 
 ---
 
@@ -27,7 +110,7 @@ Consult this file when invoking any of the commands below, hitting their errors,
 python3 ~/.claude/drive-organizer/organizer.py status
 ```
 
-Reports the active root, total files in the registry, and counts by status. The complete status set the backend writes is: `pending` (scanned, awaiting classification), `organized` (moved to its destination), `duplicate` (byte-identical to a kept copy), `flagged` (marked `?` in the viewer), `to_delete` (execute routed it to `Archive/_To Delete/`), `deleted` (reconcile `--prune` marked a confirmed-gone row), and `archived` (a merged original moved to `Archive/_Merged-Originals/`). `cmd_status` prints whatever statuses are present; since the backend only ever writes these seven, any status in the output is one of them (no other value exists — closed set). Run at the start of any session to confirm which drive is configured.
+Reports the active root, total files in the registry, and counts by status. The complete status set the backend writes is: `pending` (scanned, awaiting classification), `organized` (moved to its destination), `duplicate` (byte-identical to a kept copy), `flagged` (marked `?` in the viewer), `to_delete` (execute routed it to `Archive/_To Delete/`), `deleted` (reconcile `--prune` marked a confirmed-gone row), `archived` (a merged original moved to `Archive/_Merged-Originals/`), and `missing` (execute crash-recovery: the file was `pending` but the physical path no longer exists — marked so it is not re-proposed as a ghost). `cmd_status` reflects whatever status values are present in the registry (it does a GROUP BY status query); since the backend only ever writes these eight, any status in the output is one of them (no other value exists — closed set). If a hand-edited or schema-drifted row carries an unrecognised status, it will appear unflagged in the output. Run at the start of any session to confirm which drive is configured.
 
 To switch roots, pass `--root /path/to/folder` once (the new root persists for future calls — see SKILL.md "No subcommand").
 
@@ -66,10 +149,10 @@ Flagged files are excluded from propose. To reclassify: peek/classify each, add 
 To manually clear a flag: UPDATE files SET status='pending' WHERE id=<N>;
 ```
 
-When empty, prints: `"No flagged files."` — skip this step in the process-return flow.
+When empty, prints: `"No flagged files."` — see SKILL.md process-return step 7 for what to do in that case (skip the step).
 
 For each flagged file:
-1. Peek at content: use the Read tool for images (vision); for documents, get the text the same way scan does — the simplest path is to re-run `scan` (it re-extracts `content_peek` for the file into the registry, then read it back), or extract directly per the per-format procedure in `references/file-type-routing.md` (e.g. `.docx`/`.xlsx`/`.pptx` → read the relevant XML members from the zip; `.pdf` → PyMuPDF text; plain text → raw read). Don't invent a format-specific reader — file-type-routing.md is the source of truth for which bytes/members to read.
+1. Peek at content: use the Read tool for images (vision); for documents, get the text the same way scan does — extract directly per the per-format procedure in `references/file-type-routing.md` (do NOT expect a re-run of `scan` to re-peek a flagged file: scan's `organized_paths` query skips any file whose registry `status` is already `flagged`, so it will not re-extract `content_peek` for it) (e.g. `.docx`/`.xlsx`/`.pptx` → read the relevant XML members from the zip; `.pdf` → PyMuPDF text; plain text → raw read). Don't invent a format-specific reader — file-type-routing.md is the source of truth for which bytes/members to read.
 2. Classify it (same logic as propose: generate `para_subfolder`, `new_filename`, `reason`)
 3. Add it to the `proposals_classified.json` batch alongside new pending files — it goes back through the viewer, not executed directly
 
@@ -95,7 +178,7 @@ python3 ~/.claude/drive-organizer/organizer.py reconcile --apply      # BULK: re
 
    Each entry carries a **`suggestion`** (`restore` or `accept`) from a landing-spot heuristic — found inside a proper grouping folder → probably intentional → `accept`; loose at the root or in `_Inbox` → probably accidental → `restore`. **The suggestion is advisory; confirm with the user, then act per file** with `--restore ID` (move it back to its recorded home) or `--accept ID` (leave the file where it is and update the registry's `current_path` + `para_subfolder` to match). `--apply` is a bulk "restore everything" shortcut — use it only when you've confirmed *every* move was accidental.
 
-2. **Bad registry rows** — three `issue` values: `missing_on_disk` (the `current_path` no longer exists on disk **and** no relocated copy was found — genuinely deleted), `no_current_path` (an organized/duplicate row whose `current_path` is null/empty), or `organized_without_destination` (organized rows with no destination). Once the user confirms a file was deleted on purpose, `--prune ID` marks its row `deleted` so it stops being reported every run.
+2. **Bad registry rows** — five `issue` values: `missing_on_disk` (the `current_path` no longer exists on disk **and** no relocated copy was found — genuinely deleted), `no_current_path` (an organized/duplicate row whose `current_path` is null/empty), `organized_without_destination` (organized rows with no destination), `ghost_pending_no_journal` (a row still `status='pending'` whose `.move-journal.json` entry was cleared by crash-recovery but the file is missing from disk — a status stuck at `pending` with no journal to explain it, which would otherwise silently reappear in the next `propose` batch for re-classification and mask the data loss), or `missing_row_reappeared` (a row at `status='missing'` — execute's crash-recovery path marks a row `missing` when a journal entry's file is at neither its src nor dest — whose `current_path` now exists on disk again; this is the recovery path back into the pending/organized lifecycle for a file execute previously gave up on). Once the user confirms a file was deleted on purpose, `--prune ID` marks its row `deleted` so it stops being reported every run; for `missing_row_reappeared`, use `--accept ID` instead to bring the row back into the registry at its reappeared location.
 3. **Mangled root folders** — root-level folders that break the **active-grouping invariant** (the configured area set — the default five `ENTERTAINMENT/PERSONAL/WORK/EDUCATION/RESOURCES`, or whatever `<root>/.organizer/config.json` `"areas"` defines; reconcile reads `_active_groupings()`, it does not hardcode five): an unexpected non-grouping folder, a miscased grouping (`work` vs `WORK` — only detectable on case-sensitive drives), or a rule-bearing project folder still sitting at the root (legacy flat layout). **Report-only** — folder renames are too risky to automate; fix by hand.
 
 **Recommended order** (the summary prints it): resolve the **registry-backed misplaced files first** (grouped, per-file restore/accept), then prune confirmed deletions, then deal with the **unregistered / mangled folders** (manual judgment). Output: a human summary plus a full `<root>/.organizer/reconcile-report.json` (arrays `misplaced_files` with `id`/`issue`/`fix_from`/`fix_to`/`suggestion`, `bad_registry_rows`, `mangled_folders`, `applied`). The `--restore`/`--accept`/`--prune` commands read this report, so run a dry-run `reconcile` first.
@@ -139,6 +222,8 @@ python3 ~/.claude/drive-organizer/organizer.py variants
 If the script prints `"No variant groups found."` — no variants exist; the final pass is complete.
 
 Otherwise outputs a JSON array of probable variant groups — grouped by same extension + normalised filename stem. It deliberately does **not** gate on a size ratio: a highlighted/annotated variant can legitimately be several times the size of the plain original, and a ratio cap would split exactly the variant pairs this command exists to surface. Each group has a `group_id`, a `key` (the normalised filename used for matching), and a `files` array with `id`, `path`, `filename`, `file_size`, `file_date`. Claude formats this for display:
+
+The trailing-token vocabulary used to normalise the stem (`v2`, `final`, `copy`, `highlighted`, `annotated`, `marked`) is extensible per drive: `<root>/.organizer/config.json` `"variant_tokens"` (a list of extra words, also editable from the rules-viewer Settings panel) adds domain-specific vocab — e.g. legal `executed`/`redlined`, screenwriting `draft`/`revision` — on top of the built-in list, never replacing it.
 
 ```
 Group 1:
@@ -287,9 +372,11 @@ Per-folder failures, a missing tool, or an unsupported OS never error the run �
 <!-- SKILL.md's generate-viewer section points here for the after-submit log-line interpretation. -->
 
 **Check the server's final log line before continuing.** The server writes `proposals_approved.json`
-AND `proposals_flagged.json` to disk *before* it prints its final lines, so once you see
-`Server shutting down.` both sidecar files are guaranteed present (the case-3 recovery below can
-always read `proposals_flagged.json`). One of these cases holds:
+AND `proposals_flagged.json` to disk *before* it prints `Approved proposals written to: <path>`
+followed by `Server shutting down.` (both printed, in that order, by the `do_POST` handler of the
+viewer server that `cmd_generate_viewer` starts in `organizer.py` — grep those two log-line strings
+to locate them). Once you see `Server shutting down.` both sidecar files are
+guaranteed present (the case-3 recovery below can always read `proposals_flagged.json`). One of these cases holds:
 
 - **Write failure — no `Server shutting down.` line at all**, instead `ERROR: could not write review
   output (…); submit NOT saved` on stderr and an HTTP 500 in the browser: the write failed, the
@@ -318,6 +405,8 @@ regenerate `proposals_classified.json` first. If `Error: port <N> is already in 
 
 <!-- SKILL.md's process-return section points here for the W5 accelerators, the ordering rationale,
      and the delete-routing note. The numbered pipeline stays in SKILL.md. -->
+
+**Replay / crash-recovery:** If process-return is re-run after a crash (e.g. execute completed partially, then the session died), re-running execute on an already-consumed `proposals_approved.json` will produce `MISSING` errors for files already moved in the prior run. This is safe replay noise — not a real error. The files are at their correct destination; the registry row is already `status='organized'`. Skip those MISSING entries and continue; do not treat them as lost or corrupt files. Generate a fresh proposals batch for the next round as normal.
 
 **Why learnings come before reclassification:** A rejection means the proposed destination was wrong,
 but *what* the right destination is often depends on a pattern the user just demonstrated by editing
@@ -351,3 +440,13 @@ row, delete included.) For all other entries (approved, inbox, reclassified), ro
   fast-path** auto-routed files (the deterministic rule match — not a classifier `confidence` verdict)
   are flagged `auto_approved` — you may execute them without a viewer pass (still audited in
   `auto-routed.csv`). Default OFF: human review stays the norm unless the user opts in.
+
+**W5 routing-note format.** When the orchestrator annotates a `proposals_classified.json` entry with a routing note (e.g. to record why a file was auto-approved or why a rule was inferred), append a `routing_note` key to that entry with a plain-text string value:
+```json
+{
+  "id": 42,
+  "para_subfolder": "WORK/[COMPANY]/Admin",
+  "routing_note": "W5 auto-infer: tokens [company, admin] matched 3 approved files"
+}
+```
+The key name is `routing_note` (singular); the value is a free-text one-line explanation. This field is informational only — `cmd_execute` and `cmd_generate_viewer` ignore it; it is for audit/debugging purposes and is NOT written to the registry or `auto-routed.csv` automatically (if audit trail is needed, append it there manually).
