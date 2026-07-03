@@ -186,6 +186,7 @@ function card(e){
    <label title="A routing behaviour for this entity's files (optional). Distinct from the 'policy' type: this is the specific rule. Recognised: 'event-group' files this entity's dated files into date-derived subfolders (YYYY/Month YY). Any other text is just a note.">behaviour</label><input value="${esc(e.policy||'')}" placeholder="e.g. event-group (group photos by date/event)" onchange="metaEdit('${jsq(e.entity)}','policy',this.value)">
    <label title="Free notes — what this rule is for, or why it exists.">notes</label><input value="${esc(e.notes||'')}" placeholder="free notes, e.g. 'primary contact for Project X'" onchange="metaEdit('${jsq(e.entity)}','notes',this.value)">
    <label title="Date range this entity's dated files fall in (optional). Routes loose dated files (bills, statements, photos) to this entity by date — generalised off projects-only. Leave both blank to clear.">date range</label><span style="display:flex;gap:4px"><input type="date" value="${esc((e.date_range||{}).start||'')}" onchange="drEdit('${jsq(e.entity)}','start',this.value)"><input type="date" value="${esc((e.date_range||{}).end||'')}" onchange="drEdit('${jsq(e.entity)}','end',this.value)"></span>
+   <label title="Canonical tag inserted into new_filename for files routed to this entity, so classification doesn't need to re-infer the issuer/person name from content every round — same purpose as a project's filename_tag, just entity-level.">filename tag</label><input value="${esc(e.filename_tag||'')}" placeholder="e.g. ChaseBank, JaneDoe" onchange="metaEdit('${jsq(e.entity)}','filename_tag',this.value)">
   </div>
   ${occ}
   ${conf.length?`<div class="conflict">⚠ overlaps: ${conf.map(c=>esc(c.with)+' ['+c.shared.join(',')+']').join('; ')}</div>`:''}
@@ -393,7 +394,7 @@ class _RulesHandler(BaseHTTPRequestHandler):
 
         if self.path in ("/save", "/apply"):
             keepalive = (self.path == "/apply") or bool(payload.get("keepalive"))
-            META_KEYS = ("entity_type", "locked", "aliases", "relation", "policy", "notes", "review", "date_range")
+            META_KEYS = ("entity_type", "locked", "aliases", "relation", "policy", "notes", "review", "date_range", "filename_tag")
             agg = {e["entity"]: e for e in _aggregate_rules(root)}
             results = {"meta": 0, "rule_edits": 0, "deletes": 0, "rethink": 0,
                        "renames": [], "merges": [], "areas": None}

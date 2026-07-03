@@ -191,6 +191,10 @@ file whose handling isn't obvious. The load-bearing rules you must not miss:
   (`<entity>/YYYY/Month YY/`, or the file's existing named event folder) to `para_subfolder`; this is the
   same date-bucketing the loose-photo rule applies, generalised to any entity the user has tagged. An
   unrecognised policy string changes nothing.
+- **Entity `filename_tag`**: if the destination entity carries a `filename_tag` in `[ENTITIES_PATH]`, use
+  it as the canonical tag in `new_filename` instead of re-inferring the issuer/person name from
+  `content_peek` — same purpose as a project's `filename_tag`, just entity-level. Only fall back to
+  re-inference from `content_peek` when the entity has no `filename_tag` set.
 - **Documents**: `content_peek` is the strongest project-ID signal — scan it for
   project/person/client/company names. Fall through to `tidy-builtin-categories.json` only when no
   Q*n* match exists anywhere.
