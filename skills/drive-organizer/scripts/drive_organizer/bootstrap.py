@@ -7,11 +7,13 @@ from pathlib import Path
 
 from drive_organizer import paths_config
 from drive_organizer.paths_config import (
-    BATCH,
-    _ATOMIC_DIR_NAMES,
-    _ATOMIC_SUFFIXES,
     _atomic_write,
+    _effective_batch_size,
+    _effective_scan_file_limit,
     _safe_dest,
+)
+from drive_organizer.atomic_signatures import (
+    _effective_atomic_signatures,
 )
 from drive_organizer.content_peek import (
     peek_content,
@@ -19,22 +21,39 @@ from drive_organizer.content_peek import (
 )
 
 
-def _atomic_marker(p: Path) -> "str | None":
-    """Return a short marker string if folder p is an atomic unit, else None."""
+def _atomic_marker(p: Path, root: "Path | None" = None) -> "str | None":
+    """Return a short marker string if folder p is an atomic unit, else None.
+
+    Data-driven from the merged atomic-signature set (shipped
+    references/atomic-signatures.json + any per-drive config.json
+    `atomic_signatures_extra`) instead of hardcoded constants/if-statements — same
+    external behavior/return values, same probe order (dir_names -> suffixes ->
+    marker_files -> marker_pairs) as the original hardcoded version. `root` resolves
+    which drive's config.json extension applies; callers with a root/drive variable
+    already in scope MUST pass it explicitly (never rely on the implicit
+    paths_config._EFFECTIVE_ROOT fallback inside _effective_atomic_signatures — that
+    fragility was flagged and fixed in a prior review)."""
+    sig = _effective_atomic_signatures(root)
     n = p.name
-    if n in _ATOMIC_DIR_NAMES:
+    if n in sig["dir_names"]:
         return n
-    if n.endswith(_ATOMIC_SUFFIXES):
+    if n.endswith(tuple(sig["suffixes"])):
         return "bundle"
     try:
-        if (p / "pyvenv.cfg").exists():
-            return "venv"
-        if (p / "zotero.sqlite").exists():
-            return "zotero"
-        if (p / "Assets").is_dir() and (p / "ProjectSettings").is_dir():
-            return "unity"
-        if (p / ".git").is_dir():
-            return "git-repo"
+        for mf in sig["marker_files"]:
+            probe, kind, marker = mf["probe"], mf["kind"], mf["marker"]
+            target = p / probe
+            if (kind == "file" and target.is_file()) or (kind == "dir" and target.is_dir()) \
+               or (kind not in ("file", "dir") and target.exists()):
+                return marker
+        for mp in sig["marker_pairs"]:
+            probes, kind, marker = mp["probes"], mp["kind"], mp["marker"]
+            if kind == "file":
+                ok = all((p / probe).is_file() for probe in probes)
+            else:
+                ok = all((p / probe).is_dir() for probe in probes)
+            if ok:
+                return marker
     except (PermissionError, OSError):
         pass
     return None
@@ -55,7 +74,7 @@ def _detect_atomic_units(root: Path) -> list:
             if d in skip:
                 continue
             dp = cp / d
-            marker = _atomic_marker(dp)
+            marker = _atomic_marker(dp, root)
             if marker:
                 try:
                     rel = str(dp.relative_to(root))
@@ -67,7 +86,7 @@ def _detect_atomic_units(root: Path) -> list:
                 out.append({"folder": rel, "name": d, "marker": marker,
                             "file_count": fc, "locked": d in locked})
                 # do NOT descend into an atomic unit
-            elif _should_prune_subdir(d, cp, locked):
+            elif _should_prune_subdir(d, cp, locked, root):
                 # Non-atomic-marker but otherwise prunable (dot/underscore, locked-atomic
                 # name, external/shared-library): use the SAME shared predicate the other
                 # walk sites use so pruning stays in sync — don't descend, don't emit.
@@ -85,7 +104,7 @@ def _bootstrap_candidates(root: Path, mode: str = "cold-start",
     sample of K files (name + content_peek + ext) for Claude to infer from. In audit
     mode, additionally flag ruled folders whose sampled file routes elsewhere (drift)."""
     from drive_organizer.classify_propose import _auto_classify_entry, _build_rules_index
-    from drive_organizer.entities_rules import _coverage_gaps, _locked_atomic_names, _should_prune_subdir
+    from drive_organizer.entities_rules import _locked_atomic_names, _should_prune_subdir
     root = Path(root)
     index, dest_set = _build_rules_index(root)
     locked_atomic = _locked_atomic_names(root)
@@ -98,7 +117,7 @@ def _bootstrap_candidates(root: Path, mode: str = "cold-start",
         cp = Path(cur)
         # prune: staging names first, then shared structural predicate
         dirs[:] = [d for d in dirs
-                   if d not in skip and not _should_prune_subdir(d, cp, locked_atomic)]
+                   if d not in skip and not _should_prune_subdir(d, cp, locked_atomic, root)]
         try:
             rel = "" if cp == root else str(cp.relative_to(root))
         except Exception:
@@ -134,11 +153,12 @@ def _bootstrap_candidates(root: Path, mode: str = "cold-start",
             # no need to compare dest against the reason string (which it can never equal).
             if dest and dest != rel:
                 drift.append({"folder": rel, "sampled": sample[0]["name"], "matches_instead": dest})
+    batch_size = _effective_batch_size(root)
     capped = candidates[:limit]
     for i, c in enumerate(capped):
-        c["batch"] = i // BATCH
+        c["batch"] = i // batch_size
     return {"mode": mode, "n_candidates": len(candidates), "emitted": len(capped),
-            "n_batches": (len(capped) + BATCH - 1) // BATCH, "candidates": capped,
+            "n_batches": (len(capped) + batch_size - 1) // batch_size, "candidates": capped,
             "drift": drift, "dropped": max(0, len(candidates) - len(capped))}
 
 
@@ -146,8 +166,8 @@ def _bootstrap_apply(root: Path, proposed: dict) -> dict:
     """Write approved bootstrap proposals: rules into each folder's PARENT
     .tidy-rules.json (folderName=leaf), and entity metadata into entities.json."""
     from drive_organizer.classify_propose import _build_rules_index
-    from drive_organizer.cleanup_reconcile import _ensure_in_suffix
-    from drive_organizer.entities_rules import _aggregate_rules, _read_entities, _write_entities
+    from drive_organizer.routing import _ensure_in_suffix
+    from drive_organizer.entities_rules import _read_entities, _write_entities
     root = Path(root)
     res = {"rules_written": 0, "entities": 0}
     for rule in proposed.get("rules", []):
@@ -166,6 +186,12 @@ def _bootstrap_apply(root: Path, proposed: dict) -> dict:
         # and untrusted; a `../`, absolute, or symlink-escaping `parent` would write a rules
         # file outside the drive root. _safe_dest validates AND returns the resolved write
         # target, so the validation target is identical to the write target.
+        # NOTE: the three explicit checks below (absolute path / `..` in folder /
+        # `..`-or-absolute parent_rel) are defensive/advisory pre-checks, not the
+        # authoritative containment guarantee — they do not cover symlink escape.
+        # `_safe_dest(root, sub)` below is the real containment guard: it resolves
+        # the final write target and is what actually enforces "stays inside root",
+        # including the symlink case these pre-checks miss.
         if os.path.isabs(folder):
             res.setdefault("rejected", []).append({"parent": parent_rel, "folderName": folder, "why": "absolute path"})
             continue
@@ -283,7 +309,9 @@ def cmd_bootstrap(args):
     # default / --emit
     mode = getattr(args, "mode", None) or "cold-start"
     sample_k = int(getattr(args, "sample", None) or 5)
-    limit = int(getattr(args, "limit", None) or 250)
+    # Precedence: explicit --limit > config.json's scan_file_limit > hardcoded 250.
+    _arg_limit = getattr(args, "limit", None)
+    limit = int(_arg_limit) if _arg_limit is not None else _effective_scan_file_limit(root)
     atomic = _detect_atomic_units(root)
     cand = _bootstrap_candidates(root, mode=mode, sample_k=sample_k, limit=limit)
     out = {"root": str(root), "mode": mode, "atomic_units": atomic, **cand}
@@ -291,16 +319,20 @@ def cmd_bootstrap(args):
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(out, indent=2, ensure_ascii=False), encoding='utf-8')
     unlocked = [u for u in atomic if not u["locked"]]
+    batch_size = _effective_batch_size(root)
     print(f"Bootstrap input written: {dest}")
     print(f"  mode: {mode}")
     print(f"  atomic units: {len(atomic)} ({len(unlocked)} not yet locked)")
-    print(f"  inference candidates: {cand['emitted']} folder(s) in {cand['n_batches']} batch(es) of 25"
+    print(f"  inference candidates: {cand['emitted']} folder(s) in {cand['n_batches']} batch(es) of {batch_size}"
           + (f" ({cand['dropped']} over the {limit} cap, deferred)" if cand["dropped"] else ""))
     if mode == "audit" and cand["drift"]:
         print(f"  drift flagged: {len(cand['drift'])} ruled folder(s) whose sample routes elsewhere")
     if unlocked:
-        print("\nNext: approve atomic units →  bootstrap --lock " + ",".join(u["name"] for u in unlocked))
-    print("Then Claude infers each candidate's rule/type from its sample (fan-out, 25/batch),"
+        print("\n⚠  WARNING: unlocked atomic unit(s) detected: " + ", ".join(u["name"] for u in unlocked)
+              + ". Inference below will still descend into them if not locked first — run --lock now"
+              " unless you intend that. (Order matters: --detect-atomic -> --lock -> --emit -> --apply.)")
+        print("Next: approve atomic units →  bootstrap --lock " + ",".join(u["name"] for u in unlocked))
+    print(f"Then Claude infers each candidate's rule/type from its sample (fan-out, {batch_size}/batch),"
           " writes a proposals file, and you run:  bootstrap --apply <file>  →  rules-viewer")
 
 

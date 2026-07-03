@@ -12,13 +12,15 @@ from pathlib import Path
 from drive_organizer import paths_config
 from drive_organizer.paths_config import (
     DOWNLOAD_POLL_INTERVAL,
-    DOWNLOAD_POLL_TIMEOUT,
-    IMAGE_EXTS,
     PARA_ROOTS,
+    _effective_download_poll_timeout,
+    _effective_scan_file_limit,
+    _effective_scan_gb_limit,
     _has_rules,
     _is_external,
 )
 from drive_organizer.content_peek import (
+    IMAGE_EXTS,
     _cloud_platform_note,
     _is_placeholder,
     extract_photo_date,
@@ -30,6 +32,9 @@ from drive_organizer.content_peek import (
 from drive_organizer.bootstrap import (
     _atomic_marker,
 )
+from drive_organizer.paths_config import (
+    _atomic_write,
+)
 from drive_organizer.entities_rules import (
     _locked_atomic_names,
 )
@@ -40,7 +45,8 @@ from drive_organizer.csv_export import (
 
 def cmd_download_batch(args):
     drive = Path(args.path).expanduser() if args.path else paths_config._EFFECTIVE_ROOT
-    cap_gb = float(args.limit_gb) if args.limit_gb else 20.0
+    # Precedence: explicit --limit-gb > config.json's scan_gb_limit > hardcoded 20.0.
+    cap_gb = float(args.limit_gb) if args.limit_gb is not None else _effective_scan_gb_limit(drive)
     cap_bytes = int(cap_gb * 1024 ** 3)
 
     if not drive.exists():
@@ -98,7 +104,7 @@ def cmd_download_batch(args):
             # filter below operates on the already-cleaned dir list.
             dirs[:] = [d for d in dirs
                        if d not in _locked_atomic
-                       and not _atomic_marker(root_path / d)
+                       and not _atomic_marker(root_path / d, drive)
                        and not _is_external(root_path / d)]
 
             rel = root_path.relative_to(drive)
@@ -237,6 +243,53 @@ def _seed_vocab_from_rules(root: Path, conn: sqlite3.Connection):
               f"may be incomplete.", file=sys.stderr)
 
 
+_SCAN_SKIP_STATE_NAME = ".scan_skip_state.json"
+
+
+def _scan_skip_state_path(drive: Path) -> Path:
+    return drive / ".organizer" / _SCAN_SKIP_STATE_NAME
+
+
+def _check_and_update_skip_guard(drive: Path, skipped: int, new_pending: int) -> bool:
+    """Compare this run's `skipped` count against the prior run's sidecar (if any
+    and if it matches this root), then persist the current count. Returns True iff
+    the permanent-skip guard has triggered: same Skipped count as last run AND no
+    new pending files added this run. Mirrors the old session-log-grep semantics
+    but owned entirely by `scan` itself, via a small JSON sidecar under
+    <root>/.organizer/ (same directory + atomic-write convention as config.json /
+    registry files — see paths_config._atomic_write)."""
+    state_path = _scan_skip_state_path(drive)
+    triggered = False
+    prior = None
+    if state_path.exists():
+        try:
+            prior = json.loads(state_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            prior = None
+    if prior and prior.get("root") == str(drive):
+        if prior.get("skipped_count") == skipped and new_pending == 0:
+            triggered = True
+    try:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write(
+            state_path,
+            json.dumps(
+                {
+                    "root": str(drive),
+                    "skipped_count": skipped,
+                    "timestamp": datetime.now().isoformat(),
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
+    except OSError as e:
+        print(f"WARNING: could not write scan-skip sidecar {state_path} "
+              f"({type(e).__name__}: {e}); permanent-skip guard may misfire next run.",
+              file=sys.stderr)
+    return triggered
+
+
 def cmd_scan(args):
     drive = Path(args.path).expanduser() if args.path else paths_config._EFFECTIVE_ROOT
     if not drive.exists():
@@ -245,8 +298,13 @@ def cmd_scan(args):
     if _note:
         print(_note, file=sys.stderr)
 
-    file_limit = getattr(args, "limit", None) or 250
-    gb_limit = float(getattr(args, "limit_gb", None) or 20.0)
+    # Precedence: explicit CLI flag > config.json (scan_file_limit / scan_gb_limit) >
+    # hardcoded default (250 / 20.0). `args.limit`/`args.limit_gb` are None when the
+    # user did not pass the flag — that's what lets the config-driven default trigger.
+    _arg_limit = getattr(args, "limit", None)
+    file_limit = _arg_limit if _arg_limit is not None else _effective_scan_file_limit(drive)
+    _arg_limit_gb = getattr(args, "limit_gb", None)
+    gb_limit = float(_arg_limit_gb) if _arg_limit_gb is not None else _effective_scan_gb_limit(drive)
     byte_limit = int(gb_limit * 1024 ** 3)
 
     conn = get_db()
@@ -280,6 +338,10 @@ def cmd_scan(args):
         ).fetchall()
     }
 
+    # Seeded here (end of scan), consumed later by the viewer in a separate pass — matches
+    # the documented scan -> propose -> viewer sequence, so a folder present at scan time is
+    # always in path_vocab by the time the viewer opens. A folder created manually AFTER this
+    # scan but BEFORE the viewer runs won't autocomplete until the next scan — expected, not a bug.
     _learn_dir_vocab(drive, conn)
     _seed_vocab_from_rules(drive, conn)
 
@@ -358,7 +420,7 @@ def cmd_scan(args):
                               if not d.startswith(".")
                               and not (root_path / d).is_symlink()
                               and d not in _locked_atomic
-                              and not _atomic_marker(root_path / d)
+                              and not _atomic_marker(root_path / d, drive)
                               and not _is_external(root_path / d)]
                 # Nesting levels here are inherent to the walk structure: phase →
                 # os.walk → per-file. folder_has_rules is captured once per top-level
@@ -458,11 +520,14 @@ def cmd_scan(args):
         # Single batch poll: one wall-clock wait for the WHOLE set to clear the
         # placeholder marker (instead of a per-file poll). A file slower than one tick
         # is no longer deferred to a future scan — but a still-online-only file after
-        # the timeout is.
+        # the timeout is. Timeout precedence: DRIVE_ORG_DL_TIMEOUT env var (explicit
+        # per-run escape hatch) > config.json's download_poll_timeout (persistent
+        # per-drive default) > 30s (see paths_config._effective_download_poll_timeout).
+        download_poll_timeout = _effective_download_poll_timeout(drive)
         _wstart = time.monotonic()
         waited = 0.0
         remaining = [p for p in pending_dl if _is_placeholder(p)]
-        while remaining and waited < DOWNLOAD_POLL_TIMEOUT:
+        while remaining and waited < download_poll_timeout:
             time.sleep(DOWNLOAD_POLL_INTERVAL)
             waited += DOWNLOAD_POLL_INTERVAL
             remaining = [p for p in remaining if _is_placeholder(p)]
@@ -476,7 +541,7 @@ def cmd_scan(args):
         first_stat = {}
         for filepath in pending_dl:
             if _is_placeholder(filepath):
-                print(f"  skip {filepath}: still online-only after {DOWNLOAD_POLL_TIMEOUT:.0f}s", file=sys.stderr)
+                print(f"  skip {filepath}: still online-only after {download_poll_timeout:.0f}s", file=sys.stderr)
                 skipped += 1
                 continue
             try:
@@ -660,6 +725,17 @@ def cmd_scan(args):
         for name in unknown_folders:
             print(f"    - {name}")
         print("  → Optional: add a .tidy-rules.json to route these by rule; they're scanned at low priority (P5/6) and classified either way.")
+
+    # Permanent-skip guard: compare this run's Skipped count against the sidecar
+    # persisted by the previous scan of this same root. Triggers when Skipped is
+    # unchanged AND this run added no new pending files (new_count == 0) — the same
+    # two-consecutive-equal-Skipped-with-no-new-pending semantics previously tracked
+    # via a session-log grep, now owned by scan itself.
+    guard_triggered = _check_and_update_skip_guard(drive, skipped, new_count)
+    if guard_triggered:
+        print()
+        print(f"PERMANENT_SKIP_GUARD_TRIGGERED: {skipped} files persistently skipped")
+
     export_csv()
 
 

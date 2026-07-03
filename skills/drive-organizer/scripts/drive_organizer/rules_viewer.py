@@ -1,23 +1,24 @@
 """drive_organizer.rules_viewer — split from the original organizer.py (pure structural move, no behavior change)."""
 from __future__ import annotations
 import json
-import re
 import sys
 import threading
+import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 from drive_organizer import paths_config
 from drive_organizer.paths_config import (
-    IMAGE_EXTS,
-    RAW_EXTS,
     _CLUSTER_LABEL,
     _CLUSTER_ORDER,
+    _effective_viewer_page_size,
     _reset_caches,
     _settings_for_viewer,
     _write_user_config,
 )
 from drive_organizer.content_peek import (
+    IMAGE_EXTS,
+    RAW_EXTS,
     get_db,
 )
 from drive_organizer.classify_propose import (
@@ -36,9 +37,8 @@ from drive_organizer.entities_rules import (
     _rename_entity,
     _write_entities,
 )
-from drive_organizer.cleanup_reconcile import (
+from drive_organizer.routing import (
     _active_groupings,
-    cmd_reconcile,
 )
 from drive_organizer.viewer_propose import (
     _serve_until,
@@ -119,6 +119,32 @@ _RULES_VIEWER_HTML = r"""<!DOCTYPE html>
     <input id="set_skiptypes" placeholder=".mov, .raw">
     <label title="Never open files larger than this many MB — route by name/path/rules only. Blank = no cap.">skip files over (MB)</label>
     <input id="set_skipmb" type="number" min="0" step="1" placeholder="(no cap)">
+    <label title="Extra words that mark a file as a &quot;variant&quot; for merge-candidate grouping (e.g. legal: executed, redlined; screenwriting: draft, revision). Extends the built-in list (v2/final/copy/highlighted/annotated/marked) — does not replace it. Comma-separated.">variant tokens (extra)</label>
+    <input id="set_varianttokens" placeholder="e.g. executed, redlined">
+    <label title="Classification fan-out batch size — how many files each classification sub-agent works at once. Blank = default (25).">classify batch size</label>
+    <input id="set_batchsize" type="number" min="1" step="1" placeholder="25 (default)">
+    <label title="Days of padding added to each side of a project's date_range when a file's date widens it. Blank = default (30).">period buffer (days)</label>
+    <input id="set_bufferdays" type="number" min="1" step="1" placeholder="30 (default)">
+    <label title="Max characters extracted per file for the content-peek text snippet used in classification. Blank = default (300).">content peek chars</label>
+    <input id="set_peekchars" type="number" min="1" step="1" placeholder="300 (default)">
+    <label title="Seconds to wait for a cloud-only (online-not-downloaded) file to finish downloading before skipping it for this pass. Overridden per-run by the DRIVE_ORG_DL_TIMEOUT env var when set. Blank = default (30).">download poll timeout (s)</label>
+    <input id="set_dltimeout" type="number" min="0" step="1" placeholder="30 (default)">
+    <label title="Inbox size (organizer.py inbox-list → count) at which to run the periodic arbiter reclamation sweep. Soft guideline, not a hard gate. Blank = default (100).">inbox arbiter trigger</label>
+    <input id="set_arbitertrigger" type="number" min="1" step="1" placeholder="100 (default)">
+    <label title="Max files per scan/propose/bootstrap batch. Overridden per-run by --limit when passed. Blank = default (250).">scan file limit</label>
+    <input id="set_scanfilelimit" type="number" min="1" step="1" placeholder="250 (default)">
+    <label title="Max cumulative GB per scan/download-batch batch. Overridden per-run by --limit-gb when passed. Blank = default (20).">scan GB limit</label>
+    <input id="set_scangblimit" type="number" min="0" step="0.1" placeholder="20 (default)">
+    <label title="Earliest date a file's date is trusted to widen a project's date_range — anything before this is treated as unreliable/pre-digital noise and ignored. Blank = default (1990-01-01).">date floor</label>
+    <input id="set_datefloor" type="date">
+    <label title="How many days into the future (from now) a file's date is still trusted — anything further out is treated as a clock/metadata error and ignored. Blank = default (365).">date ceiling (days from now)</label>
+    <input id="set_dateceilingdays" type="number" min="1" step="1" placeholder="365 (default)">
+    <label title="Rows per page in this rules viewer and the proposal-review viewer. Does not affect the entity cap (fixed at 250). Blank = default (25).">viewer page size</label>
+    <input id="set_viewerpagesize" type="number" min="1" step="1" placeholder="25 (default)">
+    <label title="Extra folder NAMES treated as atomic units (never descended, proposed whole) — e.g. a proprietary device-export folder name specific to your drive. Extends the shipped signature list (node_modules/.git/venv/OSCAR_Data/Backups.backupdb/etc.) — does not replace it. Comma-separated.">atomic folder names (extra)</label>
+    <input id="set_atomicdirs" placeholder="e.g. MyDeviceExport">
+    <label title="Extra folder-name SUFFIXES treated as atomic-unit bundles (like .app/.framework/.xcodeproj) — e.g. a proprietary bundle extension specific to your drive. Extends the shipped list — does not replace it. Comma-separated, include the leading dot.">atomic folder suffixes (extra)</label>
+    <input id="set_atomicsuffixes" placeholder="e.g. .mybundle">
    </div>
    <div class="row"><button class="btn sm" onclick="saveSettings()">Save settings</button><span id="set_out" style="font-size:12px;color:var(--ok)"></span></div>
   </div>
@@ -142,7 +168,7 @@ _RULES_VIEWER_HTML = r"""<!DOCTYPE html>
 </div>
 <script>
 let DATA = __DATA__;   // reassigned by apply() on keep-open refresh — must be `let`, not `const`
-const PAGE = 25, CAP = 250;
+const PAGE = __PAGE_SIZE__, CAP = 250;
 const TYPE_HELP={area:'top-level grouping',project:'a project (has a filename tag/period)',person:'a person / name',category:'a functional subfolder (Bills, Docs…)',policy:'a behaviour rule (e.g. event-grouping)',atomic:'a locked whole-folder unit (never descended)',unknown:'not yet classified — please set'};
 let changes = {entities:{}, rule_edits:{}, deletes:{}, rethink:{}, renames:{}, merges:{}, areas:{add:[],rename:[],remove:[]}};
 let pages = {}; // cluster -> current page
@@ -187,13 +213,15 @@ function card(e){
    <label title="Free notes — what this rule is for, or why it exists.">notes</label><input value="${esc(e.notes||'')}" placeholder="free notes, e.g. 'primary contact for Project X'" onchange="metaEdit('${jsq(e.entity)}','notes',this.value)">
    <label title="Date range this entity's dated files fall in (optional). Routes loose dated files (bills, statements, photos) to this entity by date — generalised off projects-only. Leave both blank to clear.">date range</label><span style="display:flex;gap:4px"><input type="date" value="${esc((e.date_range||{}).start||'')}" onchange="drEdit('${jsq(e.entity)}','start',this.value)"><input type="date" value="${esc((e.date_range||{}).end||'')}" onchange="drEdit('${jsq(e.entity)}','end',this.value)"></span>
    <label title="Canonical tag inserted into new_filename for files routed to this entity, so classification doesn't need to re-infer the issuer/person name from content every round — same purpose as a project's filename_tag, just entity-level.">filename tag</label><input value="${esc(e.filename_tag||'')}" placeholder="e.g. ChaseBank, JaneDoe" onchange="metaEdit('${jsq(e.entity)}','filename_tag',this.value)">
+   <label title="Overrides the global 4-character minimum for this entity's own folder-name tokens to become auto-classify matches (optional). Set to 3 for short names like IBM/BBC/ADM that would otherwise never auto-route. Leave blank for the default (4).">min token len</label><input type="number" min="1" value="${e.min_token_len||''}" placeholder="4 (default)" onchange="metaEdit('${jsq(e.entity)}','min_token_len',this.value===''?'':parseInt(this.value,10))">
+   <label title="Override the global auto-approve setting for this entity's W1 fast-path matches. Inherit = use the Settings-panel global. Always = auto-approve this entity's matches even if the global is off. Never = never auto-approve this entity's matches even if the global is on.">auto-approve</label><select onchange="metaEdit('${jsq(e.entity)}','auto_approve',this.value===''?'':this.value==='true')"><option value="" ${e.auto_approve==null?'selected':''}>inherit global</option><option value="true" ${e.auto_approve===true?'selected':''}>always approve</option><option value="false" ${e.auto_approve===false?'selected':''}>never approve</option></select>
   </div>
   ${occ}
   ${conf.length?`<div class="conflict">⚠ overlaps: ${conf.map(c=>esc(c.with)+' ['+c.shared.join(',')+']').join('; ')}</div>`:''}
   ${e.occurrences.length?`<label class="sub">signal (applies to all ${e.occurrences.length} folder(s))</label>
   <textarea onchange="signalEdit('${jsq(e.entity)}',this.value)">${esc(e.occurrences[0]?.signal||'')}</textarea>`:''}
   <div class="row">
-   <button class="btn sm ghost" onclick="planMove('${jsq(e.entity)}')" title="dry-run a move up/down a level">move a level…</button>
+   <button class="btn sm ghost" onclick="planMove('${jsq(e.entity)}')" title="dry-run preview only — shows the steps to move this entity up/down a level, but does not perform them; you carry them out manually">move a level… (preview only)</button>
    <button class="btn sm ghost" onclick="renameEntity('${jsq(e.entity)}')" title="rename this entity (rule + folder + registry)">rename</button>
    <button class="btn sm ghost" onclick="mergeEntity('${jsq(e.entity)}')" title="fold this into another entity as an alias">merge…</button>
    <button class="btn sm ghost warn" onclick="rethinkEntity('${jsq(e.entity)}')" title="flag for re-inference — keeps the rule, marks it to reconsider (≠ delete)">rethink</button>
@@ -225,16 +253,54 @@ function renderSettings(){
  document.getElementById('set_autoapprove').checked = !!s.auto_approve;
  document.getElementById('set_skiptypes').value = (s.skip_types||[]).join(', ');
  document.getElementById('set_skipmb').value = (s.skip_over_mb==null?'':s.skip_over_mb);
+ document.getElementById('set_varianttokens').value = (s.variant_tokens||[]).join(', ');
+ document.getElementById('set_batchsize').value = (s.classify_batch_size==null?'':s.classify_batch_size);
+ document.getElementById('set_bufferdays').value = (s.period_buffer_days==null?'':s.period_buffer_days);
+ document.getElementById('set_peekchars').value = (s.content_peek_chars==null?'':s.content_peek_chars);
+ document.getElementById('set_dltimeout').value = (s.download_poll_timeout==null?'':s.download_poll_timeout);
+ document.getElementById('set_arbitertrigger').value = (s.inbox_arbiter_trigger==null?'':s.inbox_arbiter_trigger);
+ document.getElementById('set_scanfilelimit').value = (s.scan_file_limit==null?'':s.scan_file_limit);
+ document.getElementById('set_scangblimit').value = (s.scan_gb_limit==null?'':s.scan_gb_limit);
+ document.getElementById('set_datefloor').value = (s.date_floor==null?'':s.date_floor);
+ document.getElementById('set_dateceilingdays').value = (s.date_ceiling_days==null?'':s.date_ceiling_days);
+ document.getElementById('set_viewerpagesize').value = (s.viewer_page_size==null?'':s.viewer_page_size);
+ const ase=s.atomic_signatures_extra||{};
+ document.getElementById('set_atomicdirs').value = (ase.dir_names||[]).join(', ');
+ document.getElementById('set_atomicsuffixes').value = (ase.suffixes||[]).join(', ');
 }
 function saveSettings(){
  const out=document.getElementById('set_out'); out.textContent='saving…';
  const mb=document.getElementById('set_skipmb').value.trim();
+ const batchSize=document.getElementById('set_batchsize').value.trim();
+ const bufferDays=document.getElementById('set_bufferdays').value.trim();
+ const peekChars=document.getElementById('set_peekchars').value.trim();
+ const dlTimeout=document.getElementById('set_dltimeout').value.trim();
+ const arbiterTrigger=document.getElementById('set_arbitertrigger').value.trim();
+ const scanFileLimit=document.getElementById('set_scanfilelimit').value.trim();
+ const scanGbLimit=document.getElementById('set_scangblimit').value.trim();
+ const dateFloor=document.getElementById('set_datefloor').value.trim();
+ const dateCeilingDays=document.getElementById('set_dateceilingdays').value.trim();
+ const viewerPageSize=document.getElementById('set_viewerpagesize').value.trim();
+ const atomicDirs=document.getElementById('set_atomicdirs').value.split(',').map(s=>s.trim()).filter(Boolean);
+ const atomicSuffixes=document.getElementById('set_atomicsuffixes').value.split(',').map(s=>s.trim()).filter(Boolean);
  const settings={
    peek: document.getElementById('set_peek').checked,
    vision: document.getElementById('set_vision').checked,
    auto_approve: document.getElementById('set_autoapprove').checked,
    skip_types: document.getElementById('set_skiptypes').value,
    skip_over_mb: mb===''?null:Number(mb),
+   variant_tokens: document.getElementById('set_varianttokens').value,
+   classify_batch_size: batchSize===''?null:Number(batchSize),
+   period_buffer_days: bufferDays===''?null:Number(bufferDays),
+   content_peek_chars: peekChars===''?null:Number(peekChars),
+   download_poll_timeout: dlTimeout===''?null:Number(dlTimeout),
+   inbox_arbiter_trigger: arbiterTrigger===''?null:Number(arbiterTrigger),
+   scan_file_limit: scanFileLimit===''?null:Number(scanFileLimit),
+   scan_gb_limit: scanGbLimit===''?null:Number(scanGbLimit),
+   date_floor: dateFloor===''?null:dateFloor,
+   date_ceiling_days: dateCeilingDays===''?null:Number(dateCeilingDays),
+   viewer_page_size: viewerPageSize===''?null:Number(viewerPageSize),
+   atomic_signatures_extra: (atomicDirs.length||atomicSuffixes.length)?{dir_names:atomicDirs,suffixes:atomicSuffixes}:null,
  };
  fetch('/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({settings})})
   .then(r=>r.json()).then(d=>{
@@ -344,6 +410,7 @@ class _RulesHandler(BaseHTTPRequestHandler):
         }
         data_js = json.dumps(payload).replace("</", "<\\/")
         html = _RULES_VIEWER_HTML.replace("__DATA__", data_js)
+        html = html.replace("__PAGE_SIZE__", str(_effective_viewer_page_size(root)))
         self._send(200, html, "text/html; charset=utf-8")
 
     _MAX_BODY = 8 * 1024 * 1024  # cap request body at 8 MiB
@@ -394,7 +461,7 @@ class _RulesHandler(BaseHTTPRequestHandler):
 
         if self.path in ("/save", "/apply"):
             keepalive = (self.path == "/apply") or bool(payload.get("keepalive"))
-            META_KEYS = ("entity_type", "locked", "aliases", "relation", "policy", "notes", "review", "date_range", "filename_tag")
+            META_KEYS = ("entity_type", "locked", "aliases", "relation", "policy", "notes", "review", "date_range", "filename_tag", "min_token_len", "auto_approve")
             agg = {e["entity"]: e for e in _aggregate_rules(root)}
             results = {"meta": 0, "rule_edits": 0, "deletes": 0, "rethink": 0,
                        "renames": [], "merges": [], "areas": None}
@@ -483,9 +550,13 @@ class _RulesHandler(BaseHTTPRequestHandler):
 
 def cmd_inbox_list(args):
     """List every file currently sitting in _Inbox (organized there, awaiting a real home)
-    as JSON: {count, files:[{id, filename, current_path, file_date, is_image, is_raw}]}. Feeds
-    the periodic arbiter sweep (SKILL.md: when count reaches ~100, re-judge ALL of them against
-    the now-larger rule set — files inboxed in earlier rounds may now be placeable)."""
+    as JSON: {count, arbiter_trigger, files:[{id, filename, current_path, file_date, is_image,
+    is_raw}]}. Feeds the periodic arbiter sweep (SKILL.md: when count reaches the configured
+    trigger, re-judge ALL of them against the now-larger rule set — files inboxed in earlier
+    rounds may now be placeable). `arbiter_trigger` is the effective threshold — config.json's
+    `inbox_arbiter_trigger` when valid, else 100 (see paths_config._effective_inbox_arbiter_trigger)
+    — so the orchestrator reads the configured soft-guideline count dynamically instead of a
+    hardcoded value in SKILL.md's prose."""
     conn = get_db()
     rows = conn.execute(
         "SELECT id, filename, current_path, file_date FROM files "
@@ -502,6 +573,7 @@ def cmd_inbox_list(args):
     # server already applied the RAW vision-block before dispatch so the arbiter must NOT
     # re-apply it.
     out = {"count": len(rows),
+           "arbiter_trigger": paths_config._effective_inbox_arbiter_trigger(),
            "files": [{"id": r["id"], "filename": r["filename"], "current_path": r["current_path"],
                       "file_date": r["file_date"],
                       "is_image": Path(r["filename"]).suffix.lower() in IMAGE_EXTS,
@@ -515,7 +587,16 @@ def cmd_rules_viewer(args):
     root = Path(paths_config._EFFECTIVE_ROOT)
     port = int(getattr(args, "port", None) or 5003)
     _RulesHandler._root = root
-    server = HTTPServer(("127.0.0.1", port), _RulesHandler)
+    import errno as _errno
+    try:
+        server = HTTPServer(("127.0.0.1", port), _RulesHandler)
+    except OSError as e:
+        if e.errno == _errno.EADDRINUSE:
+            sys.exit(
+                f"Error: port {port} is already in use. "
+                f"Try another --port (e.g. --port {port + 1})."
+            )
+        raise
     server.timeout = 1.0
     server._stop_event = threading.Event()
     t = threading.Thread(target=_serve_until, args=(server, server._stop_event), daemon=True)

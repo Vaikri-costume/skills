@@ -9,15 +9,15 @@ from pathlib import Path
 
 from drive_organizer import paths_config
 from drive_organizer.paths_config import (
-    BATCH,
-    IMAGE_EXTS,
     PARA_ROOTS,
-    RAW_EXTS,
     _atomic_write,
-    _load_templates,
+    _effective_batch_size,
+    _effective_scan_file_limit,
     _read_user_config,
 )
 from drive_organizer.content_peek import (
+    IMAGE_EXTS,
+    RAW_EXTS,
     extract_photo_date,
     get_db,
 )
@@ -148,10 +148,13 @@ def _build_rules_index(root: Path) -> tuple:
     """Build a lightweight index of every rule destination for the auto-classify
     fast-path: a list of {dest, tokens, neg} plus the set of all known destination
     paths. tokens are distinctive lowercased terms from the folderName + the rule's
-    signal (len>=4) PLUS the entity's aliases (len>=3, so short forms like 'ish'
-    route) from entities.json. neg = the entity's negative tokens (learned from
-    rejections) that suppress a match (W5)."""
-    from drive_organizer.cleanup_reconcile import _normalize_grouping
+    signal (len>=4 by default, per-entity overridable via entities.json
+    `min_token_len` — e.g. short names like IBM/BBC/ADM that the global floor
+    would otherwise exclude) PLUS the entity's aliases (len>=3, so short forms
+    like 'ish' route — a separate, unrelated floor, not affected by
+    `min_token_len`) from entities.json. neg = the entity's negative tokens
+    (learned from rejections) that suppress a match (W5)."""
+    from drive_organizer.routing import _normalize_grouping
     from drive_organizer.entities_rules import _read_entities, _signal_from_description
     entities_meta = _read_entities(root)
     index, dest_set = [], set()
@@ -185,7 +188,12 @@ def _build_rules_index(root: Path) -> tuple:
             leaf = folder.split("/")[-1]
             meta = entities_meta.get(leaf, {}) if isinstance(entities_meta, dict) else {}
             signal = _signal_from_description(r.get("description", ""), folder)
-            tokens = _tokens_from(folder + " " + signal)
+            # Per-entity override of the global 4-char token floor (hand-editable via
+            # entities.json / the rules-viewer, so validate defensively — a malformed
+            # value falls back to the safe default rather than corrupting matching).
+            raw_min_len = meta.get("min_token_len")
+            min_len = raw_min_len if isinstance(raw_min_len, int) and raw_min_len >= 1 else 4
+            tokens = _tokens_from(folder + " " + signal, minlen=min_len)
             for a in meta.get("aliases", []) or []:           # aliases route too (len>=3)
                 tokens |= _tokens_from(a, minlen=3)
             neg = set()
@@ -213,7 +221,7 @@ def _auto_classify_entry(entry: dict, root: Path, index: list, dest_set: set) ->
     Returns (dest_subfolder, reason) or (None, None) when the file is ambiguous and
     must fall through to classification. Conservative by design: only fires on a
     file already living in the organized tree, or a SINGLE unambiguous token match."""
-    from drive_organizer.cleanup_reconcile import _active_groupings
+    from drive_organizer.routing import _active_groupings
     groupings = _active_groupings()
     cur = Path(entry["current_path"])
     try:
@@ -227,6 +235,15 @@ def _auto_classify_entry(entry: dict, root: Path, index: list, dest_set: set) ->
     #    to grouping membership prevents a manually-moved file that happens to sit under a
     #    grouping folder from being falsely marked "already placed" when no rule routes to
     #    its parent. C3 fix: added dest_set membership check.
+    #
+    #    NOTE (path membership, not classification provenance): this check keys on where
+    #    the file CURRENTLY SITS, not on whether it ever went through classify/propose
+    #    review. A file placed in a ruled folder by hand, or restored via
+    #    `reconcile --accept`, is indistinguishable here from one properly classified
+    #    there — both get "already in ruled folder" and (with auto_approve on) the same
+    #    review-skipping fast path. Accepted by design: if the user filed it there on
+    #    purpose, re-litigating it in the viewer would be wasted friction. See SKILL.md's
+    #    auto_approve documentation for the full caveat.
     if rel_dir is not None and rel_dir.parts:
         parts = rel_dir.parts
         rel_dir_str = str(rel_dir).replace(os.sep, "/").strip("/")
@@ -257,9 +274,11 @@ def _auto_classify_entry(entry: dict, root: Path, index: list, dest_set: set) ->
 
 
 def cmd_propose(args):
-    from drive_organizer.cleanup_reconcile import _normalize_grouping
+    from drive_organizer.routing import _normalize_grouping
     from drive_organizer.entities_rules import _read_entities
-    limit = int(args.limit)
+    root = Path(paths_config._EFFECTIVE_ROOT)
+    # Precedence: explicit --limit > config.json's scan_file_limit > hardcoded 250.
+    limit = int(args.limit) if args.limit is not None else _effective_scan_file_limit(root)
     conn = get_db()
     rows = conn.execute(
         """SELECT id, current_path, filename, extension, file_size, file_date, content_peek
@@ -272,7 +291,7 @@ def cmd_propose(args):
         print("No pending files. Run 'scan' first or all files are already classified.")
         return
 
-    cfg = _read_user_config()
+    cfg = _read_user_config(root)
     # W1 — auto-classify fast-path toggle: config.json auto_classify (default True),
     # overridable per-run with --no-auto-classify / --auto-classify.
     auto_on = cfg.get("auto_classify", True)
@@ -287,6 +306,11 @@ def cmd_propose(args):
     auto_approve = cfg.get("auto_approve", False)
     if getattr(args, "auto_approve", False):
         auto_approve = True
+    # Per-entity auto_approve override (entities.json): tri-state — absent/null
+    # inherits the global `auto_approve` above; true/false always/never auto-approves
+    # this entity's W1 matches regardless of the global setting. Loaded once here and
+    # applied at the W1 application site below via the entity's routed folder leaf.
+    entities_meta = _read_entities(root)
 
     # W1b — cost toggles: skip the expensive content/vision read for some files.
     # vision (default on), skip_types (extensions), skip_over_mb (size cap). Config
@@ -317,12 +341,17 @@ def cmd_propose(args):
         skip_over_mb = cfg.get("skip_over_mb")
     skip_over_bytes = float(skip_over_mb) * 1024 * 1024 if skip_over_mb else None
 
-    root = Path(paths_config._EFFECTIVE_ROOT)
     need_index = auto_on or (not vision_on) or bool(skip_types) or bool(skip_over_bytes)
     index, dest_set = (_build_rules_index(root) if need_index else ([], set()))
     auto_log = []
 
     def _open_blocked(e: dict) -> list:
+        # This capability-gating ladder is intentionally duplicated in references/
+        # arbiter-prompt.md's "Model capabilities" section — a Markdown agent prompt cannot
+        # import this Python function, and the arbiter (a separate dispatched agent, not this
+        # process) needs the same degrade-ladder logic applied to its own inbox-sweep files.
+        # Two consumers, one policy, expressed twice by necessity — keep both in sync on change.
+        #
         # Returns ALL applicable block reasons (not just the first) — a file can be blocked by
         # several toggles at once, e.g. ["raw-not-decodable","skip-type"]. The closed reason set
         # is exactly: "raw-not-decodable" (RAW permanent block), "vision-off" (user toggle),
@@ -358,6 +387,10 @@ def cmd_propose(args):
             "file_size":    row["file_size"],
             "file_date":    row["file_date"],
             "is_raw":       ext in RAW_EXTS,            # camera RAW — never vision-readable
+            # Extension-based, not content-sniffed — a deliberate tradeoff: a file with a
+            # corrupt/truncated body but a valid image extension still gets is_image=True,
+            # so it's sent to vision (or EXIF) rather than name/path routing. Worst case it
+            # degrades to a failed vision read with no description, not a crash or misroute.
             "is_image":     ext in IMAGE_EXTS or ext in RAW_EXTS,
             "content_peek": row["content_peek"],  # None for images (incl RAW); text for everything else
             "auto_routed":  False,
@@ -388,7 +421,13 @@ def cmd_propose(args):
             entry["para_subfolder"] = routed
             entry["proposed_subfolder"] = routed
             entry["auto_reason"] = reason
-            if auto_approve:
+            # Per-entity auto_approve override wins over the global toggle when set
+            # (true/false); otherwise inherit the global `auto_approve` unchanged.
+            leaf = routed.split("/")[-1]
+            entity_meta = entities_meta.get(leaf, {}) if isinstance(entities_meta, dict) else {}
+            entity_override = entity_meta.get("auto_approve")
+            effective_auto_approve = entity_override if isinstance(entity_override, bool) else auto_approve
+            if effective_auto_approve:
                 entry["auto_approved"] = True
             auto_log.append((row["id"], row["filename"], routed, reason))
         else:
@@ -400,13 +439,16 @@ def cmd_propose(args):
                 entry["content_peek"] = None
         result.append(entry)
 
-    # W1b — partition the to-classify residual into batches of BATCH for the fan-out:
-    # the skill dispatches one classification sub-agent per classify_batch, briefed
-    # with file PATHS (not inlined content). auto_routed files carry no batch.
+    # W1b — partition the to-classify residual into batches of the effective batch size
+    # for the fan-out: the skill dispatches one classification sub-agent per
+    # classify_batch, briefed with file PATHS (not inlined content). auto_routed files
+    # carry no batch. batch_size is config.json's `classify_batch_size` when valid, else
+    # the BATCH=25 default (see paths_config._effective_batch_size).
+    batch_size = _effective_batch_size(root)
     to_classify = [e for e in result if e.get("needs_classification")]
     for i, e in enumerate(to_classify):
-        e["classify_batch"] = i // BATCH
-    n_batches = (len(to_classify) + BATCH - 1) // BATCH
+        e["classify_batch"] = i // batch_size
+    n_batches = (len(to_classify) + batch_size - 1) // batch_size
 
     # Audit trail: every auto-route is appended to <root>/.organizer/auto-routed.csv
     # so the user can see exactly what was decided deterministically (never opaque).
@@ -432,7 +474,7 @@ def cmd_propose(args):
               f"{len(rows) - len(auto_log)} need classification. Audit: {audit}", file=sys.stderr)
 
     name_only = sum(1 for e in to_classify if e.get("route_by_name_only"))
-    print(f"To classify: {len(to_classify)} file(s) in {n_batches} batch(es) of {BATCH} "
+    print(f"To classify: {len(to_classify)} file(s) in {n_batches} batch(es) of {batch_size} "
           f"(fan-out one sub-agent per classify_batch){'; ' + str(name_only) + ' route-by-name-only (open blocked)' if name_only else ''}.",
           file=sys.stderr)
     print(f"Model capabilities: peek={'on' if peek_on else 'off'}, vision={'on' if vision_on else 'off'}. "
@@ -468,7 +510,178 @@ def cmd_propose(args):
         print(f"Active entity filename_tags ({len(entity_tags)}): "
               + ", ".join(f"{n}={t}" for n, t in sorted(entity_tags.items())), file=sys.stderr)
 
+    if getattr(args, "save_records", None):
+        # Purely additive: same records written to stdout, also persisted so the
+        # orchestrator can pass this file straight into `merge-proposals --records`
+        # instead of hand-transcribing its own stdout capture. Does not change the
+        # stdout behavior above in any way.
+        save_path = Path(args.save_records).expanduser()
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write(save_path, json.dumps(result, indent=2, ensure_ascii=False))
+        print(f"Records saved: {save_path} ({len(result)} entries)", file=sys.stderr)
+
     print(json.dumps(result, indent=2))
+
+
+# ---------------------------------------------------------------------------
+# merge-proposals
+# ---------------------------------------------------------------------------
+
+def _load_json_file(path: Path, what: str):
+    if not path.exists():
+        sys.exit(f"Error: {what} file not found: {path}")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        sys.exit(f"Error: could not parse {what} file {path} ({e})")
+
+
+def _verdicts_by_id(raw) -> dict:
+    """Accept either a flat JSON array of verdict objects, or a dict keyed by id —
+    different fan-out dispatch styles may produce either shape, so support both
+    defensively rather than picking one and failing on the other."""
+    out = {}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            if not isinstance(v, dict):
+                continue
+            vid = v.get("id", k)
+            try:
+                vid = int(vid)
+            except (TypeError, ValueError):
+                pass
+            out[vid] = v
+    elif isinstance(raw, list):
+        for v in raw:
+            if not isinstance(v, dict) or "id" not in v:
+                continue
+            vid = v["id"]
+            try:
+                vid = int(vid)
+            except (TypeError, ValueError):
+                pass
+            out[vid] = v
+    else:
+        sys.exit("Error: --verdicts must be a JSON array or an object keyed by id.")
+    return out
+
+
+# Verdict fields that get merged onto a needs_classification record, per
+# classify-prompt.md's output contract and references/filename-conventions.md's
+# "Needs-classification lane" shape.
+_VERDICT_FIELDS = ("para_subfolder", "new_filename", "reason", "signal",
+                    "confidence", "file_date", "vision_desc")
+
+
+def cmd_merge_proposals(args):
+    """Mechanizes the hand-built `proposals_classified.json` merge described in
+    SKILL.md's propose section: union auto-routed records (kept as-is),
+    needs_classification records (enriched with their verdict), optional
+    arbiter-sourced entries (a third, distinct shape — neither auto_routed nor
+    needs_classification), and optional reclassified-rejected carry-forward
+    entries from the previous viewer round. Disjoint-by-id across all lanes."""
+    records_path = Path(args.records).expanduser()
+    verdicts_path = Path(args.verdicts).expanduser()
+
+    records = _load_json_file(records_path, "--records")
+    if not isinstance(records, list):
+        sys.exit(f"Error: --records file {records_path} must be a JSON array.")
+
+    verdicts_raw = _load_json_file(verdicts_path, "--verdicts")
+    verdicts = _verdicts_by_id(verdicts_raw)
+
+    reclassified = []
+    if getattr(args, "reclassified", None):
+        reclassified_path = Path(args.reclassified).expanduser()
+        reclassified = _load_json_file(reclassified_path, "--reclassified")
+        if not isinstance(reclassified, list):
+            sys.exit(f"Error: --reclassified file {reclassified_path} must be a JSON array.")
+
+    arbiter = []
+    if getattr(args, "arbiter", None):
+        arbiter_path = Path(args.arbiter).expanduser()
+        arbiter = _load_json_file(arbiter_path, "--arbiter")
+        if not isinstance(arbiter, list):
+            sys.exit(f"Error: --arbiter file {arbiter_path} must be a JSON array.")
+
+    # Disjoint-by-id invariant check across the two propose lanes: a record can't
+    # be both auto_routed and needs_classification. If it is, that's a bug in
+    # propose's own output, not something to silently paper over.
+    bad_ids = [r.get("id") for r in records
+               if r.get("auto_routed") and r.get("needs_classification")]
+    if bad_ids:
+        sys.exit(f"Error: {len(bad_ids)} record(s) are both auto_routed and "
+                  f"needs_classification (ids: {bad_ids}) — this is a bug in "
+                  f"propose's own output, not a merge-time condition to paper over.")
+
+    n_auto = n_classified = n_missing_verdict = 0
+    merged = []
+    seen_ids = set()
+
+    for r in records:
+        rid = r.get("id")
+        if rid in seen_ids:
+            sys.exit(f"Error: duplicate id {rid} in --records file {records_path}.")
+        seen_ids.add(rid)
+
+        if r.get("auto_routed"):
+            merged.append(dict(r))
+            n_auto += 1
+        elif r.get("needs_classification"):
+            entry = dict(r)
+            verdict = verdicts.get(rid)
+            if verdict is None:
+                print(f"Warning: no verdict found for needs_classification id={rid} "
+                      f"({r.get('filename')}) — leaving record unenriched.", file=sys.stderr)
+                n_missing_verdict += 1
+            else:
+                for field in _VERDICT_FIELDS:
+                    if field in verdict and verdict[field] is not None:
+                        entry[field] = verdict[field]
+                n_classified += 1
+            merged.append(entry)
+        else:
+            # Neither lane set — pass through unchanged (defensive; shouldn't
+            # happen from a well-formed propose output, but don't drop data).
+            merged.append(dict(r))
+
+    # Arbiter-sourced entries (reroute_high/reroute_low) are a third, distinct
+    # entry shape that bypasses the propose fan-out entirely — merged in
+    # unchanged, disjoint-by-id from the propose-derived records above.
+    n_arbiter = 0
+    for a in arbiter:
+        aid = a.get("id")
+        if aid in seen_ids:
+            sys.exit(f"Error: arbiter entry id {aid} collides with an existing "
+                      f"--records id — arbiter entries must be disjoint by id.")
+        seen_ids.add(aid)
+        merged.append(dict(a))
+        n_arbiter += 1
+
+    # Reclassified-rejected entries carried forward from the previous viewer
+    # round (process-return step 3) — already-shaped entries with action='approved'.
+    n_reclassified = 0
+    for e in reclassified:
+        eid = e.get("id")
+        if eid in seen_ids:
+            sys.exit(f"Error: reclassified entry id {eid} collides with an "
+                      f"existing --records/--arbiter id — reclassified entries "
+                      f"must be disjoint by id.")
+        seen_ids.add(eid)
+        merged.append(dict(e))
+        n_reclassified += 1
+
+    out_path = Path.home() / ".claude" / "drive-organizer" / "proposals_classified.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(out_path, json.dumps(merged, indent=2, ensure_ascii=False))
+
+    summary = (f"Wrote proposals_classified.json: {n_auto} auto-routed, "
+               f"{n_classified} classified"
+               + (f" ({n_missing_verdict} missing verdict)" if n_missing_verdict else "")
+               + (f", {n_arbiter} arbiter" if n_arbiter else "")
+               + (f", {n_reclassified} reclassified" if n_reclassified else "")
+               + f" -> {out_path}")
+    print(summary)
 
 
 # ---------------------------------------------------------------------------

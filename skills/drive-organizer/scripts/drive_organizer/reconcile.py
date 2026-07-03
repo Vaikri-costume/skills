@@ -1,4 +1,5 @@
-"""drive_organizer.cleanup_reconcile — split from the original organizer.py (pure structural move, no behavior change)."""
+"""drive_organizer.reconcile — structure-drift detection/repair. Split from
+cleanup_reconcile.py (pure structural move, no behavior change)."""
 from __future__ import annotations
 import json
 import os
@@ -10,237 +11,13 @@ from pathlib import Path
 
 from drive_organizer import paths_config
 from drive_organizer.paths_config import (
-    PARA_ROOTS,
     _atomic_write,
     _has_rules,
     _is_external,
-    _load_templates,
-    _read_user_config,
 )
-from drive_organizer.content_peek import (
-    _cloud_platform_note,
-    get_db,
-)
-from drive_organizer.csv_export import (
-    export_csv,
-)
-
-
-def _evict_command(path: Path):
-    """Per-OS command (argv list) to dehydrate a folder's materialised copies to online-only,
-    freeing local disk while the cloud copy stays. Returns None where the platform has no
-    supported command (Linux/other). macOS-verified intent; Windows best-effort/unverified."""
-    if sys.platform == "darwin":
-        # brctl evicts File-Provider/iCloud-backed items (verified path). OneDrive-on-macOS has
-        # NO eviction CLI — brctl returns non-zero for it, so _run_eviction falls back to the
-        # manual recipe. See references/subcommands.md 'cleanup'.
-        return ["brctl", "evict", str(path)]
-    if sys.platform == "win32":
-        # OneDrive Files-On-Demand: unpin (+U) and clear the always-keep pin (-P), recursively.
-        return ["attrib", "+U", "-P", str(path), "/s", "/d"]
-    return None  # Linux / other: no standard eviction command
-
-
-# The manual per-app eviction recipes live in references/subcommands.md 'cleanup' (single home);
-# the backend only points there rather than re-listing them (avoids drift).
-_EVICT_FALLBACK = ("free disk via your sync app's 'free up space' / 'online only' option "
-                   "(per-app recipes in references/subcommands.md 'cleanup')")
-
-
-def _run_eviction(drive: Path) -> None:
-    """`cleanup --evict`: dehydrate the organised top-level grouping folders to online-only to
-    free local disk (cloud copies remain, re-downloadable). Staging (_Inbox/, Archive/) is never
-    evicted. Best-effort and non-destructive of data: on an unsupported platform, a missing tool,
-    or a per-folder failure it degrades to the manual recipe instead of erroring."""
-    import subprocess
-    grouping_names = {g.upper() for g in _active_groupings()}
-    targets = sorted(
-        (d for d in drive.iterdir()
-         if d.is_dir() and not d.name.startswith(".")
-         and d.name not in PARA_ROOTS and d.name.upper() in grouping_names),
-        key=lambda p: p.name,
-    )
-    if not targets:
-        print("Evict: no organised grouping folders to evict.")
-        return
-    argv0 = _evict_command(targets[0])
-    if argv0 is None:
-        print(f"Evict: no automated eviction command for {sys.platform} — {_EVICT_FALLBACK}.")
-        return
-    ok, failed, tool_missing = [], [], False
-    for t in targets:
-        try:
-            r = subprocess.run(_evict_command(t), capture_output=True, text=True, timeout=300)
-            if r.returncode == 0:
-                ok.append(t.name)
-            else:
-                last = (r.stderr or "").strip().splitlines()
-                failed.append((t.name, r.returncode, last[-1] if last else ""))
-        except FileNotFoundError:
-            # The tool is missing for every remaining folder — stop trying, but still report
-            # what already evicted/failed below (don't drop partial progress on early return).
-            tool_missing = True
-            break
-        except Exception as e:
-            failed.append((t.name, -1, str(e)[:160]))
-    if ok:
-        print(f"Evicted {len(ok)} grouping folder(s) to online-only: {', '.join(ok)}.")
-    for n, rc, err in failed:
-        print(f"  evict failed: {n} (rc={rc}) {err}", file=sys.stderr)
-    if tool_missing:
-        print(f"Evict: '{argv0[0]}' not found on PATH — {_EVICT_FALLBACK}.", file=sys.stderr)
-    elif failed:
-        print(f"Some folders did not evict — {_EVICT_FALLBACK}.", file=sys.stderr)
-
-
-def cmd_cleanup(args):
-    drive = Path(args.path).expanduser() if args.path else paths_config._EFFECTIVE_ROOT
-    if not drive.exists():
-        sys.exit(f"Error: root path not found: {drive}")
-
-    removed = 0
-
-    # Staging subdirs inside Archive — they hold active data and must survive empty
-    # batches. Hoisted out of the walk loop (a constant set literal, not per-iteration).
-    _ARCHIVE_STAGING = {"_To Delete", "_Duplicates", "_Merged-Originals"}
-
-    # Walk bottom-up so children are processed before parents
-    for root, dirs, files in os.walk(drive, topdown=False):
-        root_path = Path(root)
-
-        # Skip the root itself
-        if root_path == drive:
-            continue
-
-        # Skip direct children of root that are PARA roots
-        if root_path.parent == drive and root_path.name in PARA_ROOTS:
-            continue
-
-        # Skip staging subdirs inside Archive
-        if root_path.parent == drive / "Archive" and root_path.name in _ARCHIVE_STAGING:
-            continue
-
-        try:
-            root_path.rmdir()  # succeeds only if empty
-            removed += 1
-        except OSError:
-            pass  # not empty, or permission error — skip silently
-
-    print(f"Cleanup complete: {removed} empty folders removed.")
-
-    if getattr(args, "evict", False):
-        _run_eviction(drive)
-
-
-# ---------------------------------------------------------------------------
-# flagged
-# ---------------------------------------------------------------------------
-
-def cmd_flagged(args):
-    """List files marked as flagged so they can be reviewed or reclassified."""
-    conn = get_db()
-    rows = conn.execute(
-        "SELECT id, filename, current_path, original_path FROM files WHERE status='flagged' ORDER BY id"
-    ).fetchall()
-    conn.close()
-
-    if not rows:
-        print("No flagged files.")
-        return
-
-    print(f"Flagged files ({len(rows)} total):")
-    for r in rows:
-        path = r["current_path"] or r["original_path"]
-        print(f"  [{r['id']}] {r['filename']}  —  {path}")
-    print()
-    print("Flagged files are excluded from propose. To reclassify: peek/classify each, add it back into the next proposals_classified.json batch, and review it in the viewer — not executed directly.")
-    print("To manually clear a flag: UPDATE files SET status='pending' WHERE id=<N>;")
-
-
-# ---------------------------------------------------------------------------
-# status
-# ---------------------------------------------------------------------------
-
-# The five groupings are the DEFAULT, not a hard limit. The active area set is
-# data-driven (see _active_groupings): a user may have more, fewer, or differently
-# named top-level groupings, declared via templates Q1_groupings or config "areas".
-DEFAULT_GROUPINGS = {"ENTERTAINMENT", "PERSONAL", "WORK", "EDUCATION", "RESOURCES"}
-
-
-def _active_groupings() -> set:
-    """The active set of top-level grouping (area) names, ALL-CAPS, derived in order:
-      1. config.json "areas": [...]  (per-drive override — authoritative if present)
-      2. merged templates' "Q1_groupings" list (shipped skeleton ⊕ user override)
-      3. DEFAULT_GROUPINGS (the shipped five) as a last-resort fallback
-    Not independently cached — groupings are derived from _load_templates(), which
-    carries its own mtime-keyed cache. Caching groupings separately would leave a
-    stale window whenever paths_config._TEMPLATES_CACHE is repopulated (e.g. after a live save
-    invalidates it), so groupings are derived on every call at negligible cost."""
-
-    def _name(entry):
-        # Q1_groupings entries (and config "areas") may be plain strings or dicts
-        # carrying a "name" key (the templates skeleton uses the dict form).
-        if isinstance(entry, dict):
-            return entry.get("name")
-        return entry
-
-    areas = None
-    cfg = _read_user_config()
-    if isinstance(cfg.get("areas"), list) and cfg["areas"]:
-        areas = cfg["areas"]
-    if areas is None:
-        q1 = _load_templates().get("Q1_groupings")
-        if isinstance(q1, list) and q1:
-            areas = q1
-    if areas is None:
-        areas = DEFAULT_GROUPINGS
-    names = {str(_name(a)).upper() for a in areas if _name(a)}
-    return names or {g.upper() for g in DEFAULT_GROUPINGS}
-
-
-def _para_category(sub_rel: str, groupings=None) -> str:
-    """The PARA category for a destination subfolder: its first path segment if that is
-    an active grouping, else '_Inbox'. This is the SINGLE authoritative home for the
-    projection — execute and crash-recovery both call it, and the verdict contract omits
-    para_category entirely so the backend always derives it here. (The viewer's client-side
-    `inferCategory` is NOT a mirror: it takes the raw first segment with no grouping check,
-    and is display-only — its value is never sent back or persisted, so the two need not
-    and do not match for legacy-flat paths.)
-    `groupings` should be pre-loaded by the caller (e.g. cmd_execute calls _active_groupings()
-    once at the top and passes it here) to avoid re-reading config.json on every file."""
-    if groupings is None:
-        groupings = _active_groupings()
-    first_seg = sub_rel.split("/")[0] if sub_rel else ""
-    # Normalise case before the membership check: groupings are stored canonical ALL-CAPS
-    # (_active_groupings upper-cases them), but a destination derived from an on-disk path
-    # (e.g. reconcile's Path.relative_to) can carry a miscased segment like 'Personal/'.
-    # Compare upper-cased and return the canonical grouping so a miscased folder projects
-    # to its real category instead of falling to '_Inbox' (which caused a reconcile re-flag loop).
-    return first_seg.upper() if first_seg.upper() in groupings else "_Inbox"
-
-
-def _ensure_in_suffix(desc: str, leaf: str) -> str:
-    """Ensure a rule description carries the required ' in <leaf>' suffix (the
-    self-describing-sentence convention; see SKILL.md "Description format"). The SINGLE
-    home for the append — every site that writes a rule description calls this, so the
-    suffix convention can never drift between writers."""
-    if desc and not desc.endswith(f" in {leaf}"):
-        return f"{desc} in {leaf}"
-    return desc
-
-
-def _normalize_grouping(para: str) -> str:
-    """Force a destination's top-level grouping segment to its canonical ALL-CAPS
-    form, so a viewer edit like 'Personal/PERSONAL Financial' lands in
-    'PERSONAL/PERSONAL Financial'. Only the first path segment is touched; deeper
-    names keep their case. (reconcile remains the safety net for legacy miscased
-    folders already on disk.)"""
-    if not para:
-        return para
-    parts = para.split("/")
-    if parts[0].upper() in _active_groupings():
-        parts[0] = parts[0].upper()
-    return "/".join(parts)
+from drive_organizer.routing import _active_groupings, _para_category
+from drive_organizer.content_peek import get_db
+from drive_organizer.csv_export import export_csv
 
 
 def _reconcile_known_roots() -> set:
@@ -315,8 +92,7 @@ def cmd_reconcile(args):
     where it is, update the registry). --prune ID drops a confirmed-deleted row.
     --apply is a bulk 'restore all misplaced' convenience for when every move was
     accidental. Mangled folders are always report-only."""
-    from drive_organizer.bootstrap import _bootstrap_candidates
-    from drive_organizer.entities_rules import _coverage_gaps, _locked_atomic_names, _should_prune_subdir
+    from drive_organizer.entities_rules import _locked_atomic_names, _should_prune_subdir
     root = Path(paths_config._EFFECTIVE_ROOT)
     now = datetime.now().isoformat()
 
@@ -458,6 +234,23 @@ def cmd_reconcile(args):
                  "note": "status=pending but move_journal entry was cleared and file is missing — "
                          "mark as missing or reconcile manually"})
 
+    # Reappeared-missing rows — status='missing' (execute's crash-recovery path marked the
+    # row missing because neither src nor dest existed at the time) but a file now exists at
+    # the row's last-known current_path. Detect-only (consistent with dry-run-then-confirm):
+    # surface it so the user can restore it into the pending/organized lifecycle via
+    # --accept ID, rather than leaving it permanently unreachable at status='missing'.
+    for row in conn.execute(
+        "SELECT id, filename, current_path FROM files WHERE status = 'missing'"
+    ):
+        cp = row["current_path"] if "current_path" in row.keys() else None
+        if cp and Path(cp).exists():
+            report["bad_registry_rows"].append(
+                {"id": row["id"], "issue": "missing_row_reappeared", "current_path": cp,
+                 "filename": row["filename"],
+                 "note": "row is status='missing' but a file now exists at its recorded "
+                         "current_path — run --accept ID to bring it back into the "
+                         "pending/organized lifecycle"})
+
     # Misplaced files + bad registry rows (registry vs disk)
     missing_rows = []
     for row in conn.execute(
@@ -504,7 +297,7 @@ def cmd_reconcile(args):
             # Shared pruning predicate (same one _coverage_gaps + _bootstrap_candidates use)
             # so all walk sites stay in sync — no inline re-implementation to drift.
             subdirs[:] = [d for d in subdirs
-                          if not _should_prune_subdir(d, cp_dir, locked_atomic)]
+                          if not _should_prune_subdir(d, cp_dir, locked_atomic, root)]
             for fn in files:
                 index.setdefault(fn, []).append(cp_dir / fn)
         for row in missing_rows:
@@ -622,28 +415,3 @@ def cmd_reconcile(args):
     elif not apply and (n_bad or n_man):
         print("  → no misplaced files; review bad registry rows (reconcile --prune ID to drop confirmed-deleted)")
         print("    and the mangled / unregistered folders (manual judgment).")
-
-
-def cmd_status(args):
-    conn = get_db()
-    rows  = conn.execute(
-        "SELECT status, COUNT(*) AS n FROM files GROUP BY status ORDER BY n DESC"
-    ).fetchall()
-    total   = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
-    batches = conn.execute("SELECT COUNT(*) FROM batches").fetchone()[0]
-    conn.close()
-
-    print(f"Root:     {paths_config._EFFECTIVE_ROOT}")
-    print(f"Registry: {paths_config.REGISTRY_DB}")
-    _note = _cloud_platform_note()
-    if _note:
-        print(_note, file=sys.stderr)
-    print(f"Total files: {total}  |  Batches: {batches}")
-    print()
-    for row in rows:
-        print(f"  {row['status']:15s}  {row['n']:6d}")
-
-
-# ---------------------------------------------------------------------------
-# csv-export
-# ---------------------------------------------------------------------------

@@ -2,7 +2,6 @@
 from __future__ import annotations
 import json
 import os
-import re
 import shutil
 import sys
 from pathlib import Path
@@ -12,12 +11,16 @@ from drive_organizer.paths_config import (
     PARA_ROOTS,
     _CLUSTER_LABEL,
     _CLUSTER_ORDER,
-    _COMMON_CATEGORY_WORDS,
     _atomic_write,
     _has_rules,
     _is_external,
-    _load_templates,
     _reset_caches,
+)
+from drive_organizer.category_words import (
+    _effective_common_category_words,
+)
+from drive_organizer.templates import (
+    _load_templates,
 )
 from drive_organizer.content_peek import (
     get_db,
@@ -117,7 +120,7 @@ def _infer_entity_type(name: str, has_filename_tag: bool, is_grouping: bool,
     if has_filename_tag:
         return "project"
     nl = name.lower()
-    cats_lower = {c.lower() for c in categories} | _COMMON_CATEGORY_WORDS
+    cats_lower = {c.lower() for c in categories} | _effective_common_category_words()
     if nl in cats_lower:
         return "category"
     # A single all-lowercase alphabetic word is almost always a functional subfolder
@@ -133,7 +136,7 @@ def _aggregate_rules(root: "Path") -> list:
     whole tree. Each returned entity carries its cross-folder occurrences, inferred
     or explicit entity_type (the clustering key), project metadata, registry usage
     count, and a dead-rule flag. This is the single source the viewer/bootstrap read."""
-    from drive_organizer.cleanup_reconcile import _active_groupings
+    from drive_organizer.routing import _active_groupings
     root = Path(root)
     entities_meta = _read_entities(root)
     groupings = _active_groupings()
@@ -185,8 +188,9 @@ def _aggregate_rules(root: "Path") -> list:
             "WHERE para_subfolder IS NOT NULL AND para_subfolder != '' GROUP BY para_subfolder"):
             usage[row["d"]] = row["c"]
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"  WARNING: could not read registry usage counts "
+              f"({e}) — usage counts may be empty/wrong.", file=sys.stderr)
 
     def _prefix_usage(area: str) -> int:
         # Files routed to the area itself OR anywhere beneath it.
@@ -225,6 +229,8 @@ def _aggregate_rules(root: "Path") -> list:
             # and the one the rules-viewer entity card writes to via /save.
             "filename_tag": meta.get("filename_tag") or proj.get("filename_tag"),
             "date_range": meta.get("date_range") or proj.get("date_range"),
+            "min_token_len": meta.get("min_token_len"),
+            "auto_approve": meta.get("auto_approve"),
             "occurrence_count": len(ent["occurrences"]),
             "usage_count": ucount,
             "dead": ucount == 0,
@@ -244,6 +250,8 @@ def _aggregate_rules(root: "Path") -> list:
                 "policy": meta.get("policy"), "notes": meta.get("notes"),
                 "review": meta.get("review"),
                 "filename_tag": meta.get("filename_tag"), "date_range": meta.get("date_range"),
+                "min_token_len": meta.get("min_token_len"),
+                "auto_approve": meta.get("auto_approve"),
                 "occurrence_count": 0, "usage_count": 0, "dead": True,
             })
 
@@ -270,6 +278,8 @@ def _aggregate_rules(root: "Path") -> list:
             "policy": m.get("policy"), "notes": m.get("notes"),
             "review": m.get("review"),
             "filename_tag": m.get("filename_tag"), "date_range": m.get("date_range"),
+            "min_token_len": m.get("min_token_len"),
+            "auto_approve": m.get("auto_approve"),
             "occurrence_count": 1, "usage_count": area_usage, "dead": area_usage == 0,
             "synthetic_area": True,
         })
@@ -283,7 +293,7 @@ def cmd_rules(args):
     """Aggregate the .tidy-rules.json cascade by entity across the tree. Default
     output is a human one-line-per-entity summary, semantically clustered by
     entity_type. `--json` emits the full structure consumed by the rules viewer."""
-    from drive_organizer.cleanup_reconcile import _active_groupings
+    from drive_organizer.routing import _active_groupings
     root = Path(paths_config._EFFECTIVE_ROOT)
     agg = _aggregate_rules(root)
     if getattr(args, "json", False):
@@ -347,7 +357,7 @@ def _conflicts_for(index: list) -> dict:
     return out
 
 
-def _should_prune_subdir(d: str, cp: Path, locked_atomic: set) -> bool:
+def _should_prune_subdir(d: str, cp: Path, locked_atomic: set, root: "Path | None" = None) -> bool:
     """C4: shared pruning predicate for os.walk subdirs[:] filtering.
     Returns True when a subdirectory should be excluded from descent:
     - hidden or underscore-prefixed names (dot/underscore convention)
@@ -355,12 +365,15 @@ def _should_prune_subdir(d: str, cp: Path, locked_atomic: set) -> bool:
     - atomic-unit markers (_atomic_marker test)
     - external/shared-library folders (_is_external test)
     Used by _coverage_gaps and _bootstrap_candidates to keep their pruning
-    logic in sync; each caller still mutates subdirs[:] in its own loop."""
-    from drive_organizer.bootstrap import _atomic_marker, _bootstrap_candidates
+    logic in sync; each caller still mutates subdirs[:] in its own loop.
+    `root` resolves which drive's config.json atomic_signatures_extra applies to the
+    _atomic_marker test — callers with a root variable already in scope MUST pass it
+    explicitly (do not rely on the implicit global fallback)."""
+    from drive_organizer.bootstrap import _atomic_marker
     return (
         d.startswith((".", "_"))
         or d in locked_atomic
-        or _atomic_marker(cp / d)
+        or bool(_atomic_marker(cp / d, root))
         or _is_external(cp / d)
     )
 
@@ -368,8 +381,7 @@ def _should_prune_subdir(d: str, cp: Path, locked_atomic: set) -> bool:
 def _coverage_gaps(root: Path, dest_set: set) -> list:
     """Folders that physically hold files but have no rule routing into them —
     candidates for 'create a rule' (feeds reconcile)."""
-    from drive_organizer.bootstrap import _bootstrap_candidates
-    from drive_organizer.cleanup_reconcile import _active_groupings
+    from drive_organizer.routing import _active_groupings
     gaps = []
     groupings = _active_groupings()
     locked_atomic = _locked_atomic_names(root)
@@ -388,7 +400,7 @@ def _coverage_gaps(root: Path, dest_set: set) -> list:
         for cur, subdirs, files in os.walk(top):
             cp = Path(cur)
             subdirs[:] = [d for d in subdirs
-                          if not _should_prune_subdir(d, cp, locked_atomic)]
+                          if not _should_prune_subdir(d, cp, locked_atomic, root)]
             if cp == top:
                 continue   # the grouping root itself isn't a "gap"
             try:
@@ -420,7 +432,7 @@ def _edit_rule_across_occurrences(root: Path, entity: str, occurrences: list,
     and files on disk are NOT touched — this edits routing rules only.
     create_if_missing: when a folderName isn't present in its rules file (e.g. a
     synthesized area card with no root rule yet), append a new rule for it."""
-    from drive_organizer.cleanup_reconcile import _ensure_in_suffix
+    from drive_organizer.routing import _ensure_in_suffix
     changed = 0
     by_file = {}
     for occ in occurrences:
@@ -502,7 +514,7 @@ def _rename_entity(root: Path, entity: str, occurrences: list, new_name: str,
                    apply: bool = False) -> dict:
     """Rename an entity (rule folderName leaf) across all its occurrences, and rename
     the on-disk folder + update the registry. dry-run unless apply=True."""
-    from drive_organizer.cleanup_reconcile import _active_groupings, _para_category
+    from drive_organizer.routing import _active_groupings, _para_category
     plan, did = [], {"rules": 0, "folders": 0, "rows": 0}
     # Build the per-occurrence plan first (dry-run is just this).
     for occ in occurrences:
@@ -717,7 +729,7 @@ def _apply_area_changes(root: Path, add: list, rename: list, remove: list) -> di
     list (ALL-CAPS enforced). Removal is refused while files still live under the area
     (guard). On-disk folder renames for a renamed area are reported as a structural
     follow-up, not performed silently."""
-    from drive_organizer.cleanup_reconcile import _active_groupings
+    from drive_organizer.routing import _active_groupings
     cfg_path = root / ".organizer" / "config.json"
     cfg = {}
     if cfg_path.exists():
@@ -814,7 +826,7 @@ def _promotion_plan(root: Path, entity: str, occurrences: list, target_parent: s
     """Dry-run plan for moving a folder up/down a level (e.g. a Q2 thing -> its own Q1
     area). Describes the folder move, the rule rewrites, and the registry path updates
     that --apply would perform. Never moves anything here (the user confirms)."""
-    from drive_organizer.cleanup_reconcile import _normalize_grouping
+    from drive_organizer.routing import _normalize_grouping
     steps = []
     target_parent = _normalize_grouping(target_parent.strip("/")) if target_parent else ""
     for occ in occurrences:
@@ -831,7 +843,7 @@ def _promotion_plan(root: Path, entity: str, occurrences: list, target_parent: s
             conn.close()
         except Exception as _exc:
             import logging as _logging
-            _logging.warning("merge-category dry-run: could not count registry rows for %r: %s", src_rel, _exc)
+            _logging.warning("promotion dry-run: could not count registry rows for %r: %s", src_rel, _exc)
         steps.append({
             "move_folder": {"from": src_rel, "to": new_rel},
             "rewrite_rule_in": occ["rules_file"],
