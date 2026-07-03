@@ -164,7 +164,7 @@ def _bootstrap_apply(root: Path, proposed: dict) -> dict:
     """Write approved bootstrap proposals: rules into each folder's PARENT
     .tidy-rules.json (folderName=leaf), and entity metadata into entities.json."""
     from drive_organizer.classify_propose import _build_rules_index
-    from drive_organizer.cleanup_reconcile import _ensure_in_suffix
+    from drive_organizer.routing import _ensure_in_suffix
     from drive_organizer.entities_rules import _read_entities, _write_entities
     root = Path(root)
     res = {"rules_written": 0, "entities": 0}

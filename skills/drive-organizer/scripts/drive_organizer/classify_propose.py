@@ -154,7 +154,7 @@ def _build_rules_index(root: Path) -> tuple:
     like 'ish' route — a separate, unrelated floor, not affected by
     `min_token_len`) from entities.json. neg = the entity's negative tokens
     (learned from rejections) that suppress a match (W5)."""
-    from drive_organizer.cleanup_reconcile import _normalize_grouping
+    from drive_organizer.routing import _normalize_grouping
     from drive_organizer.entities_rules import _read_entities, _signal_from_description
     entities_meta = _read_entities(root)
     index, dest_set = [], set()
@@ -221,7 +221,7 @@ def _auto_classify_entry(entry: dict, root: Path, index: list, dest_set: set) ->
     Returns (dest_subfolder, reason) or (None, None) when the file is ambiguous and
     must fall through to classification. Conservative by design: only fires on a
     file already living in the organized tree, or a SINGLE unambiguous token match."""
-    from drive_organizer.cleanup_reconcile import _active_groupings
+    from drive_organizer.routing import _active_groupings
     groupings = _active_groupings()
     cur = Path(entry["current_path"])
     try:
@@ -274,7 +274,7 @@ def _auto_classify_entry(entry: dict, root: Path, index: list, dest_set: set) ->
 
 
 def cmd_propose(args):
-    from drive_organizer.cleanup_reconcile import _normalize_grouping
+    from drive_organizer.routing import _normalize_grouping
     from drive_organizer.entities_rules import _read_entities
     root = Path(paths_config._EFFECTIVE_ROOT)
     # Precedence: explicit --limit > config.json's scan_file_limit > hardcoded 250.
