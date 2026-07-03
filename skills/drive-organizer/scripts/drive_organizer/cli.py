@@ -8,7 +8,6 @@ from pathlib import Path
 from drive_organizer import paths_config
 from drive_organizer.paths_config import (
     DEFAULT_ONEDRIVE,
-    _default_root,
     _finalize_runtime_paths,
     _print_optional_deps_notice,
     _save_config_root,
@@ -16,6 +15,7 @@ from drive_organizer.paths_config import (
 from drive_organizer.classify_propose import (
     cmd_exif,
     cmd_merge_category,
+    cmd_merge_proposals,
     cmd_propose,
 )
 from drive_organizer.scan import (
@@ -33,14 +33,15 @@ from drive_organizer.duplicates_variants import (
 from drive_organizer.viewer_propose import (
     cmd_generate_viewer,
 )
-from drive_organizer.cleanup_reconcile import (
-    cmd_cleanup,
-    cmd_flagged,
-    cmd_reconcile,
-    cmd_status,
-)
+from drive_organizer.cleanup import cmd_cleanup
+from drive_organizer.flagged import cmd_flag_from, cmd_flagged
+from drive_organizer.reconcile import cmd_reconcile
+from drive_organizer.status import cmd_status
 from drive_organizer.csv_export import (
     cmd_csv_export,
+)
+from drive_organizer.date_range import (
+    cmd_date_subfolder,
 )
 from drive_organizer.entities_rules import (
     cmd_rules,
@@ -53,7 +54,7 @@ from drive_organizer.bootstrap import (
     cmd_bootstrap,
 )
 from drive_organizer import paths_config
-from drive_organizer.paths_config import (
+from drive_organizer.templates import (
     cmd_templates,
 )
 
@@ -70,15 +71,19 @@ def main():
 
     p_dl = sub.add_parser("download-batch")
     p_dl.add_argument("path", nargs="?", help="root path")
-    p_dl.add_argument("--limit-gb", default="20", help="Max GB to queue (default 20)")
+    p_dl.add_argument("--limit-gb", default=None,
+                      help="Max GB to queue (default: config.json's scan_gb_limit, else 20)")
 
     p_scan = sub.add_parser("scan")
     p_scan.add_argument("path", nargs="?")
-    p_scan.add_argument("--limit", type=int, default=250, help="Max files per scan batch (default 250)")
-    p_scan.add_argument("--limit-gb", default="20", help="Max cumulative GB per batch (default 20)")
+    p_scan.add_argument("--limit", type=int, default=None,
+                        help="Max files per scan batch (default: config.json's scan_file_limit, else 250)")
+    p_scan.add_argument("--limit-gb", default=None,
+                        help="Max cumulative GB per batch (default: config.json's scan_gb_limit, else 20)")
 
     p_propose = sub.add_parser("propose")
-    p_propose.add_argument("--limit", type=int, default=250)
+    p_propose.add_argument("--limit", type=int, default=None,
+                           help="Max pending files to propose (default: config.json's scan_file_limit, else 250)")
     p_propose.add_argument("--no-auto-classify", action="store_true", dest="no_auto_classify",
                            help="Disable the W1 deterministic fast-path; send every file to classification")
     p_propose.add_argument("--auto-classify", action="store_true", dest="auto_classify",
@@ -93,6 +98,23 @@ def main():
                            help="W1b cost toggle: files larger than N MB are never opened (routed by name/path/rule only)")
     p_propose.add_argument("--auto-approve", action="store_true", dest="auto_approve",
                            help="W5: mark ALL W1 auto-routed files auto_approved (orchestrator may skip the viewer; does not apply to classifier verdicts)")
+    p_propose.add_argument("--save-records", dest="save_records", metavar="PATH",
+                           help="Also persist the printed records array to this path (purely additive; stdout output is unchanged) — feed straight into `merge-proposals --records`")
+
+    p_merge_proposals = sub.add_parser("merge-proposals",
+                          help="Mechanizes the proposals_classified.json merge: union auto-routed + "
+                               "verdict-enriched needs_classification records, plus optional arbiter "
+                               "and reclassified-carry-forward entries, disjoint by id")
+    p_merge_proposals.add_argument("--records", required=True,
+                          help="Path to the JSON array saved by `propose --save-records`")
+    p_merge_proposals.add_argument("--verdicts", required=True,
+                          help="Path to the classify fan-out verdicts: a JSON array or a dict keyed by id")
+    p_merge_proposals.add_argument("--reclassified", default=None,
+                          help="Optional: JSON array of already-shaped action='approved' entries carried "
+                               "forward from the previous viewer round (process-return step 3)")
+    p_merge_proposals.add_argument("--arbiter", default=None,
+                          help="Optional: JSON array of arbiter-sourced entries (reroute_high/reroute_low) "
+                               "from the inbox arbiter sweep; a third distinct shape, disjoint by id")
 
     p_execute = sub.add_parser("execute")
     p_execute.add_argument("--approved", required=True)
@@ -114,6 +136,12 @@ def main():
                              help="Per-file: mark one reported missing/deleted file's registry row as deleted")
     sub.add_parser("variants")
     sub.add_parser("flagged")
+
+    p_flag_from = sub.add_parser("flag-from",
+                                 help="Deterministic recovery when the viewer's flag-write fails: "
+                                      "replay UPDATE ... status='flagged' from a proposals_flagged.json-shaped file")
+    p_flag_from.add_argument("path", help="Path to a proposals_flagged.json-shaped file (bare JSON array of int IDs)")
+
     sub.add_parser("status")
 
     p_merge = sub.add_parser("merge")
@@ -139,6 +167,11 @@ def main():
     p_exif = sub.add_parser("exif",
                             help="Image metadata (date/camera/dimensions) as JSON for vision-off routing; Pillow-optional, degrades to filename date, never errors")
     p_exif.add_argument("path", help="Path to the image file")
+
+    p_date_subfolder = sub.add_parser("date-subfolder",
+                            help="Deterministic YYYY/Month YY subfolder string from an ISO date "
+                                 "(e.g. 2024-03-15 -> 2024/March 24); standalone, no root needed")
+    p_date_subfolder.add_argument("date", help="ISO date string (YYYY-MM-DD)")
 
     p_merge_cat = sub.add_parser("merge-category",
                                  help="Add a taxonomy category from a small JSON diff into the per-user templates override (Python owns the merge)")
@@ -168,7 +201,8 @@ def main():
     p_bs.add_argument("--apply", metavar="FILE", help="Apply approved proposals (rules + entities) from FILE")
     p_bs.add_argument("--mode", choices=["cold-start", "audit"], default="cold-start")
     p_bs.add_argument("--sample", type=int, default=5, help="Files sampled per folder (default 5)")
-    p_bs.add_argument("--limit", type=int, default=250, help="Max candidate folders (default 250)")
+    p_bs.add_argument("--limit", type=int, default=None,
+                      help="Max candidate folders (default: config.json's scan_file_limit, else 250)")
     p_bs.add_argument("--json", action="store_true", help="JSON output (for --detect-atomic)")
 
     args = parser.parse_args()
@@ -201,10 +235,12 @@ def main():
         "download-batch":  cmd_download_batch,
         "scan":            cmd_scan,
         "propose":         cmd_propose,
+        "merge-proposals":  cmd_merge_proposals,
         "execute":         cmd_execute,
         "duplicates":      cmd_duplicates,
         "variants":        cmd_variants,
         "flagged":         cmd_flagged,
+        "flag-from":       cmd_flag_from,
         "merge":           cmd_merge,
         "status":          cmd_status,
         "generate-viewer":  cmd_generate_viewer,
@@ -212,6 +248,7 @@ def main():
         "csv-export":       cmd_csv_export,
         "templates":        cmd_templates,
         "exif":             cmd_exif,
+        "date-subfolder":   cmd_date_subfolder,
         "merge-category":   cmd_merge_category,
         "reconcile":        cmd_reconcile,
         "rules":            cmd_rules,

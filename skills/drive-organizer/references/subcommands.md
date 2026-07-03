@@ -19,6 +19,7 @@ Consult this file when invoking any of the commands below, hitting their errors,
 - [folder-tree](#folder-tree-on-demand-view) — on-demand: render the organised tree (rules ∩ disk)
 - [cleanup recipes](#cleanup-per-sync-app-eviction-recipes) — per-sync-app eviction commands
 - [inbox-list](#inbox-list) — list files currently in `_Inbox/` (feeds the arbiter sweep)
+- [rules-viewer](#rules-viewer-request-response-shapes) — request/response field shapes for the localhost rule editor's `/save` and `/apply` endpoints
 
 ---
 
@@ -34,6 +35,7 @@ Returns a JSON object enumerating files that have been executed into `_Inbox/` (
 ```json
 {
   "count": 42,
+  "arbiter_trigger": 100,
   "files": [
     {
       "id": 7,
@@ -51,6 +53,54 @@ Fields:
 - `count` — number of files currently in `_Inbox/` (already executed; files only classified-to-`_Inbox` this round but not yet executed are NOT counted)
 - `files` — array of all `_Inbox` records; each entry carries exactly the fields the arbiter template expects; fill `[INBOX_BATCH_JSON]` directly from this array
 - `is_image` — true only for non-RAW images (IMAGE_EXTS only); RAW files have `is_image: false` + `is_raw: true`; this encodes vision-readability for the arbiter's capability gate
+
+---
+
+## rules-viewer (request/response shapes)
+
+`rules-viewer` (SKILL.md "Three commands operate on the *rules*") is a manual, localhost-only browser tool whose Python backend and JS frontend live in the same file (`scripts/drive_organizer/rules_viewer.py`) — this section documents the wire shapes for maintainers editing either side, so they stay in sync.
+
+**Page-load payload** (served on `GET /`, embedded into the page as `DATA`):
+```json
+{
+  "root": "/abs/path",
+  "areas": ["ENTERTAINMENT", "PERSONAL", "WORK"],
+  "entities": [ /* one row per aggregated rule entity, per the `rules --json` shape */ ],
+  "conflicts": [ /* entities whose rules disagree on destination */ ],
+  "coverage_gaps": [ /* folders on disk with no matching rule — used for the "coverage gaps" panel */ ],
+  "cluster_order": ["Areas", "Projects", "People", "Subfolders", "Policies", "Atomic", "Unknown"],
+  "cluster_label": { "Areas": "Areas", "Projects": "Projects", "...": "..." },
+  "settings": { /* the Settings panel's current config.json values — see SKILL.md "Settings panel" */ }
+}
+```
+
+**`POST /save` and `POST /apply` request** (the rule-edit form; distinct from the Settings panel's separate `/config` endpoint):
+```json
+{
+  "entities": { "<entity name>": { /* metadata edits — see META_KEYS in rules_viewer.py */ } },
+  "rethink": ["<entity name>", "..."],
+  "rule_edits": [{ "entity": "<name>", "description": "<new description>" }],
+  "deletes": ["<entity name>", "..."],
+  "renames": [{ "entity": "<name>", "new_name": "<new name>" }],
+  "merges": [{ "src": "<name>", "dst": "<name>" }],
+  "areas": { "add": ["..."], "rename": [["old", "new"]], "remove": ["..."] },
+  "keepalive": false
+}
+```
+`keepalive` (or a `POST` to `/apply` itself) keeps the viewer session open after saving and returns a fresh `data` payload (same shape as the page-load payload above) so the JS can re-render without a full page reload. `/save` without `keepalive` closes the session.
+
+**Response:**
+```json
+{
+  "ok": true,
+  "results": {
+    "meta": 0, "rule_edits": 0, "deletes": 0, "rethink": 0,
+    "renames": [], "merges": [], "areas": null
+  },
+  "data": { /* only present when keepalive/apply — same shape as the page-load payload */ }
+}
+```
+Each `results` count/list reports how many of that edit-type the backend actually applied, for the UI's summary toast.
 
 ---
 
@@ -128,7 +178,7 @@ python3 ~/.claude/drive-organizer/organizer.py reconcile --apply      # BULK: re
 
    Each entry carries a **`suggestion`** (`restore` or `accept`) from a landing-spot heuristic — found inside a proper grouping folder → probably intentional → `accept`; loose at the root or in `_Inbox` → probably accidental → `restore`. **The suggestion is advisory; confirm with the user, then act per file** with `--restore ID` (move it back to its recorded home) or `--accept ID` (leave the file where it is and update the registry's `current_path` + `para_subfolder` to match). `--apply` is a bulk "restore everything" shortcut — use it only when you've confirmed *every* move was accidental.
 
-2. **Bad registry rows** — three `issue` values: `missing_on_disk` (the `current_path` no longer exists on disk **and** no relocated copy was found — genuinely deleted), `no_current_path` (an organized/duplicate row whose `current_path` is null/empty), or `organized_without_destination` (organized rows with no destination). Once the user confirms a file was deleted on purpose, `--prune ID` marks its row `deleted` so it stops being reported every run.
+2. **Bad registry rows** — five `issue` values: `missing_on_disk` (the `current_path` no longer exists on disk **and** no relocated copy was found — genuinely deleted), `no_current_path` (an organized/duplicate row whose `current_path` is null/empty), `organized_without_destination` (organized rows with no destination), `ghost_pending_no_journal` (a row still `status='pending'` whose `.move-journal.json` entry was cleared by crash-recovery but the file is missing from disk — a status stuck at `pending` with no journal to explain it, which would otherwise silently reappear in the next `propose` batch for re-classification and mask the data loss), or `missing_row_reappeared` (a row at `status='missing'` — execute's crash-recovery path marks a row `missing` when a journal entry's file is at neither its src nor dest — whose `current_path` now exists on disk again; this is the recovery path back into the pending/organized lifecycle for a file execute previously gave up on). Once the user confirms a file was deleted on purpose, `--prune ID` marks its row `deleted` so it stops being reported every run; for `missing_row_reappeared`, use `--accept ID` instead to bring the row back into the registry at its reappeared location.
 3. **Mangled root folders** — root-level folders that break the **active-grouping invariant** (the configured area set — the default five `ENTERTAINMENT/PERSONAL/WORK/EDUCATION/RESOURCES`, or whatever `<root>/.organizer/config.json` `"areas"` defines; reconcile reads `_active_groupings()`, it does not hardcode five): an unexpected non-grouping folder, a miscased grouping (`work` vs `WORK` — only detectable on case-sensitive drives), or a rule-bearing project folder still sitting at the root (legacy flat layout). **Report-only** — folder renames are too risky to automate; fix by hand.
 
 **Recommended order** (the summary prints it): resolve the **registry-backed misplaced files first** (grouped, per-file restore/accept), then prune confirmed deletions, then deal with the **unregistered / mangled folders** (manual judgment). Output: a human summary plus a full `<root>/.organizer/reconcile-report.json` (arrays `misplaced_files` with `id`/`issue`/`fix_from`/`fix_to`/`suggestion`, `bad_registry_rows`, `mangled_folders`, `applied`). The `--restore`/`--accept`/`--prune` commands read this report, so run a dry-run `reconcile` first.
@@ -172,6 +222,8 @@ python3 ~/.claude/drive-organizer/organizer.py variants
 If the script prints `"No variant groups found."` — no variants exist; the final pass is complete.
 
 Otherwise outputs a JSON array of probable variant groups — grouped by same extension + normalised filename stem. It deliberately does **not** gate on a size ratio: a highlighted/annotated variant can legitimately be several times the size of the plain original, and a ratio cap would split exactly the variant pairs this command exists to surface. Each group has a `group_id`, a `key` (the normalised filename used for matching), and a `files` array with `id`, `path`, `filename`, `file_size`, `file_date`. Claude formats this for display:
+
+The trailing-token vocabulary used to normalise the stem (`v2`, `final`, `copy`, `highlighted`, `annotated`, `marked`) is extensible per drive: `<root>/.organizer/config.json` `"variant_tokens"` (a list of extra words, also editable from the rules-viewer Settings panel) adds domain-specific vocab — e.g. legal `executed`/`redlined`, screenwriting `draft`/`revision` — on top of the built-in list, never replacing it.
 
 ```
 Group 1:
@@ -337,13 +389,16 @@ guaranteed present (the case-3 recovery below can always read `proposals_flagged
 - `"Warning: could not mark flagged in DB: <error>"` — the flag write failed. Patch the registry
   before running process-return:
   ```bash
-  sqlite3 <root>/.organizer/registry.db "UPDATE files SET status='flagged' WHERE id IN (<comma-separated IDs>);"
+  python3 ~/.claude/drive-organizer/organizer.py flag-from ~/.claude/drive-organizer/proposals_flagged.json
   ```
-  Get the exact IDs from `~/.claude/drive-organizer/proposals_flagged.json` — the viewer writes the
-  precise flagged-ID set there on **every** submit (a bare JSON array, e.g. `[12,47,88]`; `[]` when
-  nothing was flagged). **Do not** infer them by "IDs in `proposals_classified.json` not in
-  `proposals_approved.json`": that set also contains rows the user left **unreviewed** (`unset`), and
-  marking those `flagged` would wrongly drop unreviewed files from future propose batches.
+  This runs the exact same `UPDATE files SET status='flagged' WHERE id IN (...)` that the viewer's
+  successful path runs, sourced from `~/.claude/drive-organizer/proposals_flagged.json` — the viewer
+  writes the precise flagged-ID set there on **every** submit (a bare JSON array, e.g. `[12,47,88]`;
+  `[]` when nothing was flagged; `flag-from` handles the empty case as a no-op). **Do not** infer the
+  IDs yourself by "IDs in `proposals_classified.json` not in `proposals_approved.json`": that set also
+  contains rows the user left **unreviewed** (`unset`), and marking those `flagged` would wrongly drop
+  unreviewed files from future propose batches — `flag-from` avoids this because it only ever reads
+  the exact flagged-ID set the viewer recorded.
 
 If `Error: proposals file not found: <path>` or `Error: proposals JSON is empty.` — re-run propose to
 regenerate `proposals_classified.json` first. If `Error: port <N> is already in use…` — re-run

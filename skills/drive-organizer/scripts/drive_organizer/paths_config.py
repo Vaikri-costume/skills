@@ -1,11 +1,15 @@
 """drive_organizer.paths_config — split from the original organizer.py (pure structural move, no behavior change)."""
 from __future__ import annotations
+import copy
 import functools
 import json
 import os
 import sys
 import threading
+from datetime import datetime
 from pathlib import Path
+
+from . import config_dials
 
 
 REGISTRY_DB = Path.home() / ".claude" / "drive-organizer" / "registry.db"  # overridden at startup
@@ -33,15 +37,6 @@ CONFIG_PATH = Path.home() / ".claude" / "drive-organizer" / "config.json"
 _EFFECTIVE_ROOT = DEFAULT_ONEDRIVE  # set in main() from --root / config / DEFAULT
 _PATHS_FINALIZED = False  # flipped by _finalize_runtime_paths(); see get_db()
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".heic", ".heif", ".webp", ".tiff", ".tif", ".bmp", ".jfif"}
-# Camera RAW formats (file-type-routing.md "Images and Camera RAW"). RAW is an image for
-# routing purposes (no text peek, route by parent folder + filename) BUT can NEVER be
-# vision-read regardless of the vision toggle — Claude can't decode proprietary RAW. So
-# is_image is TRUE for RAW (the no-peek / image-routing gate) and RAW is permanently
-# vision-blocked (see _open_blocked), making the arbiter route it by name like a JPEG.
-RAW_EXTS = {".nef", ".raf", ".arw", ".cr2", ".cr3", ".dng", ".orf", ".rw2"}
-# RAW formats are not in IMAGE_EXTS — Claude can't vision-read them, and the skill routes
-# them by filename + parent folder via the Documents/RAW process instead.
 SKIP_NAMES = {".DS_Store", ".localized", "desktop.ini", "thumbs.db", ".tidy-rules.json"}
 SKIP_EXTS  = {".tmp", ".partial", ".lnk", ".ini"}
 
@@ -89,19 +84,49 @@ def _print_optional_deps_notice():
 # Special staging folders — never cleaned up, never re-scanned as fresh content
 PARA_ROOTS = {"_Inbox", "_To Delete", "_Duplicates", "_Merged-Originals", "Archive"}
 
-PEEK_CHARS = 300   # max chars to extract for content peek
+# Config-dial subsystem (constants, _effective_*() readers, write-side validation,
+# Settings-panel row generation) now lives in config_dials.py, driven by its DIALS
+# descriptor table — see that module's docstring. The names below are re-exported
+# unchanged so every existing `from .paths_config import _effective_batch_size` (etc.)
+# call site across the package keeps working without modification.
+#
+# `download_poll_timeout` keeps its DRIVE_ORG_DL_TIMEOUT env-var precedence layer
+# here (env > config > default) since that's a paths_config-level concern (env
+# resolution), not a generic dial-table concern.
+PEEK_CHARS = config_dials.PEEK_CHARS
+BATCH = config_dials.BATCH
+INBOX_ARBITER_TRIGGER = config_dials.INBOX_ARBITER_TRIGGER
+DOWNLOAD_POLL_INTERVAL = config_dials.DOWNLOAD_POLL_INTERVAL
+_DOWNLOAD_POLL_TIMEOUT_DEFAULT = config_dials._DOWNLOAD_POLL_TIMEOUT_DEFAULT
 
-# Classification fan-out batch size: cmd_propose partitions the to-classify
-# residual into batches of this size, one classification sub-agent per batch.
-BATCH = 25
+_dial_readers = config_dials.make_effective_readers(lambda root: _read_user_config(root))
 
-# Cloud-download polling. The scan used to do a single fixed 0.5s check after
-# triggering a download and skip the file if it hadn't materialised yet — so any
-# file slower than one tick was deferred to a future scan, which is the main
-# cause of slow multi-pass cycles. Now scan polls up to a timeout so the file
-# downloads within the same pass. Tunable via env (DRIVE_ORG_DL_TIMEOUT seconds).
-DOWNLOAD_POLL_INTERVAL = 0.5
-DOWNLOAD_POLL_TIMEOUT  = float(os.environ.get("DRIVE_ORG_DL_TIMEOUT", "30"))
+_effective_batch_size = _dial_readers["batch_size"]
+_effective_peek_chars = _dial_readers["peek_chars"]
+_effective_period_buffer_days = _dial_readers["period_buffer_days"]
+_effective_inbox_arbiter_trigger = _dial_readers["inbox_arbiter_trigger"]
+_effective_scan_file_limit = _dial_readers["scan_file_limit"]
+_effective_scan_gb_limit = _dial_readers["scan_gb_limit"]
+_effective_date_floor = _dial_readers["date_floor"]
+_effective_date_ceiling_days = _dial_readers["date_ceiling_days"]
+_effective_viewer_page_size = _dial_readers["viewer_page_size"]
+
+
+def _effective_download_poll_timeout(root: "Path | None" = None) -> float:
+    """Effective cloud-download poll timeout in seconds. Precedence: the
+    DRIVE_ORG_DL_TIMEOUT env var (explicit per-run operator escape hatch) when set,
+    else config.json's `download_poll_timeout` when it validates, else the 30s default
+    (config_dials.DIALS's "download_poll_timeout" row). Called at point of use (not
+    cached at import time) so a per-drive config value is reachable once
+    _EFFECTIVE_ROOT is resolved."""
+    env = os.environ.get("DRIVE_ORG_DL_TIMEOUT")
+    if env:
+        try:
+            return float(env)
+        except ValueError:
+            print(f"WARNING: DRIVE_ORG_DL_TIMEOUT={env!r} is not a number; ignoring it.",
+                  file=sys.stderr)
+    return _dial_readers["download_poll_timeout"](root)
 
 
 # ---------------------------------------------------------------------------
@@ -252,62 +277,6 @@ def _is_external(folder_path: Path) -> bool:
     return False
 
 
-def _merge_lists(base_list: list, override_list: list) -> list:
-    """
-    Merge two lists for the template override. If every element is a dict with a
-    "name" key, merge by name (override replaces the same-named base entry, new
-    names append) — so a user override of `ENTERTAINMENT` cleanly replaces the
-    skeleton's `ENTERTAINMENT` rather than duplicating it. Otherwise concatenate
-    with simple dedup.
-
-    Dedup semantics (by-name branch): keys are the `name` values; within base or
-    override, an earlier same-named entry is dropped in favour of the override's
-    (or, absent an override, the base's first occurrence). If any `name` is
-    unhashable (e.g. a list/dict value), we cannot build the name index, so we
-    fall back to the concat+value-dedup branch rather than crash.
-    """
-    items = base_list + override_list
-    if items and all(isinstance(x, dict) and "name" in x for x in items):
-        try:
-            by_name = {x["name"]: x for x in base_list}
-            for x in override_list:
-                by_name[x["name"]] = x  # override wins
-            result, seen = [], set()
-            for x in base_list + override_list:
-                if x["name"] not in seen:
-                    result.append(by_name[x["name"]])
-                    seen.add(x["name"])
-            return result
-        except TypeError:
-            # An unhashable "name" — can't dedup by name; fall through to concat.
-            pass
-    return base_list + [x for x in override_list if x not in base_list]
-
-
-def _deep_merge(base: dict, override: dict) -> dict:
-    """
-    Recursively merge `override` into a copy of `base`. Dicts merge key-by-key;
-    lists merge via _merge_lists (by "name" when present, else concat+dedup);
-    scalars from the override win. Used to layer a per-user template override
-    over the shipped skeleton.
-
-    The result must NOT alias the cached base or the override: nested dict/list
-    values that are NOT recursively merged are deep-copied so a caller mutating
-    the returned tree can never corrupt the process-wide _TEMPLATES_CACHE base.
-    """
-    out = {k: copy.deepcopy(v) for k, v in base.items()}
-    for k, v in override.items():
-        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
-            out[k] = _deep_merge(out[k], v)
-        elif k in out and isinstance(out[k], list) and isinstance(v, list):
-            # _merge_lists returns elements aliased from base/override; deep-copy
-            # so the merged list can't reach back into the cached base or override.
-            out[k] = copy.deepcopy(_merge_lists(out[k], v))
-        else:
-            out[k] = copy.deepcopy(v)
-    return out
-
-
 def _read_user_config(root: "Path | None" = None) -> dict:
     """
     Per-user / per-drive settings that are NOT shipped with the skill — they live
@@ -316,6 +285,18 @@ def _read_user_config(root: "Path | None" = None) -> dict:
         when classification is ambiguous (replaces any hardcoded path)
       - profile: free-text note about the user's roles/context, fed to classification
     Returns {} when the file is absent or the root is unknown. Never raises.
+
+    NOT cached (deliberately — no _USER_CONFIG_CACHE exists): every call re-reads
+    config.json fresh from disk, so an edit made by any process (rules-viewer's /save,
+    process-return, a manual hand-edit) is visible to the very next call in every process,
+    including a long-running rules-viewer server. This is distinct from the SHIPPED
+    references/ loaders (_load_templates, _load_atomic_signatures, _load_category_words),
+    which ARE mtime-cached — but those self-invalidate automatically the moment the
+    underlying shipped file's mtime changes (every call re-checks current mtime before
+    deciding whether to serve cached data), so no staleness window exists there either.
+    _reset_caches() exists only as a defensive belt-and-suspenders call for the rare case
+    where a shipped file changes in the same tick as a config.json edit — not because
+    either cache is otherwise capable of serving stale data.
     """
     root = root or _EFFECTIVE_ROOT
     # `not root` guard: _EFFECTIVE_ROOT can still be unset/empty very early in
@@ -350,13 +331,28 @@ def _settings_for_viewer(root: "Path | None" = None) -> dict:
     else:
         peek = True
         vision = bool(cfg.get("vision", True))  # legacy top-level `vision`
-    return {
+    result = {
         "peek": peek,
         "vision": vision,
         "auto_approve": bool(cfg.get("auto_approve", False)),
         "skip_types": list(cfg.get("skip_types", []) or []),
         "skip_over_mb": cfg.get("skip_over_mb"),  # number or null
+        "variant_tokens": list(cfg.get("variant_tokens", []) or []),
+        # dir_names/suffixes ONLY (marker_files/marker_pairs are shipped-file-only —
+        # see _effective_atomic_signatures). Raw config.json value, not the merged set —
+        # the panel edits the USER'S extra list, not the shipped+extra union.
+        "atomic_signatures_extra": (cfg.get("atomic_signatures_extra")
+                                     if isinstance(cfg.get("atomic_signatures_extra"), dict) else {}),
     }
+    # Phase-3 Tier-2 dials — generated from config_dials.DIALS in one pass (each reads
+    # through its _effective_*() wrapper so the panel always shows the value the backend
+    # would actually use — defaults applied, malformed overrides ignored — never the raw
+    # possibly-invalid config.json value). download_poll_timeout uses the paths_config
+    # wrapper (env-var precedence) rather than the raw dial reader.
+    dial_readers = dict(_dial_readers)
+    dial_readers["download_poll_timeout"] = _effective_download_poll_timeout
+    result.update(config_dials.dial_settings_rows(dial_readers, root))
+    return result
 
 
 def _write_user_config(updates: dict, root: "Path | None" = None) -> dict:
@@ -395,81 +391,57 @@ def _write_user_config(updates: dict, root: "Path | None" = None) -> dict:
             cur.pop("skip_over_mb", None)
         else:
             cur["skip_over_mb"] = float(v) if not float(v).is_integer() else int(float(v))
+    if "variant_tokens" in updates:
+        # accept a list or a comma string; normalise to a deduped sorted list of plain words
+        raw = updates["variant_tokens"]
+        if isinstance(raw, str):
+            raw = [t for t in raw.split(",")]
+        tokens = sorted({t.strip().lower() for t in (raw or []) if t and t.strip()})
+        cur["variant_tokens"] = tokens
+    # Phase-3 Tier-2 numeric/date dials. Each: blank/None/0/"0" clears the override
+    # (falls back to the hardcoded default at read time); a non-blank value is stored
+    # ONLY if it validates for that dial's type — an invalid typed value is dropped
+    # (never written), same effect as leaving it unset, so config.json can never
+    # persist a value that would corrupt behavior at read time. Generated in one pass
+    # from config_dials.DIALS instead of one hand-copied if-block per dial — every
+    # dial's caster (config_dials._cast_pos_int / _cast_pos_float / _cast_iso_date_str)
+    # explicitly rejects bool BEFORE the int()/float() cast (bool is an int subclass in
+    # Python, so a bare int(v) would silently accept a stray JSON true/false as 1/0).
+    config_dials.apply_all_dial_updates(updates, cur)
+    if "atomic_signatures_extra" in updates:
+        v = updates["atomic_signatures_extra"]
+        # dir_names/suffixes ONLY — marker_files/marker_pairs are deliberately NOT
+        # accepted here (executable-probe logic stays shipped-file-only; see the
+        # _effective_atomic_signatures docstring). Defensive posture matches every
+        # other dial: a stray JSON boolean or malformed shape is dropped, never crashes,
+        # and never silently corrupts the merged atomic-signature set.
+        if v in (None, "", {}) or isinstance(v, bool):
+            cur.pop("atomic_signatures_extra", None)
+        elif isinstance(v, dict):
+            dir_names = v.get("dir_names")
+            suffixes = v.get("suffixes")
+            clean_dirs = (sorted({x.strip() for x in dir_names if isinstance(x, str) and x.strip()})
+                          if isinstance(dir_names, list) else [])
+            clean_suffixes = (sorted({x.strip() for x in suffixes if isinstance(x, str) and x.strip()})
+                              if isinstance(suffixes, list) else [])
+            if clean_dirs or clean_suffixes:
+                cur["atomic_signatures_extra"] = {"dir_names": clean_dirs, "suffixes": clean_suffixes}
+            else:
+                cur.pop("atomic_signatures_extra", None)
+        else:
+            cur.pop("atomic_signatures_extra", None)
     _atomic_write(cfg_path, json.dumps(cur, ensure_ascii=False, indent=2))
     return _settings_for_viewer(root)
 
 
-_TEMPLATES_CACHE = None
-
-def _load_templates() -> dict:
-    """
-    Load the subfolder templates source-of-truth from the skill's references folder,
-    then deep-merge any per-user override at <root>/.organizer/templates.json on top.
-    Returns {} if the shipped file is missing.
-
-    Caching: a long-running viewer server can hold this process while the user
-    edits their override file, so the cache is keyed on the override file's mtime
-    (and existence) — if that changes, we re-read instead of serving stale data.
-
-    The shipped file is a generic skeleton (the five Q1 groupings + universal compound
-    children). Each user grows their own taxonomy lazily via .tidy-rules.json, and may
-    also drop a templates.json beside their registry to extend the skeleton with their
-    own projects/structure — that override is merged here so the shipped skill stays
-    generic while the user's drive carries their specifics.
-    """
-    global _TEMPLATES_CACHE
-    override_path = None
-    if _EFFECTIVE_ROOT:
-        override_path = Path(_EFFECTIVE_ROOT) / ".organizer" / "templates.json"
-    try:
-        override_mtime = override_path.stat().st_mtime if override_path and override_path.exists() else None
-    except OSError:
-        override_mtime = None
-    # Templates live in the skill's references/ at the canonical Claude Code skills
-    # path. First-time-setup copies the drive_organizer/ package plus the thin
-    # organizer.py entrypoint to ~/.claude/drive-organizer/; references/ are NOT
-    # copied, so they are read from the install dir here. If the
-    # skill is installed somewhere non-standard this file won't be found and `base`
-    # stays {} (then _active_groupings falls back to DEFAULT_GROUPINGS and the taxonomy
-    # is the bare skeleton) — a documented degradation, not a crash. Override with the
-    # DRIVE_ORG_SKILL_DIR env var when installed elsewhere.
+def _skill_references_dir() -> Path:
+    """Resolve the skill's references/ directory: DRIVE_ORG_SKILL_DIR env override,
+    else the canonical Claude Code skills install path. Shared by every references/
+    loader (_load_templates, _load_atomic_signatures, _load_category_words) so the
+    resolution rule lives in exactly one place."""
     skill_dir = os.environ.get("DRIVE_ORG_SKILL_DIR")
     base_dir = Path(skill_dir) if skill_dir else (Path.home() / ".claude" / "skills" / "drive-organizer")
-    templates_path = base_dir / "references" / "subfolder-templates.json"
-    try:
-        skeleton_mtime = os.path.getmtime(templates_path) if templates_path.exists() else 0
-    except OSError:
-        skeleton_mtime = 0
-    cache_key = (override_mtime, skeleton_mtime)
-    if _TEMPLATES_CACHE is not None and _TEMPLATES_CACHE[0] == cache_key:
-        return _TEMPLATES_CACHE[1]
-    base = {}
-    if templates_path.exists():
-        try:
-            base = json.loads(templates_path.read_text(encoding="utf-8"))
-        except Exception as e:
-            print(f"WARNING: could not parse shipped templates {templates_path} "
-                  f"({e}); using empty skeleton.", file=sys.stderr)
-            base = {}
-    # Per-user override on the active drive (never shipped with the skill).
-    if override_path and override_path.exists():
-        try:
-            override = json.loads(override_path.read_text(encoding="utf-8"))
-            if isinstance(override, dict):
-                base = _deep_merge(base, override)
-        except Exception as e:
-            print(f"WARNING: could not parse template override {override_path} "
-                  f"({e}); ignoring it.", file=sys.stderr)
-    _TEMPLATES_CACHE = (cache_key, base)
-    return base
-
-
-def cmd_templates(args):
-    """Print the effective templates as JSON — the shipped generic skeleton
-    deep-merged with the per-user <root>/.organizer/templates.json override.
-    The propose flow loads THIS (not the raw shipped file) so the executor sees
-    the user's full taxonomy, not just the generic skeleton."""
-    print(json.dumps(_load_templates(), ensure_ascii=False, indent=2))
+    return base_dir / "references"
 
 
 _FITZ_LOCK = threading.Lock()
@@ -478,23 +450,7 @@ _FITZ_LOCK = threading.Lock()
 _XML_PEEK_CAP = 5 * 1024 * 1024  # 5 MB
 
 
-_UF_DATALESS = 0x40000000  # macOS flag set by NSFileProvider on not-yet-downloaded files
-
-# Windows reparse/offline attributes signalling a not-yet-materialised placeholder.
-_WIN_RECALL_ON_DATA_ACCESS = 0x00400000  # FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
-_WIN_OFFLINE              = 0x00001000  # FILE_ATTRIBUTE_OFFLINE
-
-
 CSV_EXPORT_PATH = Path.home() / ".claude" / "drive-organizer" / "registry.csv"  # overridden at startup
-
-_COMMON_CATEGORY_WORDS = {
-    "finance", "financials", "notes", "feedback", "receipts", "invoices", "bills",
-    "statements", "tax", "admin", "docs", "documents", "references", "scripts",
-    "schedules", "drafts", "exports", "imports", "backups", "output", "outputs",
-    "misc", "miscellaneous", "templates", "assets", "correspondence", "contracts",
-    "legal", "planning", "research", "reports", "logs", "data", "code", "config",
-    "scans", "attachments", "deliverables", "expenses", "payments", "agreements",
-}
 
 
 _CLUSTER_ORDER = ["area", "project", "person", "category", "policy", "atomic", "unknown"]
@@ -506,16 +462,21 @@ _CLUSTER_LABEL = {
 
 
 def _reset_caches():
-    """Clear the process-level templates cache so a live (keepalive) save re-reads
-    config + templates and the refreshed view reflects area changes. Groupings are
-    derived from _load_templates() on every call and have no independent cache to clear."""
-    global _TEMPLATES_CACHE
-    _TEMPLATES_CACHE = None
+    """Clear the process-level templates + atomic-signatures + category-words caches so a
+    live (keepalive) save re-reads config + shipped references and the refreshed view
+    reflects area/config changes. Groupings are derived from _load_templates() on every
+    call and have no independent cache to clear. atomic-signatures is included because
+    _effective_atomic_signatures() reads config.json's atomic_signatures_extra on every
+    call (never cached) but the SHIPPED half (_load_atomic_signatures) is mtime-cached —
+    a keepalive-refresh after editing config.json's extra list still needs the shipped
+    half fresh in the (rare) case the shipped file also changed underfoot.
 
-
-_ATOMIC_DIR_NAMES = {"node_modules", ".git", "venv", ".venv", "env", "__pycache__",
-                     ".tox", "site-packages", "Pods", "vendor"}
-_ATOMIC_SUFFIXES = (".app", ".framework", ".bundle", ".xcodeproj", ".photoslibrary",
-                    ".imovielibrary", ".tvlibrary", ".aplibrary")
-# Must remain a tuple (not a set): str.endswith() requires a tuple for multi-suffix matching.
+    Each cache now lives in its own module (templates.py, atomic_signatures.py,
+    category_words.py); this delegates to each module's own _reset_cache() helper since
+    module-level globals must be cleared through the module namespace, not a rebound
+    local import."""
+    from drive_organizer import atomic_signatures, category_words, templates
+    templates._reset_cache()
+    atomic_signatures._reset_cache()
+    category_words._reset_cache()
 

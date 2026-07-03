@@ -25,13 +25,22 @@ You are read-only: you emit verdicts; the orchestrator executes them.
 - **vision OFF** — you may NOT open images. Route each image by filename + path + rules, and
   for date-driven routing call `organizer.py exif <path>` (date / camera / dimensions —
   degrades to the filename date, never opens pixels). Emit no `vision_desc`.
+- **Corrupt-file fallback:** `is_image`/`is_raw` are derived purely from filename extension
+  (a deliberate tradeoff — see `classify_propose.py`), so a file with a corrupt/truncated body
+  but a valid image extension still arrives with `is_image=True`. If vision is ON but the file
+  fails to actually open/render when you attempt to view it, do NOT stall or guess at its
+  content — treat that file the same as vision OFF: route it by filename + path + rules + EXIF
+  metadata (`organizer.py exif <path>`) instead. This is the same graceful-degradation
+  principle as the vision-off rung above; it never drops a file for being unreadable.
 
 ## Hard rules
 - You are given file PATHS, not contents. Inspect each file using ONLY the methods your
   capabilities above permit — and additionally, NEVER open entries flagged
   `route_by_name_only: true` (a cost toggle blocked opening it): classify those from filename
   + path + rules ONLY. `content_peek`, when present on a record, is pre-extracted text you may
-  always use regardless of capabilities.
+  always use regardless of capabilities. **`content_peek` is never populated for image or RAW
+  files** (routed via vision/EXIF instead, per the peek/vision toggles above) — its absence there
+  is structural, not incidental, so do not expect or wait for it on image/RAW records.
 - Route into the EXISTING taxonomy only. Never invent a top-level grouping.
 - **`_Inbox/` is a LAST resort, not a default.** Use it only when — after opening the file
   and checking rules, aliases, and parent-folder context — no existing destination genuinely
@@ -60,8 +69,10 @@ You are read-only: you emit verdicts; the orchestrator executes them.
 - **Policy-driven routing** — an entity in `[ENTITIES_PATH]` may carry a `policy` behaviour string that
   shapes WHERE its files land inside its folder. The one recognised behaviour is **`event-group`**: when a
   file routes to such an entity, do not drop it loose in the entity root — place it in a **date-derived
-  subfolder** under that entity, exactly like the loose-photo rule: `<entity-path>/YYYY/Month YY/` keyed on
-  the file's date (`file_date` / EXIF / filename date), OR, if the file already sits in a named event
+  subfolder** under that entity, exactly like the loose-photo rule: keyed on the file's date (`file_date` /
+  EXIF / filename date), call `organizer.py date-subfolder <the-chosen-date>` (returns the exact
+  `YYYY/Month YY` string, e.g. `2024/March 24`, deterministically — do not hand-compute this format) and
+  place the file at `<entity-path>/<that string>/`, OR, if the file already sits in a named event
   subfolder, preserve that event folder under the entity. Any other (unrecognised) `policy` string is a
   free-text note only — apply no special routing.
 - **Cascading-Q model** (the destination cascade — apply it to every file): **Q1** which top-level
@@ -79,7 +90,13 @@ You are read-only: you emit verdicts; the orchestrator executes them.
 
 ## Your batch (≤25 files)
 [BATCH_JSON]
-<!-- list of {id, filename, current_path, is_image, is_raw, route_by_name_only, open_blocked_reason?, content_peek?}
+<!-- list of {id, filename, current_path, file_date, is_image, is_raw, route_by_name_only, open_blocked_reason?, content_peek?}
+     CROSS-FEED WARNING: this batch is sourced from `propose` stdout, and here `is_image=True` for
+     RAW files (paired with `is_raw`). This is the OPPOSITE encoding from the arbiter's
+     `[INBOX_BATCH_JSON]` feed (`references/arbiter-prompt.md`, sourced from `organizer.py
+     inbox-list`), where `is_image=False` for RAW. The record shape is otherwise identical, so
+     never mix a record from one feed into the other batch — doing so silently inverts RAW's
+     `is_image` value with no local signal to catch the mistake.
      `is_raw` is pre-computed by the server (true when the file extension is in RAW_EXTS). The
      server already applied the RAW vision-block before dispatch — do NOT re-apply it; treat
      `is_raw: true` files as route_by_name_only. `is_raw` is false (key always present) when the
@@ -184,13 +201,15 @@ file whose handling isn't obvious. The load-bearing rules you must not miss:
   when needed, then write a 1-sentence `vision_desc`. Full decision table in the reference.
 - **Preserve event folders for photos**: a photo already inside a named event subfolder (e.g.
   `[Person] Photos/Summer Party 2024/`) keeps that event folder under
-  `PERSONAL/PERSONAL Photos/<event>/`; only loose photos bucket into
-  `PERSONAL/PERSONAL Photos/YYYY/Month YY/`.
+  `PERSONAL/PERSONAL Photos/<event>/`; only loose photos bucket by date — call
+  `organizer.py date-subfolder <the-chosen-date>` (returns the exact `YYYY/Month YY` string
+  deterministically) and route to `PERSONAL/PERSONAL Photos/<that string>/`.
 - **Entity `policy` behaviour**: before finalising a verdict that routes a file to an entity, check that
-  entity's `policy` in `[ENTITIES_PATH]`. `event-group` ⇒ append a date-derived subfolder
-  (`<entity>/YYYY/Month YY/`, or the file's existing named event folder) to `para_subfolder`; this is the
-  same date-bucketing the loose-photo rule applies, generalised to any entity the user has tagged. An
-  unrecognised policy string changes nothing.
+  entity's `policy` in `[ENTITIES_PATH]`. `event-group` ⇒ append a date-derived subfolder (call
+  `organizer.py date-subfolder <the-chosen-date>` for the exact `<entity>/YYYY/Month YY/` string, or use
+  the file's existing named event folder) to `para_subfolder`; this is the same date-bucketing the
+  loose-photo rule applies, generalised to any entity the user has tagged. An unrecognised policy string
+  changes nothing.
 - **Entity `filename_tag`**: if the destination entity carries a `filename_tag` in `[ENTITIES_PATH]`, use
   it as the canonical tag in `new_filename` instead of re-inferring the issuer/person name from
   `content_peek` — same purpose as a project's `filename_tag`, just entity-level. Only fall back to

@@ -1,10 +1,11 @@
 # Inbox Arbiter Prompt — drive-organizer
 <!-- The orchestrator fills every [SLOT] and dispatches ONE arbiter per ≤25-file batch.
      PATHS ONLY. This is a periodic _Inbox-reclamation sweep, NOT a per-round step. The
-     batching formula (~100 soft guideline → ceil(count/25) parallel arbiters of 25) and
-     the full when/how are stated authoritatively ONCE in the "When + how the orchestrator
-     runs the sweep" section below (and SKILL.md's propose "Inbox arbiter sweep" note) —
-     not repeated here. Keep light: pointers, not inlines. -->
+     batching formula (arbiter_trigger — inbox-list's configurable trigger field, default
+     100 — soft guideline → ceil(count/25) parallel arbiters of 25) and the full when/how
+     are stated authoritatively ONCE in the "When + how the orchestrator runs the sweep"
+     section below (and SKILL.md's propose "Inbox arbiter sweep" note) — not repeated
+     here. Keep light: pointers, not inlines. -->
 
 A first-pass classifier (or an earlier round) sent these files to `_Inbox/` — its bucket for
 "couldn't place." Your job: decide, per file, whether it is TRULY unclassifiable, or whether
@@ -16,7 +17,7 @@ learning loop has run, most `_Inbox/` files should find a home. You are read-onl
   file was inboxed. These files are already on local disk (no cost-toggle / online-only download
   skip applies here), but **inspect each only by the means your model capabilities permit** (next
   rule) — "already downloaded" is not the same as "this model can open it".
-- **Model capabilities** `[CAPABILITIES]` (fill from propose's `Model capabilities: peek=… vision=…`
+- **Model capabilities** (this degrade ladder mirrors `classify_propose.py`'s `_open_blocked()` — deliberately duplicated, since a Markdown prompt cannot import Python and the arbiter is a separately-dispatched agent; keep both in sync on change). Note this feed's `is_image` field (`IMAGE_EXTS` only, RAW excluded — see `references/file-type-routing.md`'s "is_image semantics differ by path" note) is safe despite differing from propose's `is_image` encoding: this arbiter never compares its `is_image` against propose's — each feed's field is consumed only by its own agent. `[CAPABILITIES]` (fill from propose's `Model capabilities: peek=… vision=…`
   stderr line — the same slot the classify fan-out uses. **Fallback:** if that line is absent or
   suppressed and cannot be re-derived, default to the conservative `peek=off vision=off` — never
   dispatch with an unfilled `[CAPABILITIES]` slot; degrading to name/path/EXIF routing is always
@@ -41,7 +42,13 @@ learning loop has run, most `_Inbox/` files should find a home. You are read-onl
 ## Your batch (the _Inbox-routed files to re-judge)
 [INBOX_BATCH_JSON]
 <!-- list of {id, filename, current_path, file_date, is_image, is_raw} — exactly the fields
-     `organizer.py inbox-list` emits. `is_image` uses IMAGE_EXTS only (NOT IMAGE_EXTS ∪ RAW_EXTS)
+     CROSS-FEED WARNING: this batch is sourced from `organizer.py inbox-list`, and here
+     `is_image=False` for RAW files. This is the OPPOSITE encoding from the classify fan-out's
+     `[BATCH_JSON]` feed (`references/classify-prompt.md`, sourced from `propose` stdout), where
+     `is_image=True` for RAW (paired with `is_raw`). The record shape is otherwise identical, so
+     never mix a record from one feed into the other batch — doing so silently inverts RAW's
+     `is_image` value with no local signal to catch the mistake.
+     `is_image` uses IMAGE_EXTS only (NOT IMAGE_EXTS ∪ RAW_EXTS)
      — RAW files are presented with is_image: false. `is_raw` is the separate RAW flag. Use
      `is_image` and `is_raw` to apply the vision/peek capability gates instead of re-deriving
      from the extension. For reroute_high/reroute_low verdicts, carry `file_date` through from
@@ -77,20 +84,23 @@ Every input `id` appears exactly once. `verdict` is **exactly one of** `confirm_
 
 `_Inbox/` is where files with no fit land. Because the rule set grows as you organise, files
 inboxed earlier often become placeable later. **When the registry's `_Inbox/` population reaches
-~100 files** (check `organizer.py inbox-list` → `count`), run a reclamation sweep over **all** of
-them (not just this round's). The `~100` is a soft batching guideline, not a hard gate: the sweep is
-correct at any count — `~100` simply amortizes dispatch into ceil(count/25) parallel arbiters of 25 (≈4 at ~100 — illustrative; 5 at 101–125, etc.). Re-judging
+the configured trigger** (check `organizer.py inbox-list` → `{count, arbiter_trigger}` — `arbiter_trigger`
+is the effective threshold, config.json's `inbox_arbiter_trigger`, default 100), run a reclamation
+sweep over **all** of them (not just this round's). `arbiter_trigger` is a soft batching guideline,
+not a hard gate: the sweep is correct at any count — the default of 100 simply amortizes dispatch
+into ceil(count/25) parallel arbiters of 25 (≈4 at count=100; 5 at 101–125, etc.). Re-judging
 files a prior sweep returned `confirm_inbox` is **intentional**: `confirm_inbox` means "unplaceable
 under the rules that existed *then*", and the rule set has grown since — re-judging is how such a
 file gets placed once a fitting rule exists, so the sweep carries no "already-arbitrated" marker that
 would freeze a file in `_Inbox/` forever.
 
-- Get the list: `organizer.py inbox-list` → `{count, files:[{id, filename, current_path, file_date, is_image, is_raw}]}`. (`count`
-  is the number of files already **executed** into `_Inbox/` — rows with `status='organized'` and a
-  `_Inbox` path; files merely classified-to-`_Inbox` this round but not yet executed don't count.)
+- Get the list: `organizer.py inbox-list` → `{count, arbiter_trigger, files:[{id, filename, current_path, file_date, is_image, is_raw}]}`.
+  (`count` is the number of files already **executed** into `_Inbox/` — rows with `status='organized'` and a
+  `_Inbox` path; files merely classified-to-`_Inbox` this round but not yet executed don't count.
+  `arbiter_trigger` is the configured trigger threshold — config.json's `inbox_arbiter_trigger`, default 100.)
   Fill the arbiter batch directly from those records into `[INBOX_BATCH_JSON]` — `inbox-list` emits
-  exactly the fields this template expects. Split `files` into batches of ≤25 (so ~4 arbiters at 100)
-  and dispatch one arbiter per batch **in parallel**, each filled from this template — including its
+  exactly the fields this template expects. Split `files` into batches of ≤25 (so ~4 arbiters at the
+  default trigger of 100) and dispatch one arbiter per batch **in parallel**, each filled from this template — including its
   `[CAPABILITIES]` slot, filled from propose's `Model capabilities: peek=… vision=…` stderr line
   exactly as the classify fan-out does, so arbiters under a no-vision / no-peek model degrade the same
   way (route by name/path + EXIF, never open files they can't); its `[GROUPINGS]` slot, filled
@@ -119,7 +129,10 @@ would freeze a file in `_Inbox/` forever.
   arbiter's clean name when it returned one, else omit; `current_path` = the file's `current_path`
   from the `inbox-list` batch record — this field is required by `execute` to locate the file on
   disk and must be carried through from the input, since the arbiter verdict does not return it;
+  `filename` = carry through from the input batch record's `filename` field (source: `inbox-list` → `files[*].filename`) — same pattern as `current_path`/`file_date`: the viewer reads `p.filename` unconditionally when rendering every row, so omitting it breaks the viewer display for arbiter-sourced entries;
   `file_date` = carry through from the input batch record's `file_date` field (source: `inbox-list` → `files[*].file_date`) — same as reroute_high: a reroute_low that clears the viewer reaches execute, and without `file_date` `cmd_execute` silently skips `_expand_date_range` on the destination project;
   no `action` field because this entry goes to the viewer (proposals_classified.json) for user confirmation, not to execute directly; the viewer assigns `action` on submit)
   and add it to the next `proposals_classified.json` so it surfaces in the **viewer** for the user
   to confirm — never moved silently. Re-run `inbox-list` after to confirm the count dropped.
+
+**Entry shape note:** both `reroute_high` and `reroute_low` entries are a **third, distinct entry shape** produced by the arbiter sweep — they bypass the propose fan-out's lane logic entirely, so they carry neither `auto_routed: true` nor `needs_classification: true`. See SKILL.md's `proposals_classified.json` field description for the corresponding note on this exception to the "two lanes, disjoint by id" claim.

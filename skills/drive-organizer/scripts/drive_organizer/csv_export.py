@@ -1,8 +1,6 @@
 """drive_organizer.csv_export — split from the original organizer.py (pure structural move, no behavior change)."""
 from __future__ import annotations
-import json
 import sys
-from pathlib import Path
 
 from drive_organizer.content_peek import (
     get_db,

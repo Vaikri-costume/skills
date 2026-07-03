@@ -10,6 +10,7 @@ from pathlib import Path
 from drive_organizer import paths_config
 from drive_organizer.paths_config import (
     _atomic_write,
+    _effective_period_buffer_days,
     _safe_dest,
 )
 from drive_organizer.content_peek import (
@@ -25,7 +26,7 @@ from drive_organizer.csv_export import (
 
 
 def cmd_execute(args):
-    from drive_organizer.cleanup_reconcile import _active_groupings, _normalize_grouping, _para_category
+    from drive_organizer.routing import _active_groupings, _normalize_grouping, _para_category
     from drive_organizer.viewer_propose import _persist_flagged_status
     approved_path = Path(args.approved)
     if not approved_path.exists():
@@ -128,6 +129,16 @@ def cmd_execute(args):
                 _clear_journal_entry(jid)
                 continue
             if jdest.exists() and not (jsrc.exists() and jsrc.samefile(jdest)):
+                # KNOWN LIMITATION: presence of jdest is treated as proof the move fully
+                # completed. A shutil.move interrupted mid-copy (e.g. across filesystems,
+                # where it falls back to copy+delete) could in principle leave a partial/
+                # truncated file at jdest that still satisfies jdest.exists(), and this
+                # block would recover it as if it were a complete, healthy move. The
+                # journal entry does not record source size/checksum at write time, so
+                # there is no cheap signal here to verify completeness against — adding
+                # one would require capturing file size/hash before every move (a larger
+                # behavior change) rather than a local fix. If a corrupted recovered file
+                # is ever suspected, `reconcile` is the intended repair path.
                 # The move completed but the registry may not have been updated. Reconstruct
                 # the FULL organised-row state from the destination so the row is complete —
                 # not left status='pending' with stale para_* (which the next scan would
@@ -170,7 +181,9 @@ def cmd_execute(args):
                         if rec_date:
                             proj = _find_project_for_destination(rec_sub, drive)
                             if proj is not None:
-                                _expand_date_range(proj, rec_date)
+                                _expand_date_range(proj, rec_date,
+                                                    buffer_days=_effective_period_buffer_days(drive),
+                                                    root=drive)
                     except Exception as e:
                         print(f"  WARN: could not update date_range on recovery for id {rec.get('id')}: {e}",
                               file=sys.stderr)
@@ -199,6 +212,10 @@ def cmd_execute(args):
                     )
                     conn.commit()
                 except Exception as _e:
+                    # Must be logged, not swallowed: if this write fails silently, the row
+                    # stays in its prior status and reappears as a ghost pending row in the
+                    # next propose batch — exactly the masking risk this UPDATE exists to
+                    # prevent. The WARN below is the failure sentinel.
                     print(f"  WARN: could not mark id {rec.get('id')} as missing: {_e}",
                           file=sys.stderr)
 
@@ -227,6 +244,14 @@ def cmd_execute(args):
         # the registry column can never drift from para_subfolder. For a delete the destination
         # is Archive/_To Delete, so it resolves to _Inbox (the file is in staging, not a
         # grouping) — consistent with where the file actually lands.
+        # Note on para_subfolder validity: `sub_rel` (below, written to the registry as
+        # para_subfolder) is fixed here, BEFORE the collision-rename loop runs. That loop
+        # only bumps the FILENAME (dest = dest_dir / f"{stem}_{counter}{suffix}") — it never
+        # touches dest_dir. Since para_subfolder is a folder-level field, it is therefore
+        # already consistent with the actual final `dest` regardless of any filename
+        # collision; there is no drift for reconcile to patch on this path. (reconcile's
+        # para_subfolder re-derivation elsewhere exists to repair drift from OTHER causes —
+        # e.g. files moved/renamed on disk out-of-band — not from this collision loop.)
         category = _para_category(sub_rel, groupings)
         dest_dir = _safe_dest(drive, sub_rel)
         if dest_dir is None:
@@ -239,7 +264,8 @@ def cmd_execute(args):
         if not new_filename and src.name != entry.get("filename", src.name):
             print(f"WARNING: src.name ({src.name!r}) differs from entry['filename'] "
                   f"({entry.get('filename')!r}) — current_path may be stale from a prior "
-                  f"partial execute. Proceeding with src.name.", file=sys.stderr)
+                  f"partial execute, OR the file was renamed/moved out-of-band since it was "
+                  f"proposed. Proceeding with src.name.", file=sys.stderr)
         dest_name = new_filename if new_filename else src.name
         dest      = dest_dir / dest_name
 
@@ -309,14 +335,22 @@ def cmd_execute(args):
 
         # Expand the destination project's date_range to include
         # this file's date. Initialises the period on first approval; widens
-        # it (with one-month buffer) on subsequent approvals. Skipped for
+        # it (with the effective buffer-days padding — config.json's
+        # `period_buffer_days`, else 30) on subsequent approvals. Skipped for
         # action='delete' (file went to Archive/_To Delete) or when no date is known
         # (neither the verdict nor the registry has one).
         if action != "delete" and effective_date:
+            # Safe to pass `subfolder` (not `sub_rel`) here: `sub_rel` only ever
+            # diverges from `subfolder` when action == 'delete' (line 226), and this
+            # block is gated on action != 'delete' immediately above — so at this
+            # point subfolder == sub_rel by construction, and both name the same
+            # destination project.
             project_dir = _find_project_for_destination(subfolder, drive)
             if project_dir is not None:
                 try:
-                    _expand_date_range(project_dir, effective_date)
+                    _expand_date_range(project_dir, effective_date,
+                                        buffer_days=_effective_period_buffer_days(drive),
+                                        root=drive)
                 except Exception as e:
                     print(f"  WARN: could not update date_range for {project_dir.name}: {e}",
                           file=sys.stderr)

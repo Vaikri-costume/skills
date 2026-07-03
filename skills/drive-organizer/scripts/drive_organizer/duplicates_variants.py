@@ -160,6 +160,16 @@ def cmd_variants(args):
 
     groups: dict[str, list] = defaultdict(list)
 
+    # variant_tokens: drive-wide config dial (config.json / Settings panel) that lets
+    # domain-specific vocab (legal: executed/redlined; screenwriting: draft/revision)
+    # extend the built-in variant-token list. Purely additive — user tokens are escaped
+    # (plain vocab, not regex) and appended to the builtin alternation, never replace it.
+    cfg = paths_config._read_user_config(paths_config._EFFECTIVE_ROOT)
+    user_tokens = cfg.get("variant_tokens", []) or []
+    builtin_tokens = ["v\\d+", "final", "copy", "highlighted?", "annotated?", "marked?"]
+    all_tokens = builtin_tokens + [re.escape(t) for t in user_tokens]
+    variant_token_pattern = "|".join(all_tokens)
+
     for row in rows:
         fname = row["filename"] or ""
         ext   = (row["extension"] or "").lower()
@@ -169,7 +179,7 @@ def cmd_variants(args):
         # and a single re.sub would leave one behind, splitting variants that should group.
         while True:
             stripped = re.sub(
-                r"[\s_-]*(v\d+|final|copy|highlighted?|annotated?|marked?)$",
+                rf"[\s_-]*({variant_token_pattern})$",
                 "", base, flags=re.IGNORECASE
             )
             if stripped == base:

@@ -5,13 +5,47 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from drive_organizer import paths_config
 from drive_organizer.paths_config import (
     PARA_ROOTS,
     _atomic_write,
+    _effective_date_ceiling_days,
+    _effective_date_floor,
     _is_external,
     _safe_dest,
 )
+
+
+def format_date_subfolder(file_date: str) -> str:
+    """
+    Deterministic date-bucket subfolder string, e.g. "2024-03-15" -> "2024/March 24".
+
+    Canonical format is YYYY/Month YY (full month name, two-digit year). This is the
+    single source of truth for that format — callers (the classify fan-out agent, via
+    `organizer.py date-subfolder`) must call this rather than hand-computing the string,
+    so every dispatch produces byte-identical subfolder names.
+
+    Raises ValueError with a clear message on malformed/unparseable input, so the CLI
+    wrapper can catch it and print a clean error instead of silently returning junk.
+    """
+    if not file_date or not isinstance(file_date, str):
+        raise ValueError(f"format_date_subfolder: expected an ISO date string, got {file_date!r}")
+    try:
+        dt = datetime.fromisoformat(file_date[:10])
+    except (ValueError, TypeError) as e:
+        raise ValueError(f"format_date_subfolder: could not parse {file_date!r} as YYYY-MM-DD: {e}") from e
+    return f"{dt.year}/{dt.strftime('%B')} {dt.strftime('%y')}"
+
+
+def cmd_date_subfolder(args) -> None:
+    """CLI wrapper for format_date_subfolder: `organizer.py date-subfolder <ISO-date>`.
+    Prints the bare YYYY/Month YY string to stdout (no root/DB dependency, standalone
+    like `exif`). On malformed input, prints a clean error to stderr and exits non-zero
+    instead of letting the ValueError traceback leak."""
+    try:
+        print(format_date_subfolder(args.date))
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _project_metadata(project_path: Path) -> dict:
@@ -133,11 +167,24 @@ def _find_project_for_destination(dest_subfolder: str, root: Path) -> "Path | No
         cur = cur.parent
 
 
-def _expand_date_range(project_path: Path, file_date_iso: str, buffer_days: int = 30) -> None:
+def _expand_date_range(project_path: Path, file_date_iso: str, buffer_days: int = 30,
+                        root: "Path | None" = None) -> None:
     """
     Expand the project's date_range to include file_date_iso, with a
     buffer_days padding at each end. If the project has no date_range
     yet, initialise one centred on this file's date. Writes back to .tidy-rules.json.
+
+    `buffer_days` is a plain function default (30) — callers should pass the effective
+    per-drive value explicitly via `buffer_days=paths_config._effective_period_buffer_days(root)`
+    (config.json's `period_buffer_days`, else 30) rather than relying on this default;
+    it stays at 30 here only as a safety net for a caller that omits it.
+
+    `root` resolves the config-aware clamp bounds (config.json's `date_floor` /
+    `date_ceiling_days`, else datetime(1990,1,1) / now+365d) via
+    _effective_date_floor()/_effective_date_ceiling_days(). Callers should pass the
+    active drive root explicitly; omitting it falls back to paths_config._EFFECTIVE_ROOT
+    (via the helpers' own `root or _EFFECTIVE_ROOT` default), same safety-net posture as
+    `buffer_days`.
     """
     rules_file = project_path / ".tidy-rules.json"
     if not rules_file.exists():
@@ -158,8 +205,11 @@ def _expand_date_range(project_path: Path, file_date_iso: str, buffer_days: int 
 
     # Clamp the file date to a sane range so one mis-dated file (e.g. epoch 1970,
     # or a future timestamp from a bad clock) can't blow the period out forever.
-    floor_dt = datetime(1990, 1, 1)
-    ceil_dt = datetime.now() + timedelta(days=365)
+    # Bounds are config-aware: config.json's `date_floor` / `date_ceiling_days`, else
+    # the same datetime(1990,1,1) / now+365d this always used (unset config reproduces
+    # today's exact behavior).
+    floor_dt = _effective_date_floor(root)
+    ceil_dt = datetime.now() + timedelta(days=_effective_date_ceiling_days(root))
     if file_dt < floor_dt or file_dt > ceil_dt:
         return  # out-of-range date: ignore rather than widen the period
 
