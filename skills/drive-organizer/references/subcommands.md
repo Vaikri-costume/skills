@@ -389,13 +389,16 @@ guaranteed present (the case-3 recovery below can always read `proposals_flagged
 - `"Warning: could not mark flagged in DB: <error>"` — the flag write failed. Patch the registry
   before running process-return:
   ```bash
-  sqlite3 <root>/.organizer/registry.db "UPDATE files SET status='flagged' WHERE id IN (<comma-separated IDs>);"
+  python3 ~/.claude/drive-organizer/organizer.py flag-from ~/.claude/drive-organizer/proposals_flagged.json
   ```
-  Get the exact IDs from `~/.claude/drive-organizer/proposals_flagged.json` — the viewer writes the
-  precise flagged-ID set there on **every** submit (a bare JSON array, e.g. `[12,47,88]`; `[]` when
-  nothing was flagged). **Do not** infer them by "IDs in `proposals_classified.json` not in
-  `proposals_approved.json`": that set also contains rows the user left **unreviewed** (`unset`), and
-  marking those `flagged` would wrongly drop unreviewed files from future propose batches.
+  This runs the exact same `UPDATE files SET status='flagged' WHERE id IN (...)` that the viewer's
+  successful path runs, sourced from `~/.claude/drive-organizer/proposals_flagged.json` — the viewer
+  writes the precise flagged-ID set there on **every** submit (a bare JSON array, e.g. `[12,47,88]`;
+  `[]` when nothing was flagged; `flag-from` handles the empty case as a no-op). **Do not** infer the
+  IDs yourself by "IDs in `proposals_classified.json` not in `proposals_approved.json`": that set also
+  contains rows the user left **unreviewed** (`unset`), and marking those `flagged` would wrongly drop
+  unreviewed files from future propose batches — `flag-from` avoids this because it only ever reads
+  the exact flagged-ID set the viewer recorded.
 
 If `Error: proposals file not found: <path>` or `Error: proposals JSON is empty.` — re-run propose to
 regenerate `proposals_classified.json` first. If `Error: port <N> is already in use…` — re-run

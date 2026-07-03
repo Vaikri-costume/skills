@@ -69,8 +69,10 @@ You are read-only: you emit verdicts; the orchestrator executes them.
 - **Policy-driven routing** — an entity in `[ENTITIES_PATH]` may carry a `policy` behaviour string that
   shapes WHERE its files land inside its folder. The one recognised behaviour is **`event-group`**: when a
   file routes to such an entity, do not drop it loose in the entity root — place it in a **date-derived
-  subfolder** under that entity, exactly like the loose-photo rule: `<entity-path>/YYYY/Month YY/` keyed on
-  the file's date (`file_date` / EXIF / filename date), OR, if the file already sits in a named event
+  subfolder** under that entity, exactly like the loose-photo rule: keyed on the file's date (`file_date` /
+  EXIF / filename date), call `organizer.py date-subfolder <the-chosen-date>` (returns the exact
+  `YYYY/Month YY` string, e.g. `2024/March 24`, deterministically — do not hand-compute this format) and
+  place the file at `<entity-path>/<that string>/`, OR, if the file already sits in a named event
   subfolder, preserve that event folder under the entity. Any other (unrecognised) `policy` string is a
   free-text note only — apply no special routing.
 - **Cascading-Q model** (the destination cascade — apply it to every file): **Q1** which top-level
@@ -199,13 +201,15 @@ file whose handling isn't obvious. The load-bearing rules you must not miss:
   when needed, then write a 1-sentence `vision_desc`. Full decision table in the reference.
 - **Preserve event folders for photos**: a photo already inside a named event subfolder (e.g.
   `[Person] Photos/Summer Party 2024/`) keeps that event folder under
-  `PERSONAL/PERSONAL Photos/<event>/`; only loose photos bucket into
-  `PERSONAL/PERSONAL Photos/YYYY/Month YY/`.
+  `PERSONAL/PERSONAL Photos/<event>/`; only loose photos bucket by date — call
+  `organizer.py date-subfolder <the-chosen-date>` (returns the exact `YYYY/Month YY` string
+  deterministically) and route to `PERSONAL/PERSONAL Photos/<that string>/`.
 - **Entity `policy` behaviour**: before finalising a verdict that routes a file to an entity, check that
-  entity's `policy` in `[ENTITIES_PATH]`. `event-group` ⇒ append a date-derived subfolder
-  (`<entity>/YYYY/Month YY/`, or the file's existing named event folder) to `para_subfolder`; this is the
-  same date-bucketing the loose-photo rule applies, generalised to any entity the user has tagged. An
-  unrecognised policy string changes nothing.
+  entity's `policy` in `[ENTITIES_PATH]`. `event-group` ⇒ append a date-derived subfolder (call
+  `organizer.py date-subfolder <the-chosen-date>` for the exact `<entity>/YYYY/Month YY/` string, or use
+  the file's existing named event folder) to `para_subfolder`; this is the same date-bucketing the
+  loose-photo rule applies, generalised to any entity the user has tagged. An unrecognised policy string
+  changes nothing.
 - **Entity `filename_tag`**: if the destination entity carries a `filename_tag` in `[ENTITIES_PATH]`, use
   it as the canonical tag in `new_filename` instead of re-inferring the issuer/person name from
   `content_peek` — same purpose as a project's `filename_tag`, just entity-level. Only fall back to
