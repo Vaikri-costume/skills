@@ -32,7 +32,7 @@ from pathlib import Path
 from scripts.quick_validate import validate_skill
 
 # Patterns to exclude when packaging skills.
-EXCLUDE_DIRS = {"__pycache__", "node_modules"}
+EXCLUDE_DIRS = {"__pycache__", "node_modules", ".git"}
 EXCLUDE_GLOBS = {"*.pyc", "*.orig", "*.bak*"}  # never ship editor/patch backups
 EXCLUDE_FILES = {".DS_Store"}
 # Directories excluded only at the skill root (not when nested deeper).

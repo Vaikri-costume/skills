@@ -202,8 +202,13 @@ def generate_html(data: dict, auto_refresh: bool = False, skill_name: str = "") 
         <tbody>
 """)
 
-    # Find best iteration for highlighting
-    if test_queries:
+    # Find best iteration for highlighting. Guard empty history: run_loop's
+    # degenerate path (--max-iterations 0) returns history=[] and still calls
+    # generate_html, so an unguarded max() here raises ValueError: max() arg is
+    # an empty sequence. (run_loop guards its own max() the same way.)
+    if not history:
+        best_iter = None
+    elif test_queries:
         best_iter = max(history, key=lambda h: h.get("test_passed") or 0).get("iteration")
     else:
         best_iter = max(history, key=lambda h: h.get("train_passed", h.get("passed", 0))).get("iteration")
@@ -311,12 +316,12 @@ def main():
     if args.input == "-":
         data = json.load(sys.stdin)
     else:
-        data = json.loads(Path(args.input).read_text())
+        data = json.loads(Path(args.input).read_text(encoding="utf-8"))
 
     html_output = generate_html(data, skill_name=args.skill_name)
 
     if args.output:
-        Path(args.output).write_text(html_output)
+        Path(args.output).write_text(html_output, encoding="utf-8")
         print(f"Report written to {args.output}", file=sys.stderr)
     else:
         print(html_output)

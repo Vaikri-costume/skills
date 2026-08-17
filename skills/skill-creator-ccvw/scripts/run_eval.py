@@ -9,27 +9,55 @@ import argparse
 import json
 import os
 import select
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
-from scripts.utils import parse_skill_md
+from scripts.utils import claude_binary, claude_subprocess_env, parse_skill_md
 
 
-def find_project_root() -> Path:
-    """Find the project root by walking up from cwd looking for .claude/.
+def preflight_check(model: str | None = None) -> None:
+    """Run a trivial claude -p call to verify credentials and environment.
 
-    Mimics how Claude Code discovers its project root, so the command file
-    we create ends up where claude -p will look for it.
+    Catches missing API keys, bad auth, and broken CLI installations before
+    the expensive evaluation suite starts — otherwise those failures surface
+    only as every query "not triggering", which reads as a bad description
+    rather than a broken environment.
     """
-    current = Path.cwd()
-    for parent in [current, *current.parents]:
-        if (parent / ".claude").is_dir():
-            return parent
-    return current
+    cmd = [claude_binary(), "-p", "Respond with exactly: ok", "--output-format", "text"]
+    if model:
+        cmd.extend(["--model", model])
+    env = claude_subprocess_env()
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, env=env, timeout=30,
+        )
+    except FileNotFoundError:
+        print(
+            "Error: 'claude' CLI not found on PATH. Install it or check your PATH.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    except subprocess.TimeoutExpired:
+        print(
+            "Error: Pre-flight check timed out after 30 s — is the Claude CLI responsive?",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if result.returncode != 0:
+        print(
+            f"Error: Pre-flight credential check failed (exit code {result.returncode}).\n"
+            f"stderr: {result.stderr.strip()}\n"
+            f"Fix your credentials / environment variables before running the eval suite.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
 
 def run_single_query(
@@ -37,16 +65,19 @@ def run_single_query(
     skill_name: str,
     skill_description: str,
     timeout: int,
-    project_root: str,
     model: str | None = None,
 ) -> bool:
     """Run a single query and return whether the skill was triggered.
 
-    Creates a command file in .claude/commands/ so it appears in Claude's
-    available_skills list, then runs `claude -p` with the raw query.
-    Uses --include-partial-messages to detect triggering early from
-    stream events (content_block_start) rather than waiting for the
-    full assistant message, which only arrives after tool execution.
+    Creates a command file in an isolated throwaway project root so it appears
+    in Claude's available_skills list for this `claude -p` subprocess only —
+    never in the user's live .claude/commands/, where concurrent Claude Code
+    sessions would see the synthetic variant during the parallel eval window.
+    `claude -p` discovers commands from its cwd's .claude/; global auth/config
+    in ~/.claude is unaffected by cwd. Uses --include-partial-messages to
+    detect triggering early from stream events (content_block_start) rather
+    than waiting for the full assistant message, which only arrives after tool
+    execution.
     """
     # Use the original skill_name as the slash-command filename so that user
     # queries which mention the skill by name (e.g. "/skill-tracer p1-next" or
@@ -57,17 +88,20 @@ def run_single_query(
     # called "skill-tracer-skill-1aaf3ccf", so every name-mentioning query
     # scored 0/N triggers regardless of description quality.
     #
-    # Sequential iterations of the same eval overwrite the same command file,
-    # which is fine — only one iteration runs at a time. The project-local
-    # .claude/commands/<skill_name>.md takes precedence over any globally
-    # installed ~/.claude/skills/<skill_name>/ during the eval, so the test
-    # description is the one Claude sees.
+    # The command file lives in a throwaway tempdir (the eval root), named
+    # <skill_name>.md inside its .claude/commands/. Isolating to a tempdir —
+    # rather than writing into the user's live project_root — keeps the
+    # synthetic variant out of any concurrent session's registry, while the
+    # <skill_name> filename preserves name-based triggering. The unique_id only
+    # names the tempdir (so a tempdir stranded by a SIGKILLed worker, where the
+    # finally-rmtree never runs, is attributable), not the command file.
     clean_name = skill_name
-    project_commands_dir = Path(project_root) / ".claude" / "commands"
-    command_file = project_commands_dir / f"{clean_name}.md"
+    unique_id = uuid.uuid4().hex[:8]
+    eval_root = Path(tempfile.mkdtemp(prefix=f"skill-eval-{skill_name}-{unique_id}-"))
+    command_file = eval_root / ".claude" / "commands" / f"{clean_name}.md"
 
     try:
-        project_commands_dir.mkdir(parents=True, exist_ok=True)
+        command_file.parent.mkdir(parents=True, exist_ok=True)
         # Use YAML block scalar to avoid breaking on quotes in description
         indented_desc = "\n  ".join(skill_description.split("\n"))
         command_content = (
@@ -78,10 +112,10 @@ def run_single_query(
             f"# {skill_name}\n\n"
             f"This skill handles: {skill_description}\n"
         )
-        command_file.write_text(command_content)
+        command_file.write_text(command_content, encoding="utf-8")
 
         cmd = [
-            "claude",
+            claude_binary(),
             "-p", query,
             "--output-format", "stream-json",
             "--verbose",
@@ -90,22 +124,19 @@ def run_single_query(
         if model:
             cmd.extend(["--model", model])
 
-        # Remove CLAUDECODE env var to allow nesting claude -p inside a
-        # Claude Code session. The guard is for interactive terminal conflicts;
-        # programmatic subprocess usage is safe.
-        env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+        env = claude_subprocess_env()
 
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            cwd=project_root,
+            stderr=subprocess.PIPE,
+            cwd=str(eval_root),
             env=env,
         )
 
-        triggered = False
         start_time = time.time()
         buffer = ""
+        stderr_buf = ""
         # Track state for stream event detection
         pending_tool_name = None
         accumulated_json = ""
@@ -116,10 +147,23 @@ def run_single_query(
                     remaining = process.stdout.read()
                     if remaining:
                         buffer += remaining.decode("utf-8", errors="replace")
+                    err_remaining = process.stderr.read()
+                    if err_remaining:
+                        stderr_buf += err_remaining.decode("utf-8", errors="replace")
                     break
 
-                ready, _, _ = select.select([process.stdout], [], [], 1.0)
+                # Drain BOTH stdout and stderr. stderr is a PIPE: leaving it unread
+                # lets a chatty child fill the ~64KB pipe buffer and block on its
+                # stderr write before emitting the triggering stdout event — which
+                # would then time out and score a spurious "did not trigger".
+                ready, _, _ = select.select([process.stdout, process.stderr], [], [], 1.0)
                 if not ready:
+                    continue
+                if process.stderr in ready:
+                    err_chunk = os.read(process.stderr.fileno(), 8192)
+                    if err_chunk:
+                        stderr_buf += err_chunk.decode("utf-8", errors="replace")
+                if process.stdout not in ready:
                     continue
 
                 chunk = os.read(process.stdout.fileno(), 8192)
@@ -151,7 +195,14 @@ def run_single_query(
                                     pending_tool_name = tool_name
                                     accumulated_json = ""
                                 else:
-                                    return False
+                                    # A non-skill tool (AskUserQuestion, Bash, …) is NOT a
+                                    # trigger — but it must NOT end detection. A global
+                                    # CLAUDE.md that asks a clarifying question first, or a
+                                    # model that greps before consulting, makes the FIRST
+                                    # action a non-skill tool and would mask a skill consult
+                                    # that lands moments later. Reset and keep scanning until
+                                    # the skill IS consulted or the run reaches `result`.
+                                    pending_tool_name = None
 
                         elif se_type == "content_block_delta" and pending_tool_name:
                             delta = se.get("delta", {})
@@ -160,11 +211,16 @@ def run_single_query(
                                 if clean_name in accumulated_json:
                                     return True
 
-                        elif se_type in ("content_block_stop", "message_stop"):
-                            if pending_tool_name:
-                                return clean_name in accumulated_json
-                            if se_type == "message_stop":
-                                return False
+                        elif se_type == "content_block_stop":
+                            # A pending Skill/Read block ended: trigger only if it referenced
+                            # THIS skill; otherwise reset and keep scanning (the skill may be
+                            # consulted in a later block / message). Do NOT return here.
+                            if pending_tool_name and clean_name in accumulated_json:
+                                return True
+                            pending_tool_name = None
+                        # message_stop: intentionally no-op — keep scanning until `result`,
+                        # so a skill consult after an initial non-skill action (or in a later
+                        # assistant message) is still detected.
 
                     # Fallback: full assistant message
                     elif event.get("type") == "assistant":
@@ -175,23 +231,44 @@ def run_single_query(
                             tool_name = content_item.get("name", "")
                             tool_input = content_item.get("input", {})
                             if tool_name == "Skill" and clean_name in tool_input.get("skill", ""):
-                                triggered = True
-                            elif tool_name == "Read" and clean_name in tool_input.get("file_path", ""):
-                                triggered = True
-                            return triggered
+                                return True
+                            if tool_name == "Read" and clean_name in tool_input.get("file_path", ""):
+                                return True
+                            # Any other tool is not a trigger by itself — keep scanning the
+                            # remaining content items (and later events); do NOT return.
 
                     elif event.get("type") == "result":
-                        return triggered
+                        # Reached the run's end without a skill consult → not triggered.
+                        return False
         finally:
             # Clean up process on any exit path (return, exception, timeout)
             if process.poll() is None:
                 process.kill()
                 process.wait()
 
-        return triggered
+        # Surface a genuine non-zero EXIT instead of silently returning False —
+        # a credential/CLI error otherwise looks like "did not trigger" and
+        # corrupts the eval data. Guard on `> 0`: our own timeout path kills the
+        # process, leaving a negative (signal) returncode, which is a normal
+        # "didn't trigger in time" outcome, not a CLI error — those must not abort.
+        if process.returncode is not None and process.returncode > 0:
+            # stderr_buf was drained during the loop; pick up any final bytes.
+            try:
+                err_remaining = process.stderr.read()
+                if err_remaining:
+                    stderr_buf += err_remaining.decode("utf-8", errors="replace")
+            except (OSError, ValueError):
+                pass
+            stderr_output = stderr_buf.strip()
+            raise RuntimeError(
+                f"claude -p exited with code {process.returncode}"
+                + (f": {stderr_output}" if stderr_output else "")
+            )
+
+        # Loop exited (timeout / EOF) with no skill consult seen → not triggered.
+        return False
     finally:
-        if command_file.exists():
-            command_file.unlink()
+        shutil.rmtree(eval_root, ignore_errors=True)
 
 
 def run_eval(
@@ -200,7 +277,6 @@ def run_eval(
     description: str,
     num_workers: int,
     timeout: int,
-    project_root: Path,
     runs_per_query: int = 1,
     trigger_threshold: float = 0.5,
     model: str | None = None,
@@ -218,7 +294,6 @@ def run_eval(
                     skill_name,
                     description,
                     timeout,
-                    str(project_root),
                     model,
                 )
                 future_to_info[future] = (item, run_idx)
@@ -233,6 +308,14 @@ def run_eval(
                 query_triggers[query] = []
             try:
                 query_triggers[query].append(future.result())
+            except RuntimeError as e:
+                # Surface CLI/credential errors loudly — these corrupt data if
+                # silently treated as "did not trigger".
+                raise RuntimeError(
+                    f"Evaluation query failed due to a CLI error (not a "
+                    f"trigger miss). This likely indicates a credential or "
+                    f"environment problem. Query: {query!r}\nError: {e}"
+                ) from e
             except Exception as e:
                 print(f"Warning: query failed: {e}", file=sys.stderr)
                 query_triggers[query].append(False)
@@ -282,7 +365,9 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="Print progress to stderr")
     args = parser.parse_args()
 
-    eval_set = json.loads(Path(args.eval_set).read_text())
+    preflight_check(model=args.model)
+
+    eval_set = json.loads(Path(args.eval_set).read_text(encoding="utf-8"))
     skill_path = Path(args.skill_path)
 
     if not (skill_path / "SKILL.md").exists():
@@ -291,7 +376,6 @@ def main():
 
     name, original_description, content = parse_skill_md(skill_path)
     description = args.description or original_description
-    project_root = find_project_root()
 
     if args.verbose:
         print(f"Evaluating: {description}", file=sys.stderr)
@@ -302,7 +386,6 @@ def main():
         description=description,
         num_workers=args.num_workers,
         timeout=args.timeout,
-        project_root=project_root,
         runs_per_query=args.runs_per_query,
         trigger_threshold=args.trigger_threshold,
         model=args.model,

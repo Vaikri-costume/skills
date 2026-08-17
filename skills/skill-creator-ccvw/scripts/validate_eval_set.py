@@ -91,7 +91,7 @@ def main() -> int:
         if not p.is_file():
             print(f"ERROR: not found: {p}", file=sys.stderr)
             return 2
-        raw = p.read_text()
+        raw = p.read_text(encoding="utf-8")
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
