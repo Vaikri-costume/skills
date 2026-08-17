@@ -2,6 +2,19 @@
 
 This document defines the JSON schemas used by skill-creator.
 
+## Table of contents
+
+- [evals.json](#evalsjson)
+- [history.json](#historyjson-legacy--not-produced-by-the-current-workflow) (legacy)
+- [grading.json](#gradingjson)
+- [metrics.json](#metricsjson)
+- [timing.json](#timingjson)
+- [benchmark.json](#benchmarkjson)
+- [comparison.json](#comparisonjson)
+- [analysis.json](#analysisjson)
+- [eval_metadata.json](#eval_metadatajson)
+- [results.json](#resultsjson)
+
 ---
 
 ## evals.json

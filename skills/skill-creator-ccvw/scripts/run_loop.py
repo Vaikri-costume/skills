@@ -17,7 +17,7 @@ from pathlib import Path
 
 from scripts.generate_report import generate_html
 from scripts.improve_description import improve_description
-from scripts.run_eval import find_project_root, run_eval
+from scripts.run_eval import preflight_check, run_eval
 from scripts.utils import parse_skill_md
 
 
@@ -60,7 +60,6 @@ def run_loop(
     log_dir: Path | None = None,
 ) -> dict:
     """Run the eval + improvement loop."""
-    project_root = find_project_root()
     name, original_description, content = parse_skill_md(skill_path)
     current_description = description_override or original_description
 
@@ -92,7 +91,6 @@ def run_loop(
             description=current_description,
             num_workers=num_workers,
             timeout=timeout,
-            project_root=project_root,
             runs_per_query=runs_per_query,
             trigger_threshold=trigger_threshold,
             model=model,
@@ -148,7 +146,7 @@ def run_loop(
                 "test_size": len(test_set),
                 "history": history,
             }
-            live_report_path.write_text(generate_html(partial_output, auto_refresh=True, skill_name=name))
+            live_report_path.write_text(generate_html(partial_output, auto_refresh=True, skill_name=name), encoding="utf-8")
 
         if verbose:
             def print_eval_stats(label, results, elapsed):
@@ -190,23 +188,33 @@ def run_loop(
         if verbose:
             print(f"\nImproving description...", file=sys.stderr)
 
-        t0 = time.time()
-        # Strip test scores from history so improvement model can't see them
-        blinded_history = [
-            {k: v for k, v in h.items() if not k.startswith("test_")}
-            for h in history
-        ]
-        new_description = improve_description(
-            skill_name=name,
-            skill_content=content,
-            current_description=current_description,
-            eval_results=train_results,
-            history=blinded_history,
-            model=model,
-            log_dir=log_dir,
-            iteration=iteration,
-        )
-        improve_elapsed = time.time() - t0
+        try:
+            t0 = time.time()
+            # Strip test scores from history so improvement model can't see them
+            blinded_history = [
+                {k: v for k, v in h.items() if not k.startswith("test_")}
+                for h in history
+            ]
+            new_description = improve_description(
+                skill_name=name,
+                skill_content=content,
+                current_description=current_description,
+                eval_results=train_results,
+                history=blinded_history,
+                model=model,
+                log_dir=log_dir,
+                iteration=iteration,
+            )
+            improve_elapsed = time.time() - t0
+        except Exception as e:
+            exit_reason = f"improve_description crashed on iteration {iteration}: {e}"
+            if verbose:
+                print(
+                    f"\nError during description improvement — saving partial "
+                    f"results and exiting loop.\n  {e}",
+                    file=sys.stderr,
+                )
+            break
 
         if verbose:
             print(f"Proposed ({improve_elapsed:.1f}s): {new_description}", file=sys.stderr)
@@ -276,7 +284,9 @@ def main():
     parser.add_argument("--results-dir", default=None, help="Save all outputs (results.json, report.html, log.txt) to a timestamped subdirectory here")
     args = parser.parse_args()
 
-    eval_set = json.loads(Path(args.eval_set).read_text())
+    preflight_check(model=args.model)
+
+    eval_set = json.loads(Path(args.eval_set).read_text(encoding="utf-8"))
     skill_path = Path(args.skill_path)
 
     if not (skill_path / "SKILL.md").exists():
@@ -293,7 +303,7 @@ def main():
         else:
             live_report_path = Path(args.report)
         # Open the report immediately so the user can watch
-        live_report_path.write_text("<html><body><h1>Starting optimization loop...</h1><meta http-equiv='refresh' content='5'></body></html>")
+        live_report_path.write_text("<html><body><h1>Starting optimization loop...</h1><meta http-equiv='refresh' content='5'></body></html>", encoding="utf-8")
         webbrowser.open(str(live_report_path))
     else:
         live_report_path = None
@@ -328,15 +338,15 @@ def main():
     json_output = json.dumps(output, indent=2)
     print(json_output)
     if results_dir:
-        (results_dir / "results.json").write_text(json_output)
+        (results_dir / "results.json").write_text(json_output, encoding="utf-8")
 
     # Write final HTML report (without auto-refresh)
     if live_report_path:
-        live_report_path.write_text(generate_html(output, auto_refresh=False, skill_name=name))
+        live_report_path.write_text(generate_html(output, auto_refresh=False, skill_name=name), encoding="utf-8")
         print(f"\nReport: {live_report_path}", file=sys.stderr)
 
     if results_dir and live_report_path:
-        (results_dir / "report.html").write_text(generate_html(output, auto_refresh=False, skill_name=name))
+        (results_dir / "report.html").write_text(generate_html(output, auto_refresh=False, skill_name=name), encoding="utf-8")
 
     if results_dir:
         print(f"Results saved to: {results_dir}", file=sys.stderr)
