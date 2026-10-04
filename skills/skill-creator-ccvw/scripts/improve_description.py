@@ -14,7 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from scripts.utils import parse_skill_md
+from scripts.utils import claude_subprocess_env, parse_skill_md
 
 
 def _call_claude(prompt: str, model: str | None, timeout: int = 300) -> str:
@@ -27,10 +27,7 @@ def _call_claude(prompt: str, model: str | None, timeout: int = 300) -> str:
     if model:
         cmd.extend(["--model", model])
 
-    # Remove CLAUDECODE env var to allow nesting claude -p inside a
-    # Claude Code session. The guard is for interactive terminal conflicts;
-    # programmatic subprocess usage is safe. Same pattern as run_eval.py.
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    env = claude_subprocess_env()
 
     result = subprocess.run(
         cmd,
@@ -182,11 +179,17 @@ Please respond with only the new description text in <new_description> tags, not
         description = shortened
 
     transcript["final_description"] = description
+    # Recompute against the FINAL description: the rewrite branch above may have
+    # replaced it, and the rewrite is not itself guaranteed to be ≤1024 — so the
+    # pre-rewrite over_limit/char_count would be stale and could hide a rewrite
+    # that is still over the hard limit.
+    transcript["char_count"] = len(description)
+    transcript["over_limit"] = len(description) > 1024
 
     if log_dir:
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / f"improve_iter_{iteration or 'unknown'}.json"
-        log_file.write_text(json.dumps(transcript, indent=2))
+        log_file.write_text(json.dumps(transcript, indent=2), encoding="utf-8")
 
     return description
 
@@ -205,10 +208,10 @@ def main():
         print(f"Error: No SKILL.md found at {skill_path}", file=sys.stderr)
         sys.exit(1)
 
-    eval_results = json.loads(Path(args.eval_results).read_text())
+    eval_results = json.loads(Path(args.eval_results).read_text(encoding="utf-8"))
     history = []
     if args.history:
-        history = json.loads(Path(args.history).read_text())
+        history = json.loads(Path(args.history).read_text(encoding="utf-8"))
 
     name, _, content = parse_skill_md(skill_path)
     current_description = eval_results["description"]
