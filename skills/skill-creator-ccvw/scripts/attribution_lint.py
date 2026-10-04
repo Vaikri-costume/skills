@@ -277,7 +277,7 @@ def lint_author(fm):
 def lint_author_identity(primary_author):
     """Verify author.primary is a real, verifiable identity — not a first name or
     other non-username placeholder. Confirmed 2026-08-17: a bare first name (e.g.
-    "Vaidehi") previously passed lint_author's presence check silently; the user
+    "Alex") previously passed lint_author's presence check silently; the user
     wants a mismatch against their actual GitHub identity to BLOCK, not just be a
     documentation preference.
 

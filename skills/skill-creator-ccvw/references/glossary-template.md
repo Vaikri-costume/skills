@@ -8,7 +8,7 @@ See also: [`~/.claude/skills/skill-creator-ccvw/references/ccvw-glossary.md`](..
 2. Add one row per skill-specific term — backticked nouns from your SKILL.md, ALL-CAPS state words, tracking-field shorthands, role names, mode names, named protocols, status strings, custom file roles.
 3. Keep definitions to ONE line each. Cross-reference the shared glossary for any term that's already CCVW-vocabulary.
 4. Alphabetize by term.
-5. When skill-tracer runs on this skill, Step 3's [GLOSSARY] derivation reads this file FIRST. Definitions here go into the trace agents' prompts verbatim, so the trace agents understand your skill's vocabulary without re-derivation.
+5. When skill-tracer runs on this skill, its [GLOSSARY] derivation reads this file FIRST. Definitions here go into the trace agents' prompts verbatim, so the trace agents understand your skill's vocabulary without re-derivation.
 
 ## Skill-specific terms
 

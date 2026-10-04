@@ -11,7 +11,7 @@ skill-creator-ccvw branches at the top of "Creating a skill" — if a similar sk
 Concrete signals that this is an improve, not a build:
 - A `SKILL.md` already exists at `~/.claude/skills/<name>/`
 - The user's phrasing includes "improve", "extend", "fix", "evolve", "update", "polish", "tighten"
-- The skill has a populated `version` in its HISTORY.md **or** at least one prior iteration in `~/.claude/skill-creator-evals-ledger/<name>/` (either signal alone is sufficient — a pre-versioned skill with no `version` yet but with a prior eval-ledger run still counts as improve-mode; see line 73, which starts such skills at `1.0.0`)
+- The skill has a populated `version` in its HISTORY.md **or** at least one prior iteration in `${XDG_DATA_HOME:-$HOME/.claude}/skill-creator-evals-ledger/<name>/` (either signal alone is sufficient — a pre-versioned skill with no `version` yet but with a prior eval-ledger run still counts as improve-mode; see Step 4's versioning rule below, which starts such skills at `1.0.0`)
 - The user references a known limitation, missing feature, or test failure of the current skill
 
 If at least one of these holds, proceed with the steps below.
@@ -26,7 +26,7 @@ Before touching the skill, baseline its current state and surface any latent iss
 /skill-tracer <skill-name>
 ```
 
-This produces (or extends) the skill's ledger at `~/.claude/skill-tracer-audit-ledger/<skill-name>.md`. Two outcomes matter:
+This produces (or extends) the skill's ledger at `${XDG_DATA_HOME:-$HOME/.local/share}/skill-tracer-audit-ledger/<skill-name>.md`. Two outcomes matter:
 
 - **Trace converges clean** → the skill is in a healthy state to evolve from. Note the audit-references mtimes captured in the ledger header so you can detect if those references change mid-evolution.
 - **Trace surfaces unaddressed clusters** → STOP. Address those clusters first (skill-tracer will iterate to convergence), then return to this workflow. Building on top of a dirty skill compounds problems — the new edits will mix with old issues and the next trace can't tell them apart.
@@ -70,7 +70,7 @@ parent-version: "2.2.4"   # the version this evolved from
 
 Versioning convention: **major** for breaking changes (invariant changes, contract changes), **minor** for new functionality preserving old behavior, **patch** for bug fixes / wording fixes only.
 
-If HISTORY.md has no `version` (pre-versioned skill), start at `1.0.0` and set `parent-version: "pre-versioned"`.
+If HISTORY.md has no `version` (pre-versioned skill), start at `1.0.0` and set `parent-version: "pre-versioned"` — a deliberate token for a skill that predates versioning (distinct from `null`, which is for brand-new builds); skill-publisher recognizes it and skips only the SemVer bump check on that first ship.
 
 ---
 
@@ -120,6 +120,6 @@ When these hold, propose: "This is a fork, not an evolution. Suggest creating a 
 
 After a successful evolution:
 
-- **Skill's ledger** — `~/.claude/skill-tracer-audit-ledger/<skill-name>.md` should show the evolution's trace rounds appended (skill-tracer handles this automatically).
+- **Skill's ledger** — `${XDG_DATA_HOME:-$HOME/.local/share}/skill-tracer-audit-ledger/<skill-name>.md` should show the evolution's trace rounds appended (skill-tracer handles this automatically).
 - **TASKS.md** (if task-management integration is in use) — close the iteration task, update the parent task with the new version.
 - **External consumers** — if any downstream skill mentions this one's version constraint, update those constraints. Check `~/.claude/skills/` for SKILL.md files mentioning this skill's name + version.
