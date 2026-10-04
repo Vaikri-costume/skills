@@ -134,8 +134,16 @@ def parse_ledger(text):
         if in_table and line.startswith("|") and line.endswith("|"):
             cells = [c.strip() for c in line.strip("|").split("|")]
             if len(cells) != len(column_names):
-                # Skip malformed rows; could be content with embedded |
-                continue
+                # Tolerate a pre-Phase 6-col row under a 7-col (Phase-bearing) header:
+                # insert the default Phase at the Phase position so old rows still render
+                # (matches append_ledger's ROW_RE, whose Phase group is optional, so a
+                # back-compat row append_ledger writes is not dropped here). Any other
+                # length mismatch is a genuinely malformed row (e.g. content with an
+                # embedded |) and is skipped.
+                if "Phase" in column_names and len(cells) == len(column_names) - 1:
+                    cells.insert(column_names.index("Phase"), next(iter(PHASE_COLORS), "TRACE"))
+                else:
+                    continue
             row = dict(zip(column_names, cells))
             # Normalize the round/run column into a canonical "_round" key so the
             # rest of the renderer is column-word-agnostic (tracer "Round" / publisher "Run").
@@ -196,10 +204,14 @@ def render_html(ledger, ledger_path, round_label="Round"):
     # Per-round counts
     per_round = defaultdict(int)
     for row in ledger["rows"]:
-        try:
-            per_round[int(row.get("_round") or 0)] += 1
-        except ValueError:
-            pass
+        # Skip a blank/non-numeric Run cell rather than bucketing it: `int("" or 0)`
+        # would silently fold blank-Run rows into a phantom round 0 (rendered "R0"),
+        # while a value like "1a" would hit ValueError and vanish — two different wrong
+        # states. A row with no real round number simply isn't charted.
+        rr = (row.get("_round") or "").strip()
+        if not rr.isdigit():
+            continue
+        per_round[int(rr)] += 1
 
     chart = html.escape(ascii_line_chart(per_round))
 
@@ -383,7 +395,7 @@ def main():
 
     ledger_path = Path(args.ledger_path).expanduser()
     if not ledger_path.is_file():
-        print(f"Error: ledger not found at {ledger_path}\nLedgers are written to ~/.claude/skill-tracer-audit-ledger/<skill-name>.md (tracer) or ~/.claude/skill-publisher-ledger/<skill>.md (publisher) by a run.\nCheck the skill name and ensure at least one round has completed.", file=sys.stderr)
+        print(f"Error: ledger not found at {ledger_path}\nLedgers are written to ${{XDG_DATA_HOME:-~/.local/share}}/skill-tracer-audit-ledger/<skill-name>.md (tracer) or ~/.claude/skill-publisher-ledger/<skill>.md (publisher) by a run.\nCheck the skill name and ensure at least one round has completed.", file=sys.stderr)
         sys.exit(1)
 
     try:
@@ -403,7 +415,7 @@ def main():
         print(f"Error: failed to parse/render ledger {ledger_path}: {e}", file=sys.stderr)
         sys.exit(3)
 
-    output_path = Path(args.output) if args.output else ledger_path.with_suffix(".html")
+    output_path = Path(args.output).expanduser() if args.output else ledger_path.with_suffix(".html")
     try:
         output_path.write_text(html_output, encoding="utf-8")
     except OSError as e:

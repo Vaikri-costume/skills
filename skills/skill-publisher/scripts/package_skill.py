@@ -89,26 +89,21 @@ def read_frontmatter_compat(skill_md: Path) -> str:
 
 
 def has_claude_extensions(skill_md: Path) -> list:
-    """Cheap scan for Claude-only patterns that block model-agnostic packaging.
-    This is an independent inline copy of the four most-blocking patterns, NOT an
-    import of portability_lint's CLAUDE_BODY_PATTERNS. Intentionally omits patterns
-    that are informational at step 4 but not packaging-blocking (e.g. $XDG paths).
-    If portability_lint's blocking list changes, review whether this function needs
-    updating too — it is a FINAL gate after step 4 already ran the full lint."""
+    """Cheap FINAL gate (after step 4's full lint) for Claude-only patterns that block
+    model-agnostic packaging. Sources the pattern list from
+    portability_lint.CLAUDE_BODY_PATTERNS — the single home — so this gate cannot drift
+    from the lint. (A hand-maintained 4-pattern subset used to live here and silently
+    went stale whenever the lint's blocklist changed; importing the canonical list both
+    removes that drift and widens the gate to the lint's full Claude-extension set.)"""
     try:
         body = skill_md.read_text(encoding="utf-8")
     except OSError:
         return []
-    patterns = [
-        (r"\bAgent\s+tool\b", "Agent tool dispatch"),
-        (r"\$ARGUMENTS\[\d+\]", "$ARGUMENTS[N]"),
-        (r"!\s*`[^`]+`", "dynamic shell injection"),
-        (r"\bmcp__[a-zA-Z0-9_]+__[a-zA-Z0-9_]+\b", "mcp__*__* tool name"),
-    ]
+    from portability_lint import CLAUDE_BODY_PATTERNS  # sibling script, same scripts/ dir
     found = []
-    for pat, label in patterns:
+    for pat, _vtype, msg in CLAUDE_BODY_PATTERNS:
         if re.search(pat, body):
-            found.append(label)
+            found.append(msg)
     return found
 
 
