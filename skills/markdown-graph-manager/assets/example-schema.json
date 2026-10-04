@@ -1,0 +1,201 @@
+{
+  "_comment": "Example schema config for one dual-format Logseq/Obsidian graph. Personal vocabulary lives only in a file like this; the scripts carry no hardcoded schema. Copy and edit it for your graph.",
+  "type_vocab": [
+    "Note",
+    "Utility",
+    "Draft",
+    "Reference",
+    "Plan",
+    "Guidance",
+    "Rule",
+    "Funding",
+    "Vocabulary",
+    "Lens",
+    "Thread",
+    "Period",
+    "Hub",
+    "Scholarship",
+    "Course",
+    "Outline",
+    "Essay",
+    "Entity or Person",
+    "Form Answers",
+    "Dashboard",
+    "Example",
+    "Annotations",
+    "Reading Report",
+    "Timeline",
+    "Primary Source",
+    "Module",
+    "Reading Notes"
+  ],
+  "writer_vocab_plain": [
+    "Alex",
+    "Sam",
+    "Claude"
+  ],
+  "status_vocab": [
+    "TODO",
+    "DOING",
+    "DONE",
+    "WAITING",
+    "CANCELLED"
+  ],
+  "zotero_only_properties": [
+    "author",
+    "authors",
+    "original-title",
+    "language",
+    "links",
+    "item-type",
+    "citekey"
+  ],
+  "zotero_itemtypes": [
+    "journalarticle",
+    "book",
+    "booksection",
+    "thesis",
+    "film",
+    "webpage",
+    "newspaperarticle",
+    "podcast",
+    "forumpost",
+    "dataset",
+    "document",
+    "report",
+    "manuscript"
+  ],
+  "canonicalization": {
+    "type": {
+      "note": "Note",
+      "notes": "Note",
+      "utility": "Utility",
+      "draft": "Draft",
+      "drafts": "Draft",
+      "writing": "Draft",
+      "reference": "Reference",
+      "references": "Reference",
+      "plan": "Plan",
+      "guidance": "Guidance",
+      "rule": "Rule",
+      "funding": "Funding",
+      "vocabulary": "Vocabulary",
+      "lens": "Lens",
+      "thread": "Thread",
+      "period": "Period",
+      "hub": "Hub",
+      "project": "Hub",
+      "scholarship": "Scholarship",
+      "course": "Course",
+      "outline": "Outline",
+      "essay": "Essay",
+      "concept": "Concept",
+      "entity or person": "Entity or Person",
+      "entity-or-person": "Entity or Person",
+      "form answers": "Form Answers",
+      "dashboard": "Dashboard",
+      "example": "Example",
+      "annotations": "Annotations",
+      "reading report": "Reading Report",
+      "timeline": "Timeline",
+      "primary source": "Primary Source",
+      "module": "Module",
+      "module reading": "Reading Notes",
+      "reading notes": "Reading Notes"
+    },
+    "status": {
+      "in progress": "DOING",
+      "in-progress": "DOING",
+      "drafting": "DOING",
+      "complete": "DONE",
+      "completed": "DONE",
+      "submitted": "DONE",
+      "not started": "TODO",
+      "on hold": "WAITING",
+      "archived": "DONE",
+      "current": "DOING",
+      "todo": "TODO",
+      "doing": "DOING",
+      "done": "DONE",
+      "waiting": "WAITING",
+      "cancelled": "CANCELLED"
+    }
+  },
+  "drop_type_when_specific_present": {
+    "Concept": [
+      "Vocabulary",
+      "Lens"
+    ]
+  },
+  "global_replacements": {
+    "[[Dupatta-Research]]": "[[Dupatta Research]]"
+  },
+  "required_properties": {
+    "Period": [
+      "type",
+      "project",
+      "date-range",
+      "related"
+    ],
+    "Draft": [
+      "related",
+      "deadline"
+    ],
+    "Scholarship": [
+      "type",
+      "project",
+      "related"
+    ],
+    "Funding": [
+      "type",
+      "project",
+      "related"
+    ],
+    "Course": [
+      "type",
+      "project",
+      "related"
+    ],
+    "Entity or Person": [
+      "type",
+      "project",
+      "related"
+    ],
+    "Module": [
+      "type",
+      "related"
+    ],
+    "Reading Notes": [
+      "type",
+      "related",
+      "citekey"
+    ]
+  },
+  "link_type_properties": [
+    "related",
+    "project",
+    "lens",
+    "period",
+    "thread"
+  ],
+  "_link_type_properties_note": "alias:: is deliberately NOT here — measured live convention is 74/74 plain alias values (aliases name their own page; bracketing would self-link). Alias values still feed the title/alias uniqueness index and count as valid link targets.",
+  "tolerated_properties": [
+    "tine.view",
+    "tine.header",
+    "tine.fields",
+    "tine.filter",
+    "tine.group-by",
+    "collapsed",
+    "icon"
+  ],
+  "tolerated_property_patterns": [
+    "tine.formula.*"
+  ],
+  "app_internal_properties": [
+    "id",
+    "collapsed",
+    "heading",
+    "background-color",
+    "graph-hide"
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "_comment": "Example graph registry for graph-discovery.py. Copy it, point each root at your own graph, and keep personal registries out of the published skill (e.g. in assets/.private/).",
+  "live": [
+    {
+      "id": "main",
+      "name": "My Graph",
+      "root": "~/path/to/your-graph",
+      "pages_dir": "pages",
+      "schema_config": "example-schema.json"
+    },
+    {
+      "id": "vault",
+      "name": "Plain Obsidian vault",
+      "root": "~/path/to/your-vault",
+      "pages_dir": ".",
+      "schema_config": null
+    }
+  ],
+  "app_watchlist": [
+    {
+      "id": "tine",
+      "app_path": "/Applications/Tine.app",
+      "latest_source": "github:martinkoutecky/tine"
+    },
+    {
+      "id": "logseq",
+      "app_path": "/Applications/Logseq.app",
+      "latest_source": "github:logseq/logseq",
+      "track": "0.10.x file-based only — 2.x is the DB-graph line, never an update for this graph"
+    },
+    {
+      "id": "obsidian",
+      "app_path": "/Applications/Obsidian.app",
+      "latest_source": "changelog:https://obsidian.md/changelog/"
+    },
+    {
+      "id": "finalist",
+      "app_path": "/Applications/Finalist.app",
+      "latest_source": "mas"
+    }
+  ],
+  "dead": [
+    "~/path/to/an-old-graph-you-no-longer-use"
+  ]
+}
