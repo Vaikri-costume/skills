@@ -14,6 +14,9 @@
 - Attribution lint: <pass>
 - Security: <clean / N findings addressed>
 
+### Marketplace
+<registered in plugin <name> / already listed / new plugin <name> / skipped / no catalog in repo>
+
 ### Version
 <prior-version> → <new-version> (<patch|minor|major>)
 

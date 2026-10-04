@@ -42,9 +42,12 @@ def validate_skill(skill_path):
 
     frontmatter_text = match.group(1)
 
-    # Parse YAML frontmatter
+    # Parse YAML frontmatter. A missing PyYAML is an ENVIRONMENT gap, not a
+    # frontmatter defect — return None (not False) so main() can exit 3 (distinct
+    # from exit 1 = real frontmatter invalidity), and the caller treats it as
+    # "install PyYAML", never a blocking TIER finding against the skill.
     if not _HAS_YAML:
-        return False, "PyYAML not installed — cannot validate frontmatter (run: pip install pyyaml)"
+        return None, "PyYAML not installed — cannot validate frontmatter (run: pip install pyyaml)"
     try:
         frontmatter = yaml.safe_load(frontmatter_text)
         if not isinstance(frontmatter, dict):
@@ -114,4 +117,6 @@ if __name__ == "__main__":
     
     valid, message = validate_skill(sys.argv[1])
     print(message)
-    sys.exit(0 if valid else 1)
+    # 0 = valid; 1 = frontmatter invalid / usage; 3 = environment error (PyYAML
+    # absent — validation could not run; not a skill defect).
+    sys.exit(0 if valid is True else (3 if valid is None else 1))

@@ -33,9 +33,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
+
+from frontmatter_util import block as _fm_block, field as _fm_field
 
 # Common SPDX/OSI identifiers a skill would plausibly declare. Not the full SPDX
 # list (hundreds) — the recognized set for "is this a real, usable license id?".
@@ -57,17 +58,12 @@ COMMON_MISTAKES = {
 
 
 def read_license(skill_md: Path) -> str | None:
-    text = skill_md.read_text(encoding="utf-8")
-    if not text.startswith("---\n"):
-        return None
-    end = text.find("\n---\n", 4)
-    if end < 0:
-        return None
-    for line in text[4:end].split("\n"):
-        m = re.match(r"^license\s*:\s*(.*)$", line)
-        if m:
-            return m.group(1).strip().strip('"').strip("'") or None
-    return None
+    # Frontmatter scan delegated to frontmatter_util (the single home; tolerates
+    # BOM/CRLF/trailing-newline) so a BOM/CRLF SKILL.md reads the same here as in the
+    # gates that import it — the hand-rolled copy that used to live here lacked that
+    # tolerance and parsed such a file as having no frontmatter.
+    fm = _fm_block(skill_md.read_text(encoding="utf-8"))
+    return _fm_field(fm, "license") if fm else None
 
 
 def main() -> int:
