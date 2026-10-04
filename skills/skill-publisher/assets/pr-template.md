@@ -17,6 +17,9 @@
 ### Marketplace
 <registered in plugin <name> / already listed / new plugin <name> / skipped / no catalog in repo>
 
+### Repo README
+<row added under <section> / already listed / skipped / no README in repo>
+
 ### Version
 <prior-version> → <new-version> (<patch|minor|major>)
 
