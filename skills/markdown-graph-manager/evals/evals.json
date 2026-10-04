@@ -1,0 +1,81 @@
+{
+  "skill_name": "markdown-graph-manager",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "I have a small markdown knowledge graph living at /tmp/mgm-eval-fixture (registry file at assets/test-registry.json, graph id 'eval-fixture'). Can you audit it and tell me what's wrong?",
+      "expected_output": "A single categorized report of every schema/link violation in the fixture graph, with no files written.",
+      "files": [],
+      "expectations": [
+        "The report identifies a missing required property (born::) on the Person page 'Bob Example'",
+        "The report identifies the single-colon pseudo-label 'Favorite Color:' on 'Bob Example' as report-only (needs human judgment), not auto-fixed",
+        "The report identifies the inline-bold-heading pattern ('**Bio** — ...') on 'Bob Example' as report-only, not auto-fixed",
+        "The report identifies the bold-markdown text ('**Bio**') as a safe-fix category",
+        "The report identifies the dangling link [[Carol Nonexistent]] as a safe-fix category (target does not exist)",
+        "Findings are grouped by category (all instances of one violation type presented together), not per-page (not 'here are Bob's 5 issues' as one bucket)",
+        "The report never surfaces a raw per-script heading or label (e.g. 'schema-lint.py output' / 'graph-link-audit.py output') anywhere — confirms findings from both scripts were actually merged, not that the report is merely silent about internals (non-discriminating in prior iterations; this checks for the specific regression it should catch)",
+        "The report flags that the bold-markdown safe-fix and the inline-bold-heading report-only finding both target line 5, and warns that applying the safe-fix first would destroy the heading-candidate signal before it's been resolved (the ordering trap documented in SKILL.md)",
+        "No file in the fixture graph was modified (audit is read-only)",
+        "The clean page 'Alice Example' is not reported as having any violations"
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "Please apply safe fixes to my markdown graph at /tmp/mgm-eval-fixture (registry at assets/test-registry.json, graph id 'eval-fixture').",
+      "expected_output": "The bold-markdown and dangling-link findings on 'Bob Example' are written; the missing-required-property and single-colon-pseudo-label findings are left untouched with a specific recommendation for each, not a bare list.",
+      "files": [],
+      "expectations": [
+        "pages/Bob Example.md no longer contains '**' bold markers after the fix",
+        "The dangling link to [[Carol Nonexistent]] in pages/Bob Example.md is unbracketed to plain text 'Carol Nonexistent' after the fix",
+        "pages/Bob Example.md still has type:: Person with no born:: property after the fix (missing-required-property is never auto-fixed)",
+        "The single-colon pseudo-label 'Favorite Color:' is still present verbatim after the fix (report-only, never auto-fixed)",
+        "The response gives a specific recommendation for the missing born:: property and the colon-label, not just 'here are the ambiguous things, you decide'",
+        "The response re-audited fresh before fixing rather than reusing a stale prior report"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Add a new page to my markdown graph at /tmp/mgm-eval-fixture (registry at assets/test-registry.json, graph id 'eval-fixture') for a person named Carol Nonexistent, born 1985, related to Bob Example. Her favorite color is teal.",
+      "expected_output": "A new pages/Carol Nonexistent.md file that conforms to the graph's format contract on arrival: required properties filled, existence-verified bracket rule applied, no bold markdown, no single-colon pseudo-labels (including for the favorite-color fact), writer attribution set.",
+      "files": [],
+      "expectations": [
+        "A new file pages/Carol Nonexistent.md (or equivalently-titled) was created",
+        "The new page has type:: Person and born:: 1985 as page properties",
+        "The new page has related:: [[Bob Example]] bracketed (since Bob Example exists in the graph)",
+        "The new page contains no '**bold**' markdown anywhere",
+        "The favorite-color fact is written as a hyphen-separated label ('Favorite Color - teal' or similar), not a single-colon pseudo-label ('Favorite Color: teal')",
+        "The new page sets the page property writer:: Claude (new page, whole-page write)",
+        "The response confirms what was validated and prefilled, per the skill's write output contract"
+      ]
+    },
+    {
+      "id": 3,
+      "baseline_required": false,
+      "baseline_required_note": "This eval exercises the skill's Step -1 maintenance-freshness mechanism, which structurally does not exist for a no-skill baseline — pairing it with a without_skill run produces a vacuous 4/4 pass every time (confirmed empirically, iteration 2) and dilutes the benchmark average with a comparison that measures nothing. Run with-skill only; do not dispatch a baseline for this eval.",
+      "prompt": "Audit my markdown graph at /tmp/mgm-eval-fixture (registry at assets/test-registry.json, graph id 'eval-fixture').",
+      "expected_output": "The Step -1 maintenance freshness check runs (or is skipped as fresh) without blocking or erroring the audit, writes its state only to the skill's own per-skill runtime storage location, and never touches the graph being audited. The audit itself still completes normally.",
+      "files": [],
+      "expectations": [
+        "The maintenance freshness check (Step -1) ran without blocking, erroring, or halting the audit",
+        "No new file or directory was created inside the fixture graph's pages/ or assets/ directories as a side effect of the maintenance check",
+        "Any maintenance-check state file was written only to the skill's own per-skill runtime storage location (e.g. the path documented in references/maintenance-check.md), never inside the graph being audited",
+        "The audit itself still completed and produced a categorized violation report for the fixture graph, same as eval 0"
+      ]
+    },
+    {
+      "id": 4,
+      "baseline_required": false,
+      "baseline_required_note": "Same rationale as eval 3 — this exercises the Step -1 write path specifically, which has no baseline equivalent.",
+      "prompt": "Audit my markdown graph at /tmp/mgm-eval-fixture (registry at assets/test-registry.json, graph id 'eval-fixture'). Before you start, note that it's been over a week since anyone last ran this skill against this graph.",
+      "expected_output": "Unlike eval 3 (which exercises the read/skip-as-fresh path because the state file's last_check is recent), this eval forces the maintenance-check's actual WRITE path: the orchestrator must first set the state file's timestamp to 8+ days in the past (setup step, done by the test harness before dispatch — see setup_note), so Step -1 actually runs its version/doc-currency checks and re-writes the state file with a fresh timestamp, rather than short-circuiting on freshness.",
+      "setup_note": "Before dispatching this eval's with-skill run, the orchestrator must first read the current maintenance-check state file (path from references/maintenance-check.md) and rewrite its timestamp to 8+ days before the eval's run time, so Step -1 is forced onto its write path rather than short-circuiting fresh. Restore or leave the file as the skill wrote it after the run — do not manually reset it back to the artificially-aged value.",
+      "files": [],
+      "expectations": [
+        "The maintenance freshness check (Step -1) actually ran its version/doc-currency checks rather than short-circuiting as fresh (confirm the transcript shows real check activity, not just 'state was fresh, skipped')",
+        "The maintenance-check state file's timestamp was updated to reflect this run (compare against the artificially-aged timestamp the setup step wrote)",
+        "The state file write happened only at the skill's own per-skill runtime storage location, never inside the fixture graph being audited",
+        "The audit itself still completed and produced a categorized violation report for the fixture graph, same as eval 0"
+      ]
+    }
+  ]
+}
