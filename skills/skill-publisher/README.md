@@ -60,7 +60,7 @@ Example:
 - **Cold README and changelog agents.** One fresh agent drafts the `## Features & modes` and `## Structure` sections from the final SKILL.md (regenerated every ship); another writes the changelog entry by comparing the local skill with its published version, the ship ledger and any skill-tracer fixes.
 - **Version bump and changelog.** Applies the right SemVer level and adds a Keep-a-Changelog entry to HISTORY.md.
 - **Packaging.** Builds a `.skill` archive (or a zip for Claude.ai) with a SHA-256 digest, in the form that fits the audience tier.
-- **PR and marketplace registration.** The first run is always a dry-run preview that you confirm or cancel. The same commit registers the skill in the upstream `.claude-plugin/marketplace.json` (you choose which plugin it joins, or a new one, or none) so `claude plugins install` can actually offer it; a skill already listed is left alone. A license check runs before any public push, and a skill with no upstream can be offered a hosting branch instead.
+- **PR and marketplace registration.** The first run is always a dry-run preview that you confirm or cancel. The same commit registers the skill in the upstream `.claude-plugin/marketplace.json` (you choose which plugin it joins, or a new one, or none) so `claude plugins install` can actually offer it; a skill already listed is left alone. The same commit adds a row for the skill to the repo-root README's skill listing, under the section you choose, so the front page doesn't omit it. A license check runs before any public push, and a skill with no upstream can be offered a hosting branch instead.
 - **Degraded mode.** A skill without HISTORY.md still ships locally: you are asked for an attribution category, or can skip, in which case there is no version bump and no PR.
 - **Recovery after interruption.** The ship ledger records in-flight markers; if a run is cut short (for example by context compaction), the next run detects the marker and resumes at the right step.
 - **Post-ship verification.** Confirms the version, changelog, archive digest and PR before recording the ship as landed, and renders a one-page HTML view of the ledger.
@@ -77,7 +77,7 @@ Example:
   - terms: `glossary.md`.
 - **`scripts/`** — pure-Python helpers, grouped by job:
   - validation and lints: `quick_validate`, `portability_lint`, `attribution_lint`, `spdx_check`, `link_check`, `security_scan`, `mcp_deps`, `triggering_eval`, `readiness_report`;
-  - packaging and publishing: `package_skill`, `github_pr`, `marketplace_register`, `diff_published`, `install_check`, `tracer_changelog_rows`;
+  - packaging and publishing: `package_skill`, `github_pr`, `marketplace_register`, `readme_register`, `diff_published`, `install_check`, `tracer_changelog_rows`;
   - ledger and state: `append_ledger`, `render_ledger` (with `ledger-render-config.json`), `ship_manifest`, `verify_ship`, `ship_status`, `recover_dispatch`;
   - shared utilities `frontmatter_util`, `hashutil`; maintainer-only tools (not part of shipping) `check_shared_sync`, `sync_shared`.
 - **`assets/`** — fill-in templates: `changelog-entry-template.md`, `pr-template.md`.

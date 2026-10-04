@@ -78,6 +78,7 @@ Omit the flags that don't apply to this path (no `--artifact`/`--digest` for per
 - `references/glossary.md` — publisher-specific terms; see also skill-creator-ccvw's ccvw-glossary.md
 - `scripts/github_pr.py` — PR automation
 - `scripts/marketplace_register.py` — upstream `marketplace.json` registration (used by `github_pr.py`; spec in `references/github-pr-workflow.md` "Marketplace registration")
+- `scripts/readme_register.py` — repo-root README skill-listing row (used by `github_pr.py`; spec in `references/github-pr-workflow.md` "Repo README listing")
 - `scripts/package_skill.py` — per-tier packaging (`--format skill|zip`)
 - `scripts/render_ledger.py` — ship-ledger HTML renderer (this skill's **own independent copy**; skill-tracer has its own, the two may diverge — no sync). It reads whatever ledger path is passed as its positional arg; full canonical invocation (with the required `--config @~/.claude/skills/skill-publisher/scripts/ledger-render-config.json` and `--open`) in `references/ledger-format.md` "Rendering" — the `@` prefix tells the renderer to load the config from the file at that path; a bare path without `@` is parsed as inline JSON and fails)
 - `scripts/spdx_check.py` — frontmatter `license` SPDX/OSI validation (Step 4 + PR gate)
