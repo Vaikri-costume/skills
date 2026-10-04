@@ -88,7 +88,7 @@ def load_run_results(benchmark_dir: Path) -> dict:
         metadata_path = eval_dir / "eval_metadata.json"
         if metadata_path.exists():
             try:
-                with open(metadata_path) as mf:
+                with open(metadata_path, encoding="utf-8") as mf:
                     meta = json.load(mf)
                 eval_id = meta.get("eval_id", eval_idx)
                 eval_name = meta.get("eval_name")
@@ -120,7 +120,7 @@ def load_run_results(benchmark_dir: Path) -> dict:
                     continue
 
                 try:
-                    with open(grading_file) as f:
+                    with open(grading_file, encoding="utf-8") as f:
                         grading = json.load(f)
                 except json.JSONDecodeError as e:
                     print(f"Warning: Invalid JSON in {grading_file}: {e}")
@@ -146,7 +146,7 @@ def load_run_results(benchmark_dir: Path) -> dict:
                 timing_file = run_dir / "timing.json"
                 if timing_file.exists():
                     try:
-                        with open(timing_file) as tf:
+                        with open(timing_file, encoding="utf-8") as tf:
                             timing_data = json.load(tf)
                         if result["time_seconds"] == 0.0:
                             result["time_seconds"] = timing_data.get("total_duration_seconds", 0.0)
@@ -211,8 +211,33 @@ def aggregate_results(results: dict) -> dict:
             "tokens": calculate_stats(tokens)
         }
 
-    # Calculate delta between the first two configs (if two exist)
-    if len(configs) >= 2:
+    # Calculate delta between the primary (treatment) and baseline configs.
+    # `configs` comes from sorted(eval_dir.iterdir()) above, i.e. alphabetical
+    # order — NOT primary-then-baseline order. Indexing configs[0]/configs[1]
+    # directly (the original approach) makes the delta's sign depend on which
+    # config name happens to sort first: "old_skill" < "with_skill" flips the
+    # sign silently versus "new_skill" < "old_skill". Match by the documented
+    # config-name vocabulary instead (with_skill/new_skill = primary,
+    # without_skill/old_skill = baseline — see SKILL.md's Step 1 dir-naming
+    # note); fall back to positional only when neither known pair is present,
+    # and say so loudly rather than silently guessing.
+    PRIMARY_NAMES = {"with_skill", "new_skill"}
+    BASELINE_NAMES = {"without_skill", "old_skill"}
+    primary_name = next((c for c in configs if c in PRIMARY_NAMES), None)
+    baseline_name = next((c for c in configs if c in BASELINE_NAMES), None)
+
+    if primary_name and baseline_name:
+        primary = run_summary.get(primary_name, {})
+        baseline = run_summary.get(baseline_name, {})
+    elif len(configs) >= 2:
+        print(
+            f"Warning: config names {configs!r} don't match the known "
+            f"primary ({sorted(PRIMARY_NAMES)}) / baseline ({sorted(BASELINE_NAMES)}) "
+            f"vocabulary — falling back to alphabetical-first-vs-second for the "
+            f"delta, which may have an unintended sign. Rename config dirs to "
+            f"one of the recognized pairs to get a reliable delta.",
+            file=sys.stderr,
+        )
         primary = run_summary.get(configs[0], {})
         baseline = run_summary.get(configs[1], {})
     else:
@@ -239,7 +264,13 @@ def generate_benchmark(benchmark_dir: Path, skill_name: str = "", skill_path: st
     results = load_run_results(benchmark_dir)
     run_summary = aggregate_results(results)
 
-    # Actual runs per configuration, computed from the data (not hardcoded)
+    # Nominal runs per configuration, computed from the data (not hardcoded).
+    # This is the MAX across configs: the expected-uniform run count (every
+    # config normally runs the same N). If a config contributed fewer valid
+    # grading.json files (a failed/killed run), this overstates that short
+    # config — the benchmark.md "N runs each" then reads as an upper bound, not
+    # a guarantee. Read per-config run counts from benchmark.json runs[] if the
+    # exact per-config count matters.
     runs_per_config = max((len(r) for r in results.values()), default=0)
 
     # Build runs array for benchmark.json
@@ -391,13 +422,13 @@ def main():
     output_md = output_json.with_suffix(".md")
 
     # Write benchmark.json
-    with open(output_json, "w") as f:
+    with open(output_json, "w", encoding="utf-8") as f:
         json.dump(benchmark, f, indent=2)
     print(f"Generated: {output_json}")
 
     # Write benchmark.md
     markdown = generate_markdown(benchmark)
-    with open(output_md, "w") as f:
+    with open(output_md, "w", encoding="utf-8") as f:
         f.write(markdown)
     print(f"Generated: {output_md}")
 

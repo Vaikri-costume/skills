@@ -24,6 +24,11 @@ Usage:
 The category is read from the explicit `category` field in HISTORY.md if present;
 otherwise inferred from shape (history present → A; only inspirations → B; none → D).
 
+`author.primary` must be a real, verifiable identity, checked against the
+`gh`-authenticated GitHub username when `gh` is available (blocking on mismatch);
+degrades to advisory when `gh` is unavailable/unauthenticated — see
+`lint_author_identity`.
+
 Frontmatter parsing: tries PyYAML first (handles arbitrary nesting reliably),
 falls back to a bespoke indent-aware parser for environments without yaml
 installed. Both produce the same dict shape.
@@ -33,6 +38,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -268,6 +274,65 @@ def lint_author(fm):
     return violations, primary
 
 
+def lint_author_identity(primary_author):
+    """Verify author.primary is a real, verifiable identity — not a first name or
+    other non-username placeholder. Confirmed 2026-08-17: a bare first name (e.g.
+    "Vaidehi") previously passed lint_author's presence check silently; the user
+    wants a mismatch against their actual GitHub identity to BLOCK, not just be a
+    documentation preference.
+
+    Verification method: compare against `gh api user -q .login` (the CLI's own
+    authenticated identity) when `gh` is installed and authenticated — this is a
+    real, checkable fact, unlike a regex shape check (a plain first name is
+    syntactically indistinguishable from a valid GitHub username, so shape alone
+    can't catch this). When gh is unavailable/unauthenticated there is nothing to
+    verify against, so this degrades to advisory (never blocks on an environment
+    gap, mirroring install_check.py's / ship_status.py's offline-degrade pattern).
+    """
+    violations = []
+    if not primary_author or primary_author == "missing":
+        return violations  # already caught by lint_author's missing-primary-author
+
+    try:
+        proc = subprocess.run(
+            ["gh", "api", "user", "-q", ".login"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        violations.append({
+            "type": "author-identity-unverified",
+            "message": f"Could not verify author.primary ('{primary_author}') against a "
+                       f"GitHub identity: `gh` CLI not found or timed out. Treated as "
+                       f"advisory only — install/configure `gh` to enable the hard check.",
+            "severity": "advisory",
+        })
+        return violations
+
+    if proc.returncode != 0 or not proc.stdout.strip():
+        violations.append({
+            "type": "author-identity-unverified",
+            "message": f"Could not verify author.primary ('{primary_author}') against a "
+                       f"GitHub identity: `gh` is not authenticated (run `gh auth login`). "
+                       f"Treated as advisory only.",
+            "severity": "advisory",
+        })
+        return violations
+
+    gh_login = proc.stdout.strip()
+    if primary_author != gh_login:
+        violations.append({
+            "type": "author-identity-mismatch",
+            "message": f"HISTORY.md author.primary ('{primary_author}') does not match "
+                       f"the gh-authenticated GitHub username ('{gh_login}'). Set "
+                       f"author.primary to your real GitHub username. (If shipping "
+                       f"deliberately on someone else's behalf under a different gh "
+                       f"session, that's a real exception — but it must be a conscious "
+                       f"choice, not a default first-name placeholder.)",
+            "severity": "blocking",
+        })
+    return violations
+
+
 def lint_history(fm):
     """Check that author.history entries are well-formed if present."""
     violations = []
@@ -442,16 +507,17 @@ def main():
         }, indent=2))
         sys.exit(1)
 
-    hist_fm, _ = parse_frontmatter(history_md.read_text())
+    hist_fm, _ = parse_frontmatter(history_md.read_text(encoding="utf-8"))
 
     # The see-also advisory check reads SKILL.md's body (References section is there).
     skill_md = skill_path / "SKILL.md"
     skill_body = ""
     if skill_md.is_file():
-        _, skill_body = parse_frontmatter(skill_md.read_text())
+        _, skill_body = parse_frontmatter(skill_md.read_text(encoding="utf-8"))
 
     category = infer_category(hist_fm)
     author_violations, primary_author = lint_author(hist_fm)
+    identity_violations = lint_author_identity(primary_author)
     history_violations, history = lint_history(hist_fm)
     inspirations_violations, inspirations = lint_inspirations(hist_fm)
     license_violations, license_present = lint_license_file(skill_path, history)
@@ -459,6 +525,7 @@ def main():
 
     all_violations = (
         author_violations
+        + identity_violations
         + history_violations
         + inspirations_violations
         + license_violations

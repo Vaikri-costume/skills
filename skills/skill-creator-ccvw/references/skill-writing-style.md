@@ -111,13 +111,13 @@ Reusable shapes for the SKILL.md body, drawn from patterns seen working across m
 
 ### Pattern 1 — Sequential workflow orchestration
 **Use when:** users need a multi-step process in a specific order.
-**Skeleton:** numbered steps, each naming the action/tool call and its inputs; mark dependencies between steps (e.g. "uses the `id` from Step 1"); validate at each stage before advancing; give rollback instructions for failures.
-**Key techniques:** explicit step ordering · declared inter-step dependencies · per-stage validation · rollback on failure.
+**Skeleton:** numbered steps, each naming the action/tool call and its inputs; mark dependencies between steps (e.g. "uses the `id` from Step 1"); validate at each stage before advancing; **write or log that stage's output to durable storage (a file, a log, a tracked record — not just conversation state) before advancing to the next stage** — never a design where nothing is written until a single final report step; give rollback instructions for failures.
+**Key techniques:** explicit step ordering · declared inter-step dependencies · per-stage validation · **incremental checkpointing (durable write/log after each stage, or after each unit within a stage for long stages)** · rollback on failure.
 
 ### Pattern 2 — Multi-MCP coordination
 **Use when:** a workflow spans multiple services/servers.
-**Skeleton:** group the work into clearly separated phases (one per service); pass data explicitly between phases (name which output feeds which input); validate before moving to the next phase; handle errors centrally rather than per-call.
-**Key techniques:** clear phase separation · explicit data-passing between services · validate-before-advance · centralized error handling.
+**Skeleton:** group the work into clearly separated phases (one per service); pass data explicitly between phases (name which output feeds which input); validate before moving to the next phase; **persist each phase's output durably as it completes**, so a phase's work survives even if a later phase never runs; handle errors centrally rather than per-call.
+**Key techniques:** clear phase separation · explicit data-passing between services · validate-before-advance · **incremental checkpointing per phase (durable write/log, not deferred to a final step)** · centralized error handling.
 
 ### Pattern 3 — Iterative refinement
 **Use when:** output quality improves with iteration (drafts, reports, designs).
@@ -162,6 +162,7 @@ Short rules that apply across all patterns:
 - **Compaction recovery.** Claude Code compacts context automatically in long sessions — a skill with no recovery infrastructure silently loses its in-progress state and cannot resume. Two mechanisms, by skill complexity:
   - **Session-log marker (every multi-step skill):** At the start of each major round, phase, or iteration, append a step marker to the shared session log in the format `**[HH:MM:SS] SKILL:[name] RUN:[id] STEP:[name]**` (append to `~/.claude/session-logs/session-log-$(date +%Y-%m-%d).md`). This tells compact hooks which skill and step were active so they can build a targeted resume prompt. Non-blocking — if the write fails, continue.
   - **In-flight marker (complex multi-round workflows with a ledger):** For skills that run multi-round loops or multi-phase sequential workflows, pair every major-phase write with an atomic `in-flight:: <Runtime> <action>` marker in the ledger header. Step 1 of every invocation reads this marker and runs the matching recovery rule so a post-compaction resume picks up where it left off without user intervention. See `~/.claude/skills/skill-tracer/references/recovery-protocol.md` for the full pattern; for build-phase recovery (no ledger needed), see `references/build-planning.md` "Recovery across sessions."
+- **Incremental checkpointing — never defer all output to a final report step (required for any multi-stage workflow/skill).** A design where "you see nothing until the final report is complete" loses ALL work the moment context runs out mid-process — and context exhaustion in a long-running workflow is a routine, near-guaranteed event, not an edge case. Every multi-stage workflow spec must name a durable write/log point after each stage (or after each unit within a stage, for stages that process many items) — a file write, an append to a ledger/log, a tracked record — so partial progress survives a restart even if the final stage never runs. This is distinct from the compaction-recovery markers above: those let the *skill* resume its own execution; this ensures the *user* has real, inspectable output accumulating as the workflow runs, not just at the end. When designing or reviewing a multi-stage workflow, treat "all output deferred to the last stage" as a structural defect to fix before the design ships, not a style preference to note and move past.
 
 ---
 

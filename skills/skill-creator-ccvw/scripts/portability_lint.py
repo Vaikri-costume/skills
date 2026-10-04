@@ -52,15 +52,12 @@ CLAUDE_BODY_PATTERNS = [
 
 # Path patterns categorized by which tier each blocks.
 #
-# USER_DATA_PATHS: reads of the USER's PRE-EXISTING personal config/memory —
-# files the installing user already owns, with content that differs per user.
-# Block at claude-users+ because a shared skill shouldn't depend on reading YOUR
-# personal config.
-# NOTE: a skill's OWN per-user ledger (e.g. ~/.claude/<skill>-ledger/) is deliberately
-# NOT listed here — it is the skill's own namespace, created per-user on first run,
-# and is as portable as any ~-relative skill-data dir. Flagging it would be inconsistent
-# (skill-publisher's own ~/.claude/skill-publisher-ledger/ is not flagged either).
+# USER_DATA_PATHS: user-specific data paths every Claude Code install has at
+# different content (your ledger vs my ledger). Block at claude-users+ because
+# other users don't have YOUR audit history at YOUR exact path.
 USER_DATA_PATHS = [
+    (r"~/\.claude/skill-tracer-audit-ledger/", "Use $XDG_DATA_HOME/skill-tracer-audit-ledger/ or runtime storage API"),
+    (r"~/\.claude/skill-creator-evals-ledger/", "Use $XDG_DATA_HOME/skill-creator-evals-ledger/ or runtime storage API"),
     (r"~/\.claude/CLAUDE\.md", "Use $XDG_CONFIG_HOME/claude/CLAUDE.md or runtime user-memory API"),
     (r"~/\.claude/memory/", "Use $XDG_DATA_HOME/claude/memory/ or runtime memory API"),
 ]
@@ -307,8 +304,14 @@ def lint_frontmatter_content(fm):
     for k, v in fm.items():
         scan(v, k)
 
-    # description length bound (1024) — mirrors quick_validate; surfaced here so the
-    # scaffold-time portability lint catches it too.
+    # description length bound (1024 = the agentskills.io description spec limit) —
+    # mirrors quick_validate; surfaced here so the scaffold-time portability lint
+    # catches it too. DELIBERATELY a hand-copied literal, NOT a shared constant:
+    # quick_validate and portability_lint are each pure-stdlib standalone validators
+    # (portability_lint is also vendored into skill-publisher), so importing a common
+    # constant would couple them and break standalone-ness. The three copies
+    # (quick_validate, here, improve_description) must be updated together if the
+    # spec limit ever changes.
     desc = fm.get("description")
     if isinstance(desc, str) and len(desc) > 1024:
         violations.append({
@@ -492,7 +495,7 @@ def main():
         print(json.dumps({"error": f"SKILL.md not found at {skill_md}"}, indent=2))
         sys.exit(1)
 
-    text = skill_md.read_text()
+    text = skill_md.read_text(encoding="utf-8")
     fm, body, fm_lines = parse_frontmatter(text)
     body_start_line = fm_lines + 1
 
@@ -512,7 +515,7 @@ def main():
     if author is None:
         history_md = skill_path / "HISTORY.md"
         if history_md.is_file():
-            hfm, _, _ = parse_frontmatter(history_md.read_text())
+            hfm, _, _ = parse_frontmatter(history_md.read_text(encoding="utf-8"))
             a = hfm.get("author")
             if isinstance(a, dict):
                 author = a.get("primary")
