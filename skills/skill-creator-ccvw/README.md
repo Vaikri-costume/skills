@@ -27,32 +27,6 @@ It optimizes for Claude Code as the build environment regardless of the skill's 
 - You want to ship/publish/PR a traced skill → use `/skill-publisher` instead
 - You want to search the marketplace without building → use `/marketplace-discover` directly
 
-## Features & modes
-
-- **Build a new skill from scratch (Path 3)** — walks the full create loop: intent interview → marketplace check → attribution + author capture → scaffolds the mandatory CCVW structure (SKILL.md, README.md, HISTORY.md, scripts/references/assets, glossary) → draft → eval → iterate. Trigger: "I want a skill that does X" / "create a skill for X", or when the marketplace check finds no strong existing match.
-- **Install an existing skill instead of building (Path 1)** — before any new build, it checks the live marketplace catalog for a skill that already does what you want; if there's a strong match you can install it directly and skip building entirely. Trigger: automatic first step of any new-skill request — no separate phrase needed, but you can also just ask "is there already a skill for X?".
-- **Improve/evolve an existing installed skill (Path 2)** — hands off to a dedicated improve-existing-skill workflow (fork/attribution-aware) rather than the from-scratch scaffold. Trigger: "improve my skill Y", "evolve X to also do Y", or choosing to build on a weak/near marketplace match.
-- **Run evals and iterate on feedback** — for each test prompt, runs the skill and a same-turn baseline (no-skill, or the pre-edit version) side by side, grades both, aggregates a pass-rate/time/token benchmark, and opens a browser viewer (Outputs + Benchmark tabs) for you to leave feedback per run; repeats until you're satisfied. Trigger: happens automatically once a draft exists — "test this", "run the evals", or just continuing past drafting.
-- **Static/headless viewer mode** — for environments without a persistent local server (e.g. Cowork), writes a single self-contained `review.html` file instead of starting a server. Trigger: automatic on non-Claude-Code runtimes; otherwise available via the `--static <path>` flag on the viewer script.
-- **Description-tuning / trigger-accuracy optimization** — builds a set of "should this skill fire" test queries, lets you review/edit them in a small HTML picker, then runs a background loop (up to 5 rounds) that tries to improve the skill's description so it triggers on the right prompts and stays quiet on near-misses. Trigger: offered automatically after a skill is created/improved, or ask "make this trigger better" / "optimize the description".
-- **Blind A/B comparison between two skill versions** — an independent judge agent compares two outputs without knowing which skill produced which, then a follow-up pass explains why the winner won. More rigorous than the standard eval loop; optional and not needed for most builds. Trigger: "is the new version actually better than the old one?" or explicitly asking for a blind comparison.
-- **Iterate-quality checks (opt-in, off by default)** — extra efficiency and readability advisories (wasted work, jargon, dense text) surfaced during iteration, separate from correctness grading. Trigger: add `--with-iterate-quality` to the invocation, or just ask for readability/efficiency feedback as you iterate.
-- **Package the finished skill locally** — zips the skill into an installable `.skill` file for quick local use (not the polished release build — that's skill-publisher's job). Trigger: happens automatically at the end of a build if the packaging tool is available, or run it yourself as described in "How to invoke" once a skill is done.
-- **Portability/attribution self-check before handoff** — runs three built-in lints (structure/frontmatter validity, tier-portability rules, attribution well-formedness) at scaffold time, at every tier change, and again before suggesting the next phase — not something you invoke separately, but worth knowing it happens automatically and may prompt you to confirm fixes.
-
-## Structure
-
-- **`SKILL.md`** — the step-by-step recipe this skill follows: capture intent → decide install/improve/build → scaffold → draft → eval/iterate → optimize description → package. Everything else in the skill exists to support one of these steps.
-- **`references/`** — background material pulled in only when a given step needs it, not read all at once. Roughly four groups: (1) *what a CCVW skill must contain* — `skill-structure-spec.md`, `attribution-spec.md`, `portability-spec.md`, `history-template.md`, `readme-template.md`, `glossary-template.md`, `ccvw-glossary.md`/`glossary.md`; (2) *how to write one well* — `skill-writing-style.md`, `build-planning.md`, `mcp-enhancement-skills.md`, `iterate-quality-checks.md`; (3) *how to run/upgrade one* — `improve-existing-skill.md`, `runtime-adaptations.md` (Claude.ai/Cowork differences), `viewer-ui.md`; (4) *data shapes* — `schemas.md` (the JSON formats for evals, grading, and benchmark files).
-- **`scripts/`** — deterministic helpers so the workflow doesn't rely on hand-written commands each time: validation/linting (`quick_validate.py`, `portability_lint.py`, `attribution_lint.py`, `validate_eval_set.py`), running and scoring tests (`run_eval.py` for description-trigger testing, `run_loop.py` for the description-optimization loop, `aggregate_benchmark.py` for turning graded runs into pass-rate/time/token stats, `generate_report.py` for the optimization loop's own live progress page), a few one-off utilities (`improve_description.py`, `package_skill.py` for zipping a finished skill, `utils.py` for shared helpers).
-- **`agents/`** — instruction briefs for the subagents this skill dispatches: `grader.md` (checks a run's output against the test's expectations), `comparator.md` (blind A-vs-B judgment for the comparison mode), `analyzer.md` (explains why one version did better, used both after a blind comparison and after a normal benchmark run).
-- **`eval-viewer/`** — the browser-based results viewer: `generate_review.py` builds it (either as a live local server or, in `--static` mode, a single self-contained HTML file) and `viewer.html` is the page template it fills in with each run's outputs, scores, and your feedback form.
-- **Where outputs go**: nothing from a build or eval run is written inside the skill's own folder. It all goes to a centralized location outside `~/.claude/skills/` — `${XDG_DATA_HOME:-$HOME/.claude}/skill-creator-evals-ledger/<skill-name>/` — organized by iteration (`iteration-1/`, `iteration-2/`, …), each holding the per-test-case runs, grading, benchmark, and viewer files. The one exception is `evals.json` itself (the list of test prompts/checks), which lives with the skill's own source under `<skill-path>/evals/`.
-
-## How to install
-
-Already installed locally at `~/.claude/skills/skill-creator-ccvw/`. This is a `claude-users` tier skill (Claude Code + Cowork) — no user-specific paths, only its own portable `~/.claude/skill-creator-evals-ledger/` namespace. Published at [`Vaikri-costume/skills`](https://github.com/Vaikri-costume/skills); to install elsewhere, copy the `skill-creator-ccvw/` directory into a `~/.claude/skills/` folder, or install the packaged `.skill` archive via Claude Code's or Cowork's skill-install flow.
-
 ## How to invoke
 
 - Slash command: `/skill-creator-ccvw` or natural language
@@ -71,6 +45,48 @@ Example:
 → marketplace-discover check → intent interview → scaffold (SKILL.md + README + HISTORY + dirs)
 → draft → eval against test prompts → iterate on feedback → suggest /skill-tracer when ready
 ```
+- Also: "turn this conversation into a skill" (answers are taken from the conversation), "make this skill better/smarter" / "add features to a skill" / "plan a skill upgrade" (improve workflow), "fork this skill" / "evolve someone else's skill" (attribution questions and license preservation), skipping evals for subjective skills ("just vibe"), re-entering description optimization when a skill misfires, and resuming an in-progress multi-iteration build in a new session. On Claude.ai or Cowork see `references/runtime-adaptations.md`. When iteration converges the skill suggests `/skill-tracer <name>` then `/skill-publisher <name>`.
+
+## Features & modes
+
+- **Build a new skill from scratch.** Runs the full create loop: interviews you about intent, checks the marketplace, records attribution and author, scaffolds the mandatory CCVW structure (`SKILL.md`, `README.md`, `HISTORY.md`, `scripts/`, `references/`, `assets/` and a glossary), drafts, then evaluates and iterates. Trigger: "I want a skill that does X", "create a skill for X", or "turn this conversation into a skill" (it pulls the answers from the conversation first).
+- **Marketplace check, install instead of building.** Runs before every new build: searches the live catalog, and if a strong match exists you can install it and stop. If marketplace-discover isn't installed it skips the check and carries on. Automatic; or ask "is there already a skill for X?".
+- **Improve or evolve an existing skill.** Hands off to a dedicated improve-existing-skill workflow that keeps the original's attribution and can reuse the eval and viewer machinery to show whether your changes helped. Trigger: "improve my skill Y", "make this skill better/smarter", "add features to a skill", "plan a skill upgrade", or choosing to build on a near-match from the marketplace.
+- **Fork with attribution.** Asks which of four categories applies (direct fork, derivative work, idea inspiration, independent design), records the answer and the author in `HISTORY.md`, and keeps the original `LICENSE`; when unsure it picks the more-attributing category. Trigger: "fork this skill", "evolve someone else's skill".
+- **Intent capture and test-case setup.** Asks for 2-3 concrete use cases, trigger phrases, output format, what the skill optimizes for, your standing preferences and the intended audience; marks mechanical steps to become bundled scripts rather than prose; proposes 2-3 test prompts saved to `evals/evals.json` inside the skill. You can skip evals for subjective skills. Automatic during a build.
+- **Evals, benchmark and results viewer.** For each test prompt it runs the skill and a baseline (no skill, or the previous version) at the same time, grades both, computes pass-rate, time and token stats, and opens a browser viewer (Outputs and Benchmark tabs plus a Recommendations sidebar) where you leave feedback per run. Repeats until you're happy or progress stalls. Trigger: automatic once a draft exists, or "test this" / "run the evals".
+- **Headless and Cowork viewer.** Writes one self-contained `review.html` instead of starting a local server. Automatic on Cowork and other no-server runtimes, or `--static <absolute-path>` on `eval-viewer/generate_review.py`. Claude.ai differs more (no subagents, often no browser); those adaptations are in `references/runtime-adaptations.md`.
+- **Blind A/B comparison.** An independent judge compares two versions' outputs without knowing which is which; a follow-up pass explains why the winner won (ties are reported, not analyzed). Optional and more rigorous than the normal loop. Trigger: "is the new version actually better than the old one?".
+- **Description optimization.** Builds 16-20 realistic should-trigger and should-not-trigger queries, lets you review and edit them in a small HTML picker, then a background loop of up to 5 rounds tunes the skill's description using a 60/40 train/held-out split and picks the best by held-out score. Offered after a skill is created or improved, or "optimize the description" / "make this trigger better"; re-run later with real queries the skill got wrong.
+- **Iterate-quality checks (opt-in, off by default).** Efficiency and readability advisories (wasted work, jargon, dense text), separate from correctness grading. Trigger: `--with-iterate-quality`, or ask for readability or efficiency feedback.
+- **Scaffold-time lints and pre-handoff self-check.** Three lints run automatically (frontmatter validity, tier portability, attribution well-formedness) at scaffold, at every tier change, and again before handoff, followed by a short content checklist (description, kebab-case name, error handling, examples, every cited reference file exists). It may ask you to confirm fixes; the tier only changes on your explicit request.
+- **Three portability tiers.** Each skill is `personal`, `claude-users` (default; Claude Code and Cowork) or `model-agnostic`; the tier sets which features and paths are allowed. Stated during intent capture, or asked for at a tier change.
+- **Multi-iteration build planning and resume.** For long builds it tracks a plan and task tree; on re-entry in a new session it reads those first to find where it left off. Automatic for multi-iteration builds.
+- **Local packaging.** Zips the finished skill into an installable `.skill` file for quick local use (not the release build, which belongs to skill-publisher). Automatic at the end of a build when the `present_files` tool is available, or `python -m scripts.package_skill <path>` from the skill's folder.
+- **Handoff to the next phases.** When iteration converges it suggests `/skill-tracer <name>` to find bugs, then `/skill-publisher <name>` to polish and ship.
+
+## Structure
+
+- **`SKILL.md`** — the recipe the skill follows: capturing intent, choosing install/improve/build, scaffolding, testing, iterating, description tuning and packaging; includes worked Examples and a Troubleshooting table.
+- **`README.md`**, **`HISTORY.md`**, **`LICENSE.txt`** — this overview, provenance/attribution/changelog, and the license preserved from the upstream skill.
+- **`references/`** — background loaded only when a step needs it:
+  - what a CCVW skill must contain: `skill-structure-spec.md`, `attribution-spec.md`, `portability-spec.md`, and the `history-template.md`, `readme-template.md`, `glossary-template.md` scaffolds; `ccvw-glossary.md` (shared vocabulary) and `glossary.md` (this skill's own);
+  - how to write one well: `skill-writing-style.md`, `build-planning.md`, `mcp-enhancement-skills.md`, `iterate-quality-checks.md`;
+  - how to run and upgrade one: `improve-existing-skill.md`, `runtime-adaptations.md` (Claude.ai and Cowork differences), `viewer-ui.md`, `recommendations-template.md`;
+  - data shapes: `schemas.md` (JSON formats for evals, grading and benchmark files).
+- **`scripts/`** — helpers that give the same result every run:
+  - validation and linting: `quick_validate.py`, `portability_lint.py`, `attribution_lint.py`, `validate_eval_set.py`;
+  - evals and scoring: `aggregate_benchmark.py`;
+  - description tuning: `run_eval.py`, `run_loop.py`, `improve_description.py`, `generate_report.py`;
+  - packaging and shared code: `package_skill.py`, `utils.py`.
+- **`agents/`** — briefs for helper agents: `grader.md` (checks a run against its expectations), `comparator.md` (blind A-vs-B judgment), `analyzer.md` (explains why a version won, or analyzes a benchmark run).
+- **`assets/`** — `eval_review.html`, the page where you review and edit trigger-test queries before optimization.
+- **`eval-viewer/`** — `generate_review.py` builds the results viewer (local server, or one static HTML file with `--static`); `viewer.html` is the template it fills in.
+- **Where outputs go**: nothing from eval or optimization runs is written inside the skill folder. Outputs go to `${XDG_DATA_HOME:-$HOME/.claude}/skill-creator-evals-ledger/<skill-name>/` — `iteration-N/` (per-test runs, grading, benchmark, feedback, viewer files) and `trigger-opt/` (eval set, log, timestamped `results.json`). The skill's own `evals/evals.json` (its test prompts) lives in the skill folder and is left out of the packaged `.skill`.
+
+## How to install
+
+Already installed locally at `~/.claude/skills/skill-creator-ccvw/`. This is a `claude-users` tier skill (Claude Code + Cowork) — no user-specific paths, only its own portable `${XDG_DATA_HOME:-$HOME/.claude}/skill-creator-evals-ledger/` namespace. Published at [`Vaikri-costume/skills`](https://github.com/Vaikri-costume/skills); to install elsewhere, copy the `skill-creator-ccvw/` directory into a `~/.claude/skills/` folder, or install the packaged `.skill` archive via Claude Code's or Cowork's skill-install flow.
 
 ## Sibling skills
 
