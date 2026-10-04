@@ -1,7 +1,7 @@
 ---
-version: "1.2.0"
+version: "1.3.0"
 category: A
-parent-version: "1.1.1"
+parent-version: "1.2.0"
 author:
   primary: "Vaikri-costume"
   history:
@@ -22,6 +22,26 @@ inspirations: []
 # History — skill-creator-ccvw
 
 ## Changelog
+
+### 1.3.0 — 2026-10-04 (shipped)
+Upstream check: compared against `anthropics/skills` HEAD `8a1541c`. Its `skill-creator` folder last changed 2026-04-20, before this fork (2026-05-27), and the fork already contains all of its content; nothing needed importing. The one candidate, "Communicating with the user", is already present as the condensed jargon-calibration paragraph in `SKILL.md`. This is the baseline for the next upstream check.
+#### Added
+- `portability_lint.py`: advisory `lint_tmp_cleanup` flags a `/tmp/` path with no cleanup instruction anywhere in the skill; it never blocks a tier.
+- `SKILL.md`: `## Examples` (three worked cases with their outputs) and `## Troubleshooting` (five symptom/cause/fix rows).
+- README: regenerated `## Features & modes` and `## Structure`; How to invoke now covers conversation-to-skill, upgrade/plan phrasings, forking, skipping evals, description re-entry and resuming a build.
+#### Changed
+- `Agent` is declared in `allowed-tools` (the body already depends on subagent dispatch).
+- Default tier for new builds is stated consistently: `claude-users`; `personal` is an explicit opt-in (SKILL.md Q7, `portability-spec.md`, `glossary.md`, `ccvw-glossary.md`).
+- `~/.claude` ledger paths are XDG-aware in `improve-existing-skill.md` and the README; the tracer ledger path now points at `${XDG_DATA_HOME:-$HOME/.local/share}/skill-tracer-audit-ledger/`.
+- Dated fix-history notes, line-number pins and foreign step-number pins removed from runtime docs; five reference files now name the check instead of another skill's step number.
+- Graders are dispatched one per run in the same turn.
+- WHY added for the baseline `/skills/` ban (with an explicit-exception route for tasks that depend on named sibling skills) and for the `parent-version: "pre-versioned"` token.
+- The one-off `/skill-test` prohibition is stated as the general rule; Q7's audience default is stated once; README packaging wording now names the `present_files` gate.
+#### Fixed
+- `SKILL.md` removes the temp trigger-eval review file after the download is confirmed.
+- The baseline note no longer contradicts the delta gotcha (delta is matched by name; an `old_skill` baseline does not flip the sign).
+- Stale tracer-ledger location and a "see line 73" pin in `improve-existing-skill.md`.
+- A real first name was scrubbed from the `attribution_lint.py` docstring and the `attribution-spec.md` example; private memory-file citations were removed from `SKILL.md` and `portability_lint.py` comments.
 
 ### 1.2.0 — 2026-08-17 (shipped)
 #### Added
