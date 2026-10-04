@@ -8,7 +8,7 @@ The cheap deterministic gate set run by `scripts/readiness_report.py` in `readin
 
 | Gate | Script | Tier scope | Classification on failure |
 |------|--------|------------|--------------------------|
-| frontmatter | `quick_validate.py <target>` | all (informational at personal) | **RED** (frontmatter malformed or violates hard rule) |
+| frontmatter | `quick_validate.py <target>` | all (informational at personal) | **RED** (frontmatter malformed or violates hard rule); **exit 3 = PyYAML absent** → environment NOTE (install PyYAML), never RED |
 | description triggering | `triggering_eval.py <target>` (heuristic only) | all | **NOTE** (advisory — confidence low/medium surfaced, never changes verdict color) |
 | portability | `portability_lint.py <target> --tier <tier>` | all (informational at personal) | **RED** if target tier in `would_fail_at_tiers` |
 | internal links | `link_check.py <target>` | all | **RED** on a broken link; **YELLOW** on a dead script |
@@ -32,7 +32,8 @@ The cheap deterministic gate set run by `scripts/readiness_report.py` in `readin
 ## Classification detail
 
 **RED gates (blocking):**
-- `quick_validate.py` exit 1 — YAML doesn't parse, or a hard rule violated (missing `name`/`description`, `name` not kebab-case, `description` over 1024 chars or contains angle brackets, unknown top-level keys). These block every tier and must be fixed before ship proceeds.
+- `quick_validate.py` exit 1 — YAML doesn't parse, or a hard rule violated (missing `name`/`description`, `name` not kebab-case, `description` over 1024 chars or contains angle brackets, unknown top-level keys). These block every tier and must be fixed before ship proceeds. **Exit 3 is NOT a block** — it means PyYAML is absent so validation could not run (an environment gap); surface it as a NOTE ("install PyYAML"), never RED.
+- `link_check.py` exit 1 with an **unreadable** cited file (`unreadable` non-empty in `--json`) — a cited path that exists but could not be read (a permission/encoding fault). RED, same as a broken link: the executor would fail to load it at runtime.
 - `portability_lint.py` exit 1 with target tier in `would_fail_at_tiers` — a tier-conditional violation blocks ship at this tier. Common cases: hardcoded user paths at claude-users, Claude extensions (`mcp__*` in `allowed-tools` or body, `Agent` tool calls) at model-agnostic.
 - `link_check.py` exit 1 **with a broken link** (`broken_links` non-empty in `--json`) — a cited `references/*.md` / `scripts/*.py` / `assets/*` path that does not resolve on disk. The executor would try to load a missing file. Citations attributed to a sibling skill (paragraph names another `skill-<name>`) are auto-excluded, so a finding is genuinely this skill's orphaned link. (Dead scripts alone, with no broken link, are YELLOW — see below.)
 - Any gate returning exit 2 (usage/path error) — the gate itself couldn't run; treated as a blocker to surface the fault.

@@ -154,7 +154,10 @@ def _gate_history(skill_root: Path) -> tuple[dict, dict]:
     # Search the FRONTMATTER block only — author.history[].source lives there. A raw
     # whole-text search would false-match a `source:` URL written in the changelog
     # body prose, reporting "a PR will open" when no upstream is actually recorded.
-    m = re.search(r"source\s*:\s*(https?://\S+)", _fm_block(text))
+    # The `["']?` tolerates the conventional quoted YAML form (`source: "https://…"`),
+    # and `[^\s"']+` stops the capture at the closing quote — without it a quoted URL
+    # would not match the leading `https?://` and the gate would wrongly warn.
+    m = re.search(r"""source\s*:\s*["']?(https?://[^\s"']+)""", _fm_block(text))
     upstream = m.group(1).strip() if m else None
     hgate = {"exit": 0, "cls": "pass", "detail": ""}
     ugate = ({"exit": 0, "cls": "pass", "detail": upstream}

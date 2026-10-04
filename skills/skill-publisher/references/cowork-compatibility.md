@@ -19,7 +19,7 @@ A skill that hardcodes Claude-Code assumptions (server-mode viewer, POST-back fe
 
 ## The check (per skill that produces user-facing output or runs a viewer)
 
-The publisher scans the target SKILL.md + scripts for these patterns. Each unhandled one is a TIER cluster.
+The publisher scans the target SKILL.md + scripts for these patterns. Each unhandled one is a TIER cluster. **This table is the closed set of Cowork adaptation points** (mirroring skill-creator-ccvw's `runtime-adaptations.md` "Cowork specifics") — "every applicable adaptation point" in the pass condition means these rows. A target behavior that matches none of them is out of Cowork-compatibility scope (not a TIER cluster); if you believe a genuinely new Cowork adaptation point exists, raise it against `runtime-adaptations.md` (the source) rather than treating it as a finding here.
 
 | Cowork adaptation point | What to verify | Failure → finding |
 |---|---|---|

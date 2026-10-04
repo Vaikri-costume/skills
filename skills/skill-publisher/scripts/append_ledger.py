@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Ledger row writer/validator + round-summary closer for skill-publisher.
 
-The audit ledger is a 7-column markdown table:
-    | Runtime | Round | Phase | Cluster | Root cause | Address | Flags |
+The audit ledger is a 7-column markdown table. The publisher's header labels the
+second column **Run** (per `references/ledger-format.md`); this shared writer is
+label-agnostic — it writes whatever integer `--round` carries into that column
+position regardless of the header word:
+    | Runtime | Run | Phase | Cluster | Root cause | Address | Flags |
 `scripts/render_ledger.py` parses it by splitting on `|` and EXITS table-parsing
 on any blank line. So two characters silently corrupt the ledger if hand-typed:
   - a literal `|` in any cell  -> that row is silently dropped by the renderer
@@ -13,7 +16,11 @@ non-zero exit instead of letting the renderer drop the row), formats, and append
 
 It also closes a round: the `close-round` subcommand recomputes the round-summary comment
     <!-- Round N total: raw flags A — clusters M — addresses: F FIX + S STRENGTHEN + P USER-PAUSE -->
-FROM the actual rows on the ledger for that round (not hand-counted), and can
+in the generic `Round N total:` form. The publisher's Step 10 must Edit this comment
+anyway — to add the version + PR URL it does not yet know at close-round time — and
+canonicalizes the label to `Run N total:` in that same mandatory Edit (so the label
+conversion is free, not a separate patch). FROM the actual rows on the ledger for that
+round (not hand-counted), and can
 --verify-auditability (every flag-ID appears in exactly one row of the round).
 
 Pure-stdlib. Subcommands:
@@ -38,10 +45,11 @@ import sys
 from pathlib import Path
 
 ADDRESS_KINDS = ("FIX", "STRENGTHEN", "USER-PAUSE", "would-FIX", "would-STRENGTHEN", "would-USER-PAUSE")
-# A data row: | Runtime | Round | Phase | Cluster | Root cause | Address | Flags |
+# A data row: | Runtime | Run | Phase | Cluster | Root cause | Address | Flags |  (publisher header word is "Run"; the regex below is label-agnostic)
 # Phase is OPTIONAL so 6-column pre-Phase back-compat rows still parse (per recovery-protocol.md
-# "Pre-Phase-column ledgers" — matching ledger_state.py / render_ledger.py, which also accept 6-col).
-# Group 3 (phase) is None on a 6-col row and defaults to TRACE in _round_rows.
+# "Pre-Phase-column ledgers" — matching render_ledger.py, which pads a 6-col row under a 7-col
+# header with the default Phase so it still renders). Group 3 (phase) is None on a 6-col row and
+# defaults to TRACE in _round_rows.
 ROW_RE = re.compile(r"^\|\s*([0-9T:\-]+)\s*\|\s*(\d+)\s*\|\s*(?:([A-Z0-9a-z\-]+)\s*\|\s*)?(C\d+)\s*\|(.*)\|(.*)\|(.*)\|\s*$")
 
 

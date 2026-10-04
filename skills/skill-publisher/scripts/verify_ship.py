@@ -97,7 +97,12 @@ def _changelog_entry(history_text: str | None, version: str) -> str | None:
     if not m:
         return None
     start = m.start()
-    nxt = re.search(rf"^{_VER_HEADING}\s+\S", text[m.end():], re.MULTILINE)
+    # Terminator: the NEXT version heading. `(?!#)` excludes a 4+-hash category
+    # heading (`#### Added`) — the job the old `\s+` did by requiring a space — while
+    # `\s*` now mirrors the start/presence matchers' spaceless tolerance above, so a
+    # `##[1.3.0]`-style heading the start side accepts also closes the prior entry
+    # (the start `\s*` / end `\s+` asymmetry previously let the entry over-run it).
+    nxt = re.search(rf"^{_VER_HEADING}(?!#)\s*\S", text[m.end():], re.MULTILINE)
     end = m.end() + nxt.start() if nxt else len(text)
     return text[start:end]
 

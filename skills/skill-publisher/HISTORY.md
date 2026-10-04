@@ -1,9 +1,19 @@
 ---
-version: "1.3.0"
+version: "2.0.0"
 category: B
-parent-version: "1.2.0"
+parent-version: "1.3.0"
 author:
   primary: "Vaikri-costume"
+  # Single self-referential "original" entry: the publisher's source-recording convention
+  # (references/github-pr-workflow.md) so the next ship knows where to PR. Not a fork chain.
+  history:
+    - role: "original"
+      name: "Vaikri-costume"
+      skill: "skill-publisher"
+      license: "MIT"
+      version: "1.0.0"
+      date: "2026-05-30"
+      source: "https://github.com/Vaikri-costume/skills"
 inspirations:
   - skill: "skill-tracer"
     by: "Vaikri-costume"
@@ -19,6 +29,32 @@ inspirations:
 # History — skill-publisher
 
 ## Changelog
+
+### 2.0.0 — 2026-10-04 (shipped)
+#### Added
+- Marketplace registration: new `scripts/marketplace_register.py`; `github_pr.py` now lists the skill in the upstream `.claude-plugin/marketplace.json` in the same commit as the skill copy (a skill already listed is left alone, a repo without a catalog is skipped). The orchestrator asks which plugin to join. Flags `--marketplace-plugin`, `--marketplace-new-plugin` + `--marketplace-description`, `--no-marketplace`; dry-run and result JSON report `marketplace.state`; new exit 7 when the choice is unresolved on a confirmed push. Documented in `references/github-pr-workflow.md` and the `### Marketplace` block of `assets/pr-template.md`.
+- Lifecycle modes: `--status [--repoint-tag]` (`scripts/ship_status.py`), `--rollback` (pre-ship snapshot restore, archive delete, PR close) and `--docs-only`, specified in `references/lifecycle.md`; plus the `--readiness` exit and the opt-in `--triggering-eval --eval-set` measured eval.
+- Skill-tracer audit fixes are a third changelog signal via `scripts/tracer_changelog_rows.py`; the bump is `max(agent_bump, ledger_bump, tracer_bump)`.
+- Cold README agent (`references/readme-agent-prompt.md`) regenerating `## Features & modes` and `## Structure` every ship.
+- `references/step-details.md` (SKILL.md detail moved out verbatim, plus an annotated file index) and a `LICENSE` file.
+- `attribution_lint`: `author.primary` is checked against the `gh`-authenticated login. A mismatch is blocking; a missing or unauthenticated `gh` is advisory only.
+#### Changed
+- SKILL.md trimmed from about 9,500 to about 6,200 words with no behavior change (deduplicated rules; Step 4, 6, 7, 8 and 10 detail moved to `references/step-details.md`).
+- README: install section now gives the marketplace add/install commands and a manual path (it wrongly said personal-tier/unpublished); gained Features & modes, Structure and the missing modes under How to invoke.
+- `package_skill.has_claude_extensions` uses all 7 canonical `portability_lint` patterns; `spdx_check` and `mcp_deps` delegate frontmatter parsing to `frontmatter_util`; `readiness_report` tolerates a quoted `source:` URL; `render_ledger`'s not-found message and `tracer_changelog_rows` use the XDG data path for the tracer ledger.
+- `cowork-compatibility.md` marks its table as the closed set of adaptation points.
+#### Removed
+- `scripts/check_vendored_sync.py`, a maintainer-only sync check used by no documented publisher step (grade-candidates and mine-sources carry their own copies). `check_shared_sync.py` and `sync_shared.py` remain.
+#### Fixed
+- `ship_status.check_catalog` mishandled the `v` in `<name>-v<ver>` refs and reported a current catalog as stale.
+- `verify_ship`'s changelog-entry terminator was asymmetric (`\s+` vs `\s*`) and over-ran into the next version block.
+- `github_pr.py`'s docstring, comment and `--diff-only` note (and SKILL.md's clone_dir note) wrongly said Step 9 reuses the diff clone; `gh pr create` now reuses an existing open PR on a resume instead of duplicating it.
+- `render_ledger` bucketed a blank Run cell into a phantom round 0, dropped 6-column pre-Phase rows and wrote `--output ~/x.html` to a literal `~` directory; `append_ledger`'s docstring now uses the "Run" label and no longer cites a non-existent `ledger_state.py`.
+- `spdx_check` and `mcp_deps` hand-rolled frontmatter scans that parsed a BOM/CRLF SKILL.md as empty.
+- `quick_validate` exited 1 on missing PyYAML, indistinguishable from invalid frontmatter; it now exits 3 (documented in Step 4 and `readiness-gates.md`).
+- `changelog-format.md` carried a stale 2-term bump formula; `readiness-gates.md` omitted the `link_check` unreadable → RED outcome; `glossary.md` described only one degraded-mode sub-path.
+- `recovery-protocol.md`: the no-marker inference was false on the degraded-skip path, and Rule B wrongly re-ran the cold audit in docs-only mode.
+- SKILL.md Step 10 documents both `verify_ship` exit-2 causes, branches on which run-summary comment form exists before editing, and stops without writing the manifest on a failed verification; Step 7 notes the tracer-ledger name-mismatch case; Step 1/2 wording ambiguities fixed; path placeholders are double-quoted (zsh word-splitting).
 
 ### 1.3.0 — 2026-06-22 (shipped)
 #### Added
