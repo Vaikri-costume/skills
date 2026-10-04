@@ -9,6 +9,8 @@ Reads <skill>/SKILL.md, checks:
 2. CCVW-mandatory directories (scripts/, references/, assets/)
 3. Tier-specific violations (Claude extensions blocked at model-agnostic;
    personal paths blocked at claude-users+)
+4. Advisory: a /tmp/ path referenced with no cleanup instruction anywhere in the
+   file (see lint_tmp_cleanup) — never blocks a tier, review-only.
 
 Emits structured JSON to stdout.
 
@@ -75,6 +77,24 @@ CLAUDE_CODE_SYSTEM_PATHS = [
 CCVW_MANDATORY_FRONTMATTER = ["license", "compatibility", "metadata", "allowed-tools"]
 CCVW_MANDATORY_DIRS = ["scripts", "references", "assets"]
 CCVW_METADATA_REQUIRED_KEYS = ["tier", "created", "created-by", "parent-version", "intended-audience"]
+
+# --- Tmp-cleanup advisory ---
+#
+# A skill that stages files under /tmp/ (scratchpad prompts, staged inputs,
+# intermediate artifacts) and never mentions cleaning them up will leak disk
+# space across every invocation, forever (found by hand in several existing
+# skills). This is a scaffold-
+# time REMINDER, not a hard rule: some /tmp/ uses are genuinely one-shot (read
+# back and discarded within the same step, or intentionally left for the next
+# session) and need no cleanup instruction. So it never contributes to
+# `would_fail_at_tiers` — flag it and let the author judge.
+TMP_PATH_PATTERN = re.compile(r"/tmp/")
+TMP_CLEANUP_EVIDENCE_PATTERNS = [
+    re.compile(r"\brm\s+-[a-zA-Z]*f", re.IGNORECASE),  # rm -f, rm -rf, rm -fr, rm -Rf
+    re.compile(r"clean\s?up", re.IGNORECASE),  # "cleanup"/"clean up" prose or a cleanup_*.py script call
+    re.compile(r"\bshutil\.rmtree\b"),
+    re.compile(r"\bos\.remove\b"),
+]
 
 # --- Personalization checks (absorbed from skill-tracer accessibility cats 15-16) ---
 #
@@ -462,6 +482,43 @@ def lint_personalization(body, body_start_line, tier, author=None):
     return violations
 
 
+def lint_tmp_cleanup(body, body_start_line):
+    """Return an advisory finding if /tmp/ is referenced with no cleanup evidence.
+
+    Fires once (at the first /tmp/ reference) when the body mentions a /tmp/ path
+    ANYWHERE but no cleanup evidence (rm -f/-rf, a cleanup script/function call,
+    or a "clean up" instruction) appears ANYWHERE in the body. Deliberately
+    file-wide rather than same-line: real cleanup instructions usually live at a
+    different point in the workflow (a terminal-state section) than the /tmp/
+    write they clean up after.
+
+    Advisory only — some /tmp/ uses are genuinely one-shot and need no cleanup,
+    so this never sets blocks_tier to a real tier and never fails the lint.
+    """
+    body_lines = body.split("\n")
+    first_tmp_line = None
+    for i, line in enumerate(body_lines):
+        if TMP_PATH_PATTERN.search(line):
+            first_tmp_line = i
+            break
+    if first_tmp_line is None:
+        return []
+
+    has_cleanup_evidence = any(
+        pattern.search(line) for line in body_lines for pattern in TMP_CLEANUP_EVIDENCE_PATTERNS
+    )
+    if has_cleanup_evidence:
+        return []
+
+    return [{
+        "line": body_start_line + first_tmp_line,
+        "type": "tmp-cleanup-advisory",
+        "message": "SKILL.md references a /tmp/ path but no cleanup instruction (rm -f/-rf, a cleanup script call, or a \"clean up\" step) was found anywhere in the file",
+        "suggested_fix": "If this is a scratch/intermediate artifact staged across steps, add explicit cleanup at the workflow's terminal-state path(s) (convergence, error/abort, handoff) — see skill-tracer's cleanup_tmp_prompts.py or grade-candidates' p2_cleanup_tmp.py for the pattern. Skip if this /tmp/ use is genuinely one-shot (read back and discarded within the same step).",
+        "blocks_tier": "none (advisory — review recommended, never blocks a tier)",
+    }]
+
+
 def compute_would_fail_at(violations, ccvw_missing):
     """Compute which tiers this skill would fail at given current violations."""
     would_fail = set()
@@ -522,6 +579,9 @@ def main():
             elif isinstance(a, str):
                 author = a
     violations += lint_personalization(body, body_start_line, declared_tier, author)
+    # Advisory, all tiers, never contributes to would_fail_at_tiers (blocks_tier
+    # deliberately doesn't match "all"/"model-agnostic"/"claude-users").
+    violations += lint_tmp_cleanup(body, body_start_line)
     would_fail = compute_would_fail_at(violations, ccvw_missing)
 
     result = {

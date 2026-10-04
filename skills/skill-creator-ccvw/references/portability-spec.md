@@ -1,6 +1,6 @@
 # CCVW Portability Specification
 
-Defines the three portability tiers, the agentskills.io base spec CCVW skills inherit, the Claude-extension blocklist for model-agnostic portability, the CCVW-mandatory fields (lifted above agentskills.io's optional baseline), and the path-mapping rules per tier. This is the source of truth for `portability_lint.py` — run by skill-creator-ccvw at scaffold/tier-transition and by skill-publisher's Step 4 tier-transition checks at ship time. (Pre-refactor this was skill-tracer's Step 9 portability audit; it moved to the publisher when the tracer slimmed to correctness-only.)
+Defines the three portability tiers, the agentskills.io base spec CCVW skills inherit, the Claude-extension blocklist for model-agnostic portability, the CCVW-mandatory fields (lifted above agentskills.io's optional baseline), and the path-mapping rules per tier. This is the source of truth for `portability_lint.py` — run by skill-creator-ccvw at scaffold/tier-transition and by skill-publisher's tier-transition checks at ship time.
 
 ---
 
@@ -10,7 +10,7 @@ CCVW skills declare their tier in `metadata.tier` in frontmatter. Three tiers in
 
 | Tier | Use case | Allowed | Disallowed | Default for |
 |---|---|---|---|---|
-| **`personal`** | User-specific iteration; OK to bake in personal paths, MCP servers, hardcoded CCVW conventions | All Claude extensions; CCVW conventions; hardcoded `~/.claude/...` paths; productivity:* MCP integrations; assumed local environment | Nothing additional | Skills during iteration; default flag for new builds |
+| **`personal`** | User-specific iteration; OK to bake in personal paths, MCP servers, hardcoded CCVW conventions | All Claude extensions; CCVW conventions; hardcoded `~/.claude/...` paths; productivity:* MCP integrations; assumed local environment | Nothing additional | Skills during iteration (an explicit opt-in — new builds default to `claude-users`) |
 | **`claude-users`** | Skills shared with friends/family/coworkers on their own Claude Code installs | All Claude extensions; tier-portable paths (e.g. `$XDG_DATA_HOME/...`); CCVW conventions where they don't depend on personal MCP | Hardcoded `~/.claude/...` user-specific paths; productivity:* MCP without graceful-degradation fallback; assumed-installed personal skills | Skills marked ready-to-share |
 | **`model-agnostic`** | Skills portable to Gemini CLI, Cursor, OpenCode, any agentskills.io-compatible runtime | Only agentskills.io base spec; pure-stdlib scripts; runtime-provided storage API | All Claude extensions (see blocklist below); claude-users-tier-allowed hardcoded paths; any Claude-Code-specific tool name | Skills explicitly tagged for model-agnostic publication |
 

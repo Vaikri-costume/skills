@@ -58,7 +58,7 @@ Every CCVW skill ships with all three directories. `.gitkeep` placeholders are O
 
 ## Required reference files
 
-- **`references/glossary.md`** — every CCVW skill ships a glossary. Scaffolded from `~/.claude/skills/skill-creator-ccvw/references/glossary-template.md`. Inherits the CCVW shared vocabulary from `~/.claude/skills/skill-creator-ccvw/references/ccvw-glossary.md` (cluster, FIX, STRENGTHEN, in-flight marker, Round, Phase, ledger, cold-trace, tier, etc.) and adds skill-specific terms. When skill-tracer later audits this skill, its Step 3 reads this glossary first instead of deriving terms cold — keeps definitions stable across rounds.
+- **`references/glossary.md`** — every CCVW skill ships a glossary. Scaffolded from `~/.claude/skills/skill-creator-ccvw/references/glossary-template.md`. Inherits the CCVW shared vocabulary from `~/.claude/skills/skill-creator-ccvw/references/ccvw-glossary.md` (cluster, FIX, STRENGTHEN, in-flight marker, Round, Phase, ledger, cold-trace, tier, etc.) and adds skill-specific terms. When skill-tracer later audits this skill, its glossary derivation reads this glossary first instead of deriving terms cold — keeps definitions stable across rounds.
 
 ---
 
