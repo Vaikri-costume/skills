@@ -31,27 +31,16 @@ import re
 import sys
 from pathlib import Path
 
+from frontmatter_util import block as _fm_block, field as _fm_field
+
 # mcp__<server>__<tool> — server and tool segments are [a-z0-9_]+ (underscores allowed).
 MCP_CALL_RE = re.compile(r"\bmcp__([a-z0-9_]+)__[a-z0-9_]+\b", re.IGNORECASE)
 
-
-def frontmatter_block(text: str) -> str:
-    if not text.startswith("---\n"):
-        return ""
-    end = text.find("\n---\n", 4)
-    return text[4:end] if end >= 0 else ""
-
-
-def metadata_mcp_server(fm: str) -> str | None:
-    # Matches any `mcp-server:` line at any indentation level — covers both a flat
-    # top-level `mcp-server: value` and the conventional nested form
-    # `metadata:\n  mcp-server: value`. Does NOT validate nesting depth; any
-    # `mcp-server:` key anywhere in the frontmatter is treated as the declaration.
-    for line in fm.split("\n"):
-        m = re.match(r"^\s*mcp-server\s*:\s*(.*)$", line)
-        if m:
-            return m.group(1).strip().strip('"').strip("'") or None
-    return None
+# Frontmatter block scan + scalar-field read delegate to frontmatter_util (the single
+# home; tolerates BOM/CRLF/trailing-newline) — the hand-rolled copies that used to live
+# here lacked that tolerance, so a BOM/CRLF SKILL.md read empty here while the importing
+# gates saw it. `mcp-server` is matched at any indentation by field()'s `^\s*<key>:` form
+# (covering both a flat `mcp-server:` and the nested `metadata:\n  mcp-server:`).
 
 
 def main() -> int:
@@ -66,14 +55,14 @@ def main() -> int:
     skill_root = skill_md.parent
 
     text = skill_md.read_text(encoding="utf-8")
-    fm = frontmatter_block(text)
+    fm = _fm_block(text)
 
     # Servers called anywhere in SKILL.md (frontmatter included — a documented
     # allowed-tools or mcp-server entry with an mcp__*__* pattern is counted;
     # this is intentional since both frontmatter and body are part of the calling contract).
     called = sorted(set(m.group(1).lower() for m in MCP_CALL_RE.finditer(text)))
 
-    mcp_server_val = metadata_mcp_server(fm)
+    mcp_server_val = _fm_field(fm, "mcp-server")
     readme = skill_root / "README.md"
     readme_text = readme.read_text(encoding="utf-8").lower() if readme.is_file() else ""
 

@@ -5,6 +5,8 @@ Pure-stdlib (subprocess + argparse + json). Wraps git + the `gh` CLI to:
   1. clone/worktree the upstream repo into a temp dir (never touch the live skill's git)
   2. branch ship/<name>-v<version>
   3. copy the polished skill into the repo at the right path
+  3b. register it in the repo's .claude-plugin/marketplace.json (same commit; see
+      marketplace_register.py) so `claude plugins install` can actually offer it
   4. commit + push
   5. gh pr create with a structured body
   6. tag the ship commit <name>-v<version> + push it (best-effort, idempotent)
@@ -15,7 +17,13 @@ does everything except push + PR-create.
 
 Usage:
     python3 github_pr.py <skill-path> --upstream <repo-url> --repo-path <path-in-repo> \
-        --version <new-version> --body-file <pr-body.md> [--dry-run] [--confirmed]
+        --version <new-version> --body-file <pr-body.md> [--dry-run] [--confirmed] \
+        [--marketplace-plugin NAME | --marketplace-new-plugin NAME --marketplace-description TEXT | --no-marketplace]
+
+Exit codes: 1 gh not authenticated; 2 clone/checkout/commit failure; 3 push failed;
+4 gh pr create failed; 5 body-file unreadable; 6 git/gh not on PATH; 7 marketplace
+choice missing or invalid (the catalog exists, the skill is not listed, and no
+--marketplace-* flag resolved it; dry-run reports `needs_choice` instead of failing).
 
 This script intentionally does the mechanical git/gh steps; the orchestrator
 (SKILL.md Step 9) owns the decision-making (which upstream, confirmation, etc.).
@@ -70,6 +78,14 @@ def main():
     parser.add_argument("--diff-only", action="store_true",
                         help="Clone the upstream into a stable temp dir and emit the published skill path "
                              "for Step 7a's changelog diff — no branch, no push, no PR")
+    mk = parser.add_mutually_exclusive_group()
+    mk.add_argument("--marketplace-plugin", metavar="NAME",
+                    help="Register the skill in this EXISTING plugin's skills[] in .claude-plugin/marketplace.json")
+    mk.add_argument("--marketplace-new-plugin", metavar="NAME",
+                    help="Register the skill as a NEW plugin entry (requires --marketplace-description)")
+    mk.add_argument("--no-marketplace", action="store_true",
+                    help="Do not touch marketplace.json (explicit opt-out)")
+    parser.add_argument("--marketplace-description", help="Description for --marketplace-new-plugin")
     parser.add_argument("--dry-run", action="store_true", help="Do everything except push + PR-create")
     parser.add_argument("--confirmed", action="store_true", help="User confirmed the push (orchestrator sets this after showing the diff)")
     args = parser.parse_args()
@@ -78,8 +94,10 @@ def main():
     name = skill_path.name
 
     # --diff-only: read-only clone for the Step-7a changelog diff. No gh auth (a
-    # public clone needs none), no branch, no push. Clones to a STABLE named dir so
-    # Step 9 can reuse it and the orchestrator can clean it up by a known path.
+    # public clone needs none), no branch, no push. Clones to a STABLE named dir so the
+    # orchestrator can clean it up by a known path at Step 10 (the non-diff-only PR path
+    # below makes its OWN TemporaryDirectory clone — it does not reuse this one — so this
+    # dir's only reclaimers are Step 10's cleanup and the next --diff-only run's rmtree).
     if args.diff_only:
         clone_root = Path(tempfile.gettempdir()) / f"skill-publisher-diffclone-{name}"
         if clone_root.exists():
@@ -111,12 +129,14 @@ def main():
             "diff_only": True,
             "clone_dir": str(clone_root),
             "published_path": str(published_path),
-            "note": "clone left in place for diff_published.py + Step 9 reuse; remove clone_dir when done",
+            "note": "clone left in place for diff_published.py to read; the orchestrator removes it at Step 10 by its known path. The Step-9 PR flow makes its OWN clone — it does not reuse this one.",
         }, indent=2))
         sys.exit(0)
 
     if not args.version or not args.body_file:
         parser.error("--version and --body-file are required unless --diff-only is given")
+    if args.marketplace_new_plugin and not args.marketplace_description:
+        parser.error("--marketplace-new-plugin requires --marketplace-description")
     branch = f"ship/{name}-v{args.version}"
 
     # gh auth check
@@ -160,6 +180,33 @@ def main():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(f, target)
 
+        # Marketplace registration — same commit as the skill copy. Without it the skill
+        # is in the repo but `claude plugins install` cannot offer it.
+        import marketplace_register as mreg
+        mk_plan = mreg.plan(clone_dir, args.repo_path)
+        marketplace = dict(mk_plan)
+        if mk_plan["state"] == "error":
+            print(json.dumps({"error": f"marketplace: {mk_plan['detail']}"}), file=sys.stderr)
+            sys.exit(7)
+        if mk_plan["state"] == "needs_choice":
+            if args.no_marketplace:
+                marketplace["state"] = "skipped"
+            elif args.marketplace_plugin or args.marketplace_new_plugin:
+                try:
+                    marketplace = mreg.apply(clone_dir, args.repo_path,
+                                             plugin=args.marketplace_plugin,
+                                             new_plugin=args.marketplace_new_plugin,
+                                             description=args.marketplace_description)
+                except ValueError as e:
+                    print(json.dumps({"error": f"marketplace: {e}"}), file=sys.stderr)
+                    sys.exit(7)
+            elif not (args.dry_run or not args.confirmed):
+                # A real push with the choice unresolved would publish an uninstallable skill.
+                print(json.dumps({"error": "marketplace: skill is not listed in .claude-plugin/marketplace.json and no "
+                                           "--marketplace-plugin / --marketplace-new-plugin / --no-marketplace was given",
+                                  "existing_plugins": mk_plan["existing_plugins"]}), file=sys.stderr)
+                sys.exit(7)
+
         try:
             run(["git", "add", "-A"], cwd=clone_dir)
             commit_msg = f"Ship {name} v{args.version}"
@@ -176,6 +223,7 @@ def main():
                 "upstream": args.upstream,
                 "repo_path": args.repo_path,
                 "commit_message": commit_msg,
+                "marketplace": marketplace,
                 "diff_stat": diff,
                 "note": "Re-run with --confirmed to push + open the PR." if not args.dry_run else "Dry run complete. Re-run with --confirmed and WITHOUT --dry-run to push + open the PR.",
             }, indent=2))
@@ -198,14 +246,29 @@ def main():
         # would risk mis-targeting — the shallow clone's checked-out HEAD can differ
         # from the repo's current default if the default was changed upstream — so we
         # defer to gh's own default-branch resolution rather than re-deriving it.
-        rc, pr_out, pr_err = run(
-            ["gh", "pr", "create", "--title", f"Ship {name} v{args.version}",
-             "--body", body, "--head", branch],
+        # Idempotent against the exit-5 / recovery-Rule-D re-run: if an open PR for
+        # this head branch already exists (a prior attempt pushed + created before
+        # crashing), reuse it instead of calling `gh pr create` again — which would
+        # error on the duplicate. Mirrors the tag block's skip-if-exists guard, so the
+        # script is self-safe and does not depend solely on the orchestrator's external
+        # `gh pr list` check before re-invoking.
+        rc_chk, existing, _ = run(
+            ["gh", "pr", "list", "--head", branch, "--state", "open",
+             "--json", "url", "--jq", ".[0].url // empty"],
             cwd=clone_dir, check=False,
         )
-        if rc != 0:
-            print(json.dumps({"error": f"gh pr create failed: {pr_err}"}), file=sys.stderr)
-            sys.exit(4)
+        existing = existing.strip() if rc_chk == 0 else ""
+        if existing:
+            pr_out, pr_err = existing, ""
+        else:
+            rc, pr_out, pr_err = run(
+                ["gh", "pr", "create", "--title", f"Ship {name} v{args.version}",
+                 "--body", body, "--head", branch],
+                cwd=clone_dir, check=False,
+            )
+            if rc != 0:
+                print(json.dumps({"error": f"gh pr create failed: {pr_err}"}), file=sys.stderr)
+                sys.exit(4)
 
         # gh prints the PR URL, but it may ALSO print advisory lines that are URLs
         # (e.g. "A new release of gh is available: https://github.com/cli/cli/...").
@@ -225,7 +288,8 @@ def main():
         # the ship commit; valid for merge-commit upstreams (the commit is preserved on
         # the default branch) — see github-pr-workflow.md's squash/rebase caveat.
         tag = f"{name}-v{args.version}"
-        result = {"pr_url": pr_url, "branch": branch, "version": args.version, "tag": tag}
+        result = {"pr_url": pr_url, "branch": branch, "version": args.version, "tag": tag,
+                  "marketplace": marketplace}
         rc, _, _ = run(["git", "rev-parse", "-q", "--verify", f"refs/tags/{tag}"], cwd=clone_dir, check=False)
         if rc == 0:
             result["tag_warning"] = f"tag {tag} already exists; left as-is"
