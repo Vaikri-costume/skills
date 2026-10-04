@@ -16,7 +16,8 @@
       "skills": [
         "./skills/skill-creator-ccvw",
         "./skills/skill-tracer",
-        "./skills/skill-publisher"
+        "./skills/skill-publisher",
+        "./skills/markdown-graph-manager"
       ]
     }
   ]
