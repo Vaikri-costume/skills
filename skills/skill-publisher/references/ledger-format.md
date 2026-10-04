@@ -57,7 +57,7 @@ audit-references:: skill-creator-ccvw@<date-or-missing>, skill-creator@<date-or-
 
 - **Runtime** — ISO-8601 UTC when the ship run started, `YYYY-MM-DDTHH:MM`.
 - **Run** — cumulative-per-skill ship-run number. First ship is Run 1; every subsequent ship increments.
-- **Phase** — POLISH / AUDIT / TIER / PACKAGE / PR per above. (These five are the closed publisher-valid set. The vendored `append_ledger.py`'s `--phase` *also* accepts skill-tracer's current phases `TRACE`/`REVIEW` and the legacy historical phases `SIMPLIFY`/`PORT-AUDIT` (still read-tolerated) because the script is byte-vendored for sync parity — the publisher never writes those; only the five above are legal in a publisher ledger.)
+- **Phase** — POLISH / AUDIT / TIER / PACKAGE / PR per above. (These five are the closed publisher-valid set. The publisher's `append_ledger.py`'s `--phase` *also* accepts skill-tracer's current phases `TRACE`/`REVIEW` and the legacy historical phases `SIMPLIFY`/`PORT-AUDIT` (still read-tolerated) — a holdover from when the script was shared with skill-tracer — the publisher never writes those; only the five above are legal in a publisher ledger. As of the 2026-06-20 shared-script sync contract retirement (HISTORY.md 1.2.0), `append_ledger.py` is skill-publisher's own independent copy, free to diverge from skill-tracer's, with no live sync mechanism.)
 - **Cluster** — `C<n>`, restarts at 1 within each Run.
 - **Root cause** — one-line description of the finding.
 - **Address** — FIX / STRENGTHEN / USER-PAUSE per `ship-checklist.md`.
@@ -75,7 +75,7 @@ Note: `close-round` hardcodes `Round` in the label (skill-tracer's column name) 
 
 ## Rendering
 
-The ledger is rendered to HTML via `render_ledger.py` (SKILL.md Step 10), the shared renderer byte-vendored from skill-tracer.
+The ledger is rendered to HTML via `render_ledger.py` (SKILL.md Step 10) — historically shared with skill-tracer, but since the 2026-06-20 shared-script sync contract retirement (HISTORY.md 1.2.0) it is skill-publisher's own independent copy, free to diverge, with no live sync mechanism.
 
 Invocation:
 ```bash
