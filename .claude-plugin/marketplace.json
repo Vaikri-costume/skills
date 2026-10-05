@@ -20,7 +20,8 @@
         "./skills/markdown-graph-manager",
         "./skills/marketplace-discover",
         "./skills/review-writing",
-        "./skills/ai-detection-check"
+        "./skills/ai-detection-check",
+        "./skills/proofread"
       ]
     }
   ]
