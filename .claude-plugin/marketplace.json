@@ -19,7 +19,8 @@
         "./skills/skill-publisher",
         "./skills/markdown-graph-manager",
         "./skills/marketplace-discover",
-        "./skills/review-writing"
+        "./skills/review-writing",
+        "./skills/ai-detection-check"
       ]
     }
   ]
