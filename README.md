@@ -24,6 +24,7 @@ _More skills I build for my workflows will land here._ (Each gets its own row + 
 | [**marketplace-discover**](skills/marketplace-discover/) | Searches the live Claude Code marketplace catalog for an existing plugin or skill that fits your need, so you can install instead of building. |
 | [**review-writing**](skills/review-writing/) | Reviews a draft's argument, clarity, evidence and voice as feed up, feed back and feed forward, so you know what to revise first. |
 | [**ai-detection-check**](skills/ai-detection-check/) | Flags AI-typical patterns, over-smooth texture and citation problems in a draft, and what evidence of your own process you can show; descriptive, never a verdict on authorship. |
+| [**proofread**](skills/proofread/) | Proofreads a draft in strict British English (grammar, typos, -ise spelling, consistency, register) and keeps a project vocabulary file across runs. |
 
 ## Requirements
 - Claude Code 2.0+ (or Cowork). Skills here are `claude-users` tier unless a skill's own README says otherwise.
