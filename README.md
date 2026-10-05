@@ -25,6 +25,7 @@ _More skills I build for my workflows will land here._ (Each gets its own row + 
 | [**review-writing**](skills/review-writing/) | Reviews a draft's argument, clarity, evidence and voice as feed up, feed back and feed forward, so you know what to revise first. |
 | [**ai-detection-check**](skills/ai-detection-check/) | Flags AI-typical patterns, over-smooth texture and citation problems in a draft, and what evidence of your own process you can show; descriptive, never a verdict on authorship. |
 | [**proofread**](skills/proofread/) | Proofreads a draft in strict British English (grammar, typos, -ise spelling, consistency, register) and keeps a project vocabulary file across runs. |
+| [**plagiarism-check**](skills/plagiarism-check/) | Checks a draft for overlap with its sources, close paraphrase and citation integrity before submission, using SOAS's public policy as a UK higher-education worked example. |
 
 ## Requirements
 - Claude Code 2.0+ (or Cowork). Skills here are `claude-users` tier unless a skill's own README says otherwise.
