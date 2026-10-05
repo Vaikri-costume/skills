@@ -21,6 +21,7 @@ _More skills I build for my workflows will land here._ (Each gets its own row + 
 | Skill | What it does |
 |---|---|
 | [**markdown-graph-manager**](skills/markdown-graph-manager/) | Keeps a dual-format Logseq/Obsidian markdown graph healthy: audits it against a schema, applies only mechanically-safe fixes, and creates or edits pages with the format contract enforced up front. |
+| [**marketplace-discover**](skills/marketplace-discover/) | Searches the live Claude Code marketplace catalog for an existing plugin or skill that fits your need, so you can install instead of building. |
 
 ## Requirements
 - Claude Code 2.0+ (or Cowork). Skills here are `claude-users` tier unless a skill's own README says otherwise.
