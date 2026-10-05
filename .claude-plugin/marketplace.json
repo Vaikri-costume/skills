@@ -21,7 +21,8 @@
         "./skills/marketplace-discover",
         "./skills/review-writing",
         "./skills/ai-detection-check",
-        "./skills/proofread"
+        "./skills/proofread",
+        "./skills/plagiarism-check"
       ]
     }
   ]
