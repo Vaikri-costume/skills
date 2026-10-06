@@ -2,71 +2,166 @@
 
 ## What this skill does
 
-Finds bugs and inconsistencies in any skill by reading it cold from three independent directions — forward (does each claim match reality?), backward (does each producer's output have a documented consumer?), and executor (can the executor act on each line without guessing?). Three agents read the target in parallel, blind to each other, then the orchestrator collects their findings, applies considered fixes that preserve the skill's intent, and re-dispatches cold until all three come back clean.
+Finds bugs and verifies correctness in any target skill, codebase, or directory by running a
+**2-tier cascade** each round: prepass (deterministic detectors for mechanical defects) →
+code-review (two cold reviewer agents applying five lenses). From round 3 of a run the review covers
+only the files the previous fixes touched; a clean review there is followed by a confirming full
+sweep. Convergence is reached when, in one round, prepass finds nothing and a full-sweep review
+raises nothing. The skill loops rounds automatically until convergence (or a requested round budget
+or the round cap is reached).
 
-On the **first round of a brand-new skill** (and of a re-trace of a skill that changed since it last converged), skill-tracer first runs one full-depth local pass of the sibling `code-review` skill (`/code-review max`, no issue cap) over the **whole skill** (every file's full contents, not a diff) — as the first phase of round 1. Its findings route through the same considered-fix gate and are recorded in the ledger; then the cold trace runs in the second phase of the same round. At convergence it suggests a final `/code-review` pass over the finished skill.
+Concrete use cases:
 
-It's the **trace** phase of the build → trace → ship ecosystem: **build** (skill-creator-ccvw) → **trace** (this skill) → **ship** (skill-publisher).
+- **Post-build audit** — trigger: "trace skill X" after building or editing a skill → steps:
+  prepass sweeps for broken refs and dead code, two cold reviewers check
+  fidelity/executor-clarity/logic/integrity/design → result: all bugs
+  clustered, fixed, and recorded in a ledger; converged skill ready to ship.
+
+- **Pre-ship verification** — trigger: "is skill X clean?" before running skill-publisher →
+  steps: one or more cascade rounds → result: zero-flags convergence confirmation, or a list of
+  findings blocking ship.
+
+- **Single bounded round** — trigger: "/skill-tracer skill X --rounds 1" → steps: one cascade
+  round with its fixes applied → result: a ledger of that round's findings and fixes, reported as
+  "stopped by budget-exhausted, not verified clean" unless the round converged.
 
 ## Intent
 
-This skill prioritizes **finding real bugs over breadth of concern**. It does ONE thing — correctness — and deliberately doesn't do quality polish, portability checks, CCVW compliance audits, or attribution validation. Those belong to the builder (quality) and the publisher (ship-readiness). Conflating them into the tracer (as earlier versions did) diluted the bug-finding and made every trace round carry concerns that weren't correctness.
+This skill exists to find bugs and verify correctness — not to polish, not to check portability,
+not to audit CCVW compliance. Those concerns belong to other phases (skill-publisher for ship
+readiness; skill-creator-ccvw for build quality). Conflating them into the tracer dilutes the
+bug-finding signal and was deliberately removed in design.
 
-The **cold-trace invariant** is load-bearing: each agent dispatch is independent, sees no sibling findings, no fix history, no "what changed" preamble. This is the adversarial-verify pattern — independent agents committing to claims before reconciliation. A change that lets agents see each other's findings, or feeds them the orchestrator's intent, breaks the independence the whole design depends on and must be rejected. (The orchestrator alone reads the target's README Intent — the cold agents never do.)
+**What the cascade optimizes for:**
 
-It optimizes for **considered fixes over fast fixes**: between rounds the orchestrator weighs each finding against the target skill's documented intent, and a fix that would trade away stated intent is surfaced as a USER-PAUSE rather than applied automatically.
+- **Determinism + cold adversarial independence over speed and token cost.** Every cold agent
+  (the code-reviewers) is dispatched with `subagent_type: Explore` so it has no Edit or
+  Write tools — structural enforcement, not a prompt-only prohibition. Each agent sees the target
+  cold: no sibling findings, no fix history, no "what changed" preamble. This independence is the
+  adversarial-verify property — agents commit to findings before reconciliation. Any change that
+  lets agents share context before reporting breaks the design's foundational guarantee and must
+  be rejected, even if it would speed up a round.
+
+- **Exhaustive per-round coverage over partial sweeps.** Convergence is keyed on whether cold
+  agents surface flags, not on fix counts. A fix tally can mis-format or be incomplete;
+  flags-surfaced is the robust signal. "A clean code-review IS convergence" is a load-bearing
+  identity: you can only reach the code-review tier after a clean prepass in the same round, so a
+  clean full-sweep code-review means both tiers verified clean in one round. A clean
+  changed-files review never counts. A change that keys convergence on fix counts, or that allows
+  skipping tiers, violates this.
+
+- **Considered fixes over fast fixes.** Before applying any fix, the orchestrator weighs the
+  finding against the target's documented `## Intent`. A fix that would trade away a stated design
+  goal is an ORCHESTRATOR-PAUSE, not an auto-fix. The orchestrator resolves ORCHESTRATOR-PAUSEs
+  from the README by default; it promotes to USER-PAUSE only when the intent is not derivable from
+  the target's files. Promoting to USER-PAUSE to avoid making a derivable call is the lazy-pause
+  anti-pattern and is forbidden.
+
+**Deliberate trade-offs:**
+
+- Rounds are more expensive than a single-pass analysis because they re-sweep from prepass after
+  every code-review fix. This is intentional: any fix can introduce new mechanical defects, and
+  re-verifying from the front is the only way to guarantee the cascade invariant holds at convergence.
+
+- The FORBIDDEN-PAUSE rule prohibits offering to stop early for "diminishing returns", "tail issues",
+  or token cost. The cascade either converges, exhausts its budget, or hits a genuine USER-PAUSE —
+  no other stop is legitimate.
+
+- Code-review always dispatches two generalist Sonnet agents (findings unioned before clustering),
+  each applying all five lenses in one pass: two reviewers overlapped on only 8% of flags in the
+  October 2026 self-run, so the second roughly doubles the finds for the cost of one more agent.
+
+- From round 3 of a run the review reads only the files the previous fixes touched, because later
+  rounds of the October 2026 self-run mostly re-reviewed unchanged files. A clean changed-files
+  review always triggers a full confirming sweep, so convergence still means a whole-target pass.
+
+- The interface is frozen from round 1 of a run: a fix adds no flag, mode, subcommand, file, ledger field, run-options
+  key, row kind, shared helper module or doc section unless that is the only way to fix a real behaviour
+  bug (otherwise it becomes an ORCHESTRATOR-PAUSE), and a wrong comment over correct behaviour is
+  fixed in the comment, not the code. In the October 2026 runs, machinery added by earlier fixes
+  drew a large share of the later flags.
+
+- A round of 12 clusters or fewer goes to one fixer; only a larger round is split into batches of
+  at most 12, one fixer per batch, run one after another (never in parallel: batches may edit the
+  same files). A batch that touches a script or detector (`.py`) uses Opus; an all-doc batch uses
+  Sonnet. Splitting a small round into a code and a doc fixer about doubled fixer tokens with no
+  quality gain. Sonnet showed regressions on 17+ mixed clusters, so a change that enlarges batches
+  or puts code clusters on Sonnet to save cost accepts that risk.
+- A fixer adds no new behaviour (no new retry, cap, branch or exit path, no removed fallback): it
+  makes the doc match the code or the code match its documented contract, or pauses.
+
+- Before a fixer's decisions are recorded, `check_decisions.py` checks them (empty address, wrong
+  kind prefix, banned dismissal vocabulary, missing cluster) and the same fixer re-emits on any
+  problem; the fixer prompt lists those rules at its top.
+
+**The four invariants** are the non-negotiable core: cold-read (agents always see the target
+cold), considered-fix (every fix weighed against intent), no-orphan-flag (every finding gets
+FIX / STRENGTHEN / ORCHESTRATOR-PAUSE — no finding is silently dropped), and WHY-strengthening
+(when a finding flags a missing rationale for an intentional design decision, the fix is to add
+the WHY, not remove the rule).
 
 ## When to use / When NOT to use
 
 **Use when:**
-- A skill was just built or edited and you want to find its bugs ("trace skill X", "is X clean?")
-- You want a structured correctness audit of any skill (not just CCVW skills)
-- Before shipping — run trace, then `/skill-publisher`
+- A skill was just built or edited and you want to find its bugs before shipping.
+- You want a structured correctness audit of any CCVW skill or arbitrary codebase directory.
+- You are about to run skill-publisher and want to confirm the target is clean first.
 
 **Don't use when:**
-- You want to polish prose, check portability, or audit CCVW compliance → that's `/skill-publisher` (ship phase)
-- You're still building/iterating → `/skill-creator-ccvw`
-- The skill is mid-feature-development → defer to feature-dev first (trace assumes structural completeness)
+- You want prose polish, portability checks, or CCVW compliance auditing → use `/skill-publisher`
+  (ship phase) for those.
+- The skill is still mid-feature-development and structurally incomplete → defer to
+  `/skill-creator-ccvw` and finish building first; the cascade assumes a runnable target.
+- You are inside a nested Agent call — skill-tracer requires the `Agent` tool, which is only
+  available in the top-level Claude session. Attempting to invoke it as a subagent will fail;
+  the skill detects this and stops immediately with an explanation.
 
 ## How to install
 
-`claude-users` tier — a meta-skill (it operates on other skills), shareable to anyone running Claude Code or Cowork.
-
-- **Claude Code / Cowork (marketplace):** install from the `Vaikri-costume/skills` marketplace, then invoke `/skill-tracer`. (See that repo's README for the exact `claude plugins` command for your setup.)
-- **Manual:** copy this folder to `~/.claude/skills/skill-tracer/`.
-- **Claude.ai web:** zip the skill folder and upload via **Settings → Capabilities → Skills**.
+Copy the `skill-tracer/` folder to `~/.claude/skills/skill-tracer/` and confirm
+`SKILL.md` is present. No external services or network access required.
 
 ## How to invoke
 
-- Slash command: `/skill-tracer <skill-name>` or `/skill-tracer <absolute-path>`
-- Natural language: "trace skill X", "audit X for issues", "check skill X", "is skill X clean", "review skill X", "validate skill X"
-- Modes: `--one-round` (diagnostic snapshot), `--verify-only` (report would-be fixes, apply none), `--audit-fixes` (check whether ledger-recorded fixes since the last convergence actually landed — read-only)
+- Slash command: `/skill-tracer <skill-name-or-absolute-path>`
+- Natural language: "trace skill X", "audit X for bugs", "check X for issues", "verify skill X",
+  "run the cascade on X", "is skill X clean?"
+- Flags: `--rounds N` (run at most N rounds, stopping earlier at convergence; `--rounds 1` for a
+  single round)
 
 Example:
 ```
-"/skill-tracer my-pdf-summarizer"
-→ 3 cold agents (forward/backward/executor) read it independently → orchestrator clusters findings
-→ applies intent-preserving fixes → re-dispatches cold → converges when all 3 return clean
-→ suggests /skill-publisher to ship
+/skill-tracer drive-organizer
+
+→ Round 1:
+    Tier 1 (prepass): sweeps for broken refs, dead code, lint — clusters and blast-fixes until clean.
+    Tier 2 (code-review): dispatches 2 cold Sonnet generalists on the all-lens prompt →
+      unions findings → orchestrator clusters → one fixer (batches of ≤12, one at a time, above 12)
+      (Opus for code, Sonnet for docs), each checked by check_decisions.py.
+→ If code-review has flags: fixes applied, round closes, re-enters at prepass for round 2.
+→ From round 3: code-review reads only the changed files; if that is clean, a full sweep confirms.
+→ If a full-sweep code-review is clean: converged. Skill is clean.
+→ At convergence: "Converged after N round(s). Zero flags surfaced in the final full sweep."
+   Audit ledger at $XDG_DATA_HOME/skill-tracer-audit-ledger/drive-organizer.md
+   (default: ~/.local/share/skill-tracer-audit-ledger/drive-organizer.md)
+   Suggested next step: /skill-publisher drive-organizer
 ```
 
-## Quick start
+## Known limits
 
-1. **Point it at a skill:** `/skill-tracer <skill-name>` (or an absolute path). No setup — it reads the skill cold.
-2. **Round 1 (new/updated skills):** it first runs a full-depth `/code-review` pass over the whole skill, then dispatches the three cold trace agents (forward, backward, executor).
-3. **Review mid-run (optional):** each round it surfaces clustered findings and the fixes it's applying; an intent-ambiguous fix is paused for your decision (USER-PAUSE). You don't have to intervene — it converges on its own.
-4. **Convergence:** the loop repeats until all three directions return clean in one cold round; the audit ledger (HTML) opens with every finding mapped to its fix.
-5. **Then ship:** it suggests `/code-review max <skill>` once more, then `/skill-publisher <skill>`.
-- **Other things you can do:** `/skill-tracer <skill> --one-round` for a one-shot diagnostic snapshot; `--verify-only` to preview fixes without applying; `--audit-fixes` to check that past fixes actually landed. Full reference: [`SKILL.md`](SKILL.md).
+v3.6 did not converge in its own self-run (it stalled after round 4 and a final sweep still found 2 flags). Its two cold reviewers vary between runs, so a clean round is weaker evidence than it looks, and the block-reread gate trusts the fixer's `Blocks:` line rather than verifying the re-read. Treat a converged run as strong but not conclusive. Details: the 3.6.0 entry in HISTORY.md.
 
 ## Sibling skills
 
-- `code-review` — full-depth local/cloud code review. skill-tracer **invokes** it at round 1 of a new (or updated-since-convergence) skill — `/code-review max`, full local depth, no issue cap — and routes the findings through its considered-fix gate into the ledger (`REVIEW`-phase rows, `CR*` flags). After convergence it suggests running `/code-review` once more on the finished artifact.
-- `skill-creator-ccvw` — the **build** phase. Scaffolds the skill; suggests trace at iterate-end.
-- `skill-publisher` — the **ship** phase. Polishes + tier-checks + PRs. The CCVW audit + simplify pass that used to live in tracer moved there.
-- `deep-research`, `pr-review-toolkit` — adversarial-verify lineage (see HISTORY.md inspirations).
-- `ralph-loop` — the inline-loop shape Step 7 specializes.
+- `skill-creator-ccvw` — the **build** phase; scaffolds a skill from intent-capture through
+  SKILL.md authoring. Use before tracing: build → trace → ship.
+- `skill-publisher` — the **ship** phase; polishes the README, runs the CCVW audit + simplify
+  pass, checks portability and attribution, bumps version, opens a PR. Run after the tracer
+  converges.
 
 ## For developers
 
-The runtime workflow lives in [`SKILL.md`](SKILL.md). Provenance and changelog live in [`HISTORY.md`](HISTORY.md). To trace this skill for bugs: `/skill-tracer skill-tracer`.
+The runtime workflow (cascade stages, script contracts, ledger format, recovery protocol) lives
+in [`SKILL.md`](SKILL.md). Provenance and changelog live in [`HISTORY.md`](HISTORY.md). To trace
+this skill for bugs: `/skill-tracer skill-tracer`. To ship a new version:
+`/skill-publisher skill-tracer`.

@@ -1,20 +1,35 @@
 #!/usr/bin/env python3
 """Render a skill-tracer audit ledger as one-page HTML.
 
+STANDALONE, config-driven: this renderer is NOT a consumer of ledger_common.py
+(see that module's docstring) — it keeps its own column-name-based parser, its
+own DEFAULT_VALID_ACTIONS / DEFAULT_PHASE_COLORS, and its own regression-tag
+regex, all overridable via --config. That independence is what lets one script
+shape serve both skill-tracer's "Round" ledger and skill-publisher's "Run"
+ledger — skill-publisher vendors its own copy of this file
+(scripts/render_ledger.py there) and passes its own --config
+{POLISH,AUDIT,TIER,PACKAGE,PR} phase map + run-* actions at call time. The
+former shared-script sync contract between the two copies was RETIRED
+(2026-06-20, HISTORY.md 2.4.1): they are free to diverge and are no longer
+kept byte-for-byte identical.
+
 Pure-stdlib (argparse, collections, html, json, os, pathlib, re, subprocess, sys — no third-party dependencies). Reads
-~/.claude/skill-tracer-audit-ledger/<skill>.md and writes HTML to a file
-(default: the ledger path with its `.md` suffix REPLACED by `.html` — e.g.
-`skill-tracer.md` → `skill-tracer.html`, not `…md.html`; or to --output path).
-Prints "Wrote HTML to <path>" to stdout on success.
+the ledger path given as its positional argument and writes HTML to a file
+(default: the ledger path with its suffix replaced by .html, e.g. foo.md -> foo.html; or to
+--output path). Prints "Wrote HTML to
+<path>" to stdout on success.
 
 The rendered page shows:
 - Round-on-round cluster count (visual line chart, ASCII-art style for portability;
   the chart counts one row per cluster, not raw flags; HTML heading: "Round-on-round cluster count")
 - Cluster fan-out (one row per cluster with flag IDs visualized as chips)
-- Regression trace (clusters whose Root cause is marked `regression`,
+- Regression trace (clusters whose Address names a regression as `regression of round <N> <C-id>`,
   highlighted in red with a [regression] text badge)
-- Phase swimlane (TRACE / REVIEW / SIMPLIFY — each phase a configured color) — Phase
-  column visualized as a colored band on each row
+- Phase swimlane (phase set depends on the ledger — TRACE/REVIEW/CODE-REVIEW/PREPASS
+  plus the CASCADE tier tags Prepass/Code Review for skill-tracer, and for legacy compatibility the
+  removed 3.0 tier's tag (Minor Bugs) so old ledgers still render;
+  POLISH/AUDIT/TIER/PACKAGE/PR for skill-publisher via --config) — Phase column
+  visualized as colored band on each row
 
 Usage:
     python3 render_ledger.py <ledger-path> [--output <html-path>] [--open]
@@ -35,33 +50,44 @@ from pathlib import Path
 
 
 # --- Per-skill config (defaults = skill-tracer; override via --config <json>) ---
-# This renderer is SHARED between skill-tracer and skill-publisher. The only real
-# differences are the phase-color map, the regression-tag patterns, the closed set
-# of valid in-flight action keywords, and the round/run column word — all of which
-# are configurable below. The parse/chart/HTML LOGIC is identical, so the file is
-# vendored byte-for-byte to skill-publisher with only the DEFAULT_* values overridden
-# at call time via --config (see skill-publisher's ledger-render config). Auto-detection
-# of the "Round" vs "Run" column word means most callers don't even need --config for it.
-# CAVEAT (review-finding 7): only that config is data-driven — user-facing PROSE (docstring, the
-# not-found error message) stays tracer-branded, so the vendored publisher copy ships
-# tracer-worded help/errors. That is cosmetic (the rendered ledger HTML is correct), not
-# a behavioral divergence; "shared + config-driven" covers behavior, not help text.
+# This renderer's SHAPE is shared with skill-publisher's independent copy. The only
+# real differences are the phase-color map, the regression-tag patterns, the closed
+# set of valid in-flight action keywords, and the round/run column word — all of
+# which are configurable below. Everything else (table parse, chart, HTML) is the
+# same, so each skill keeps its OWN independent copy of this renderer (skill-tracer +
+# skill-publisher, free to diverge — no sync) and overrides only the DEFAULT_*
+# values at call time via --config (see skill-publisher's ledger-render
+# config). Auto-detection of the "Round" vs "Run" column word means most callers
+# don't even need --config for the column.
 
-# skill-tracer phases: TRACE (cold-trace clusters) and REVIEW (round-1 code-review pass,
-# SKILL.md Step 2.5). TRACE must stay FIRST — a phaseless back-compat row defaults to
-# next(iter(PHASE_COLORS)) (see parse_ledger). Publisher passes its own
-# {POLISH,AUDIT,TIER,PACKAGE,PR} map via --config.
+# skill-tracer's phase vocabulary (mirrors ledger_common.KNOWN_PHASES): the legacy
+# direct phases plus the CASCADE tier tags. Each gets its own swimlane color.
 DEFAULT_PHASE_COLORS = {
     "TRACE": "#e6f3ff",
-    "REVIEW": "#fff0e6",
-    "SIMPLIFY": "#eef7e6",
+    "REVIEW": "#e6ffe9",
+    "CODE-REVIEW": "#fff0e6",
+    "PREPASS": "#f3e6ff",
+    "PREPASS ": "#f3e6ff",
+    "Prepass": "#f3e6ff",
+    # Legacy compatibility: the removed 3.0 tier's rows in old ledgers.
+    "Minor Bugs": "#fff9e6",
+    "Code Review": "#fff0e6",
 }
-# Root-cause regression markers (checked against the Root cause column ONLY — per
-# address-decision.md the orchestrator prefixes a regression cluster's Root cause
-# with `regression:`; checking Address would false-positive on incidental mentions).
-DEFAULT_REGRESSION_PATTERNS = [r"\bregression\b"]
-# Closed set of valid in-flight action keywords for marker validation.
-DEFAULT_VALID_ACTIONS = ["dispatch", "addressing", "handoff"]
+# Regression markers, checked against the Address column ONLY. The Root cause cell is script-generated
+# and never carries a marker; per references/how-to-fix.md "Regression vs cascade" the fixer names a
+# regression in its FIX address with the exact phrase `regression of round <N> <C-id>` (the prior
+# cluster it regresses), so the pattern requires that phrase and an incidental "regression" does not match.
+DEFAULT_REGRESSION_PATTERNS = [r"\bregression of round \d+ C\d+\b"]
+REGRESSION_COLUMN = "Address"
+# Closed set of valid in-flight action keywords for marker validation: ledger_common.VALID_ACTIONS plus
+# the legacy `addressing-MinorBugs` action, which this renderer still accepts on old ledgers (this file
+# keeps its own copy by design, see above).
+DEFAULT_VALID_ACTIONS = [
+    "dispatch", "reviewing", "addressing", "handoff",
+    "converged",  # terminal `in-flight:: <timestamp> converged round-<N>` (3 fields, written by close-round --converged)
+    "addressing-Prepass", "addressing-CodeReview",
+    "addressing-MinorBugs",  # legacy compatibility: a 3.0-and-earlier marker action
+]
 
 # Active config — replaced by --config at runtime (see main()).
 PHASE_COLORS = dict(DEFAULT_PHASE_COLORS)
@@ -96,19 +122,17 @@ def parse_ledger(text):
             result["title"] = line[2:].strip()
             continue
 
-        # In-flight marker — parse and validate action keyword against the closed list
+        # In-flight marker — parse and validate action keyword against the closed list.
+        # Tolerates both the legacy 3-field grammar (<runtime> <action> round-N) and the
+        # newer 4-field grammar (<runtime> <phase> <state> round-N) — this display-only
+        # renderer does not enforce the 4-field state vocabulary, it only flags an
+        # unrecognized *action* token when the line parses as the legacy 3-field shape.
         m = re.match(r"^in-flight::\s*(.*)$", line)
         if m:
             raw = m.group(1).strip()
             result["in_flight"] = raw
-            # Validate: format is `<Runtime> <action> round-N|run-N` with action in closed list.
             parts = raw.split()
-            if len(parts) < 2:
-                # review-finding 15: a truncated marker (e.g. just a runtime, no action) must NOT render as
-                # valid — ledger_state.py reports action_valid:false for it, so the HTML audit
-                # view should flag it too rather than show it clean.
-                result["in_flight"] = f"{raw}  ⚠ INCOMPLETE MARKER (expected '<Runtime> <action> round-N')"
-            elif parts[1] not in VALID_ACTIONS:
+            if len(parts) == 3 and parts[1] not in VALID_ACTIONS:
                 result["in_flight"] = f"{raw}  ⚠ INVALID ACTION '{parts[1]}' (valid: {sorted(VALID_ACTIONS)})"
             continue
 
@@ -136,33 +160,27 @@ def parse_ledger(text):
         # Data row
         if in_table and line.startswith("|") and line.endswith("|"):
             cells = [c.strip() for c in line.strip("|").split("|")]
-            # 6-col pre-Phase back-compat row under a 7-col header: insert the default Phase so this
-            # renderer accepts it exactly as ledger_common.parse_row does (Phase optional → default),
-            # rather than dropping it on a strict column-count mismatch. Keeps the renderer's accepted
-            # row set aligned with ledger_state.py / append_ledger.py on a mid-migration ledger.
-            if "Phase" in column_names and len(cells) == len(column_names) - 1:
-                cells.insert(column_names.index("Phase"), next(iter(PHASE_COLORS), "TRACE"))
             if len(cells) != len(column_names):
-                # Skip malformed rows; could be content with embedded |
-                continue
+                # Tolerate a pre-Phase 6-col row under a 7-col (Phase-bearing) header:
+                # insert the default Phase at the Phase position so old rows still render
+                # (matches append_ledger's ROW_RE, whose Phase group is optional, so a
+                # back-compat row append_ledger writes is not dropped here). Any other
+                # length mismatch is a genuinely malformed row (e.g. content with an
+                # embedded |) and is skipped.
+                if "Phase" in column_names and len(cells) == len(column_names) - 1:
+                    cells.insert(column_names.index("Phase"), "TRACE")
+                else:
+                    continue
             row = dict(zip(column_names, cells))
             # Normalize the round/run column into a canonical "_round" key so the
             # rest of the renderer is column-word-agnostic (tracer "Round" / publisher "Run").
             row["_round"] = row.get("Round", row.get("Run", ""))
-            # Require a REAL data row — a `C<n>` Cluster cell and an integer round — so the
-            # renderer's acceptance set matches ledger_state.py / append_ledger.py (which require
-            # `C\d+`). A non-`C` cluster or a blank/non-numeric round is a malformed or hand-edited
-            # line; counting it would invent a phantom round (e.g. a blank round → round 0) and make
-            # the rendered cluster count disagree with the auditability/clean-signal parsers.
-            if not re.match(r"^C\d+$", row.get("Cluster", "")) or not str(row["_round"]).strip().isdigit():
-                continue
-            # Normalize: add Phase if column absent (pre-migration ledgers). Default to
-            # the first configured phase (TRACE for tracer; first of publisher's set).
+            # Normalize: add Phase if column absent (pre-migration ledgers). Default to TRACE.
             if "Phase" not in row:
-                row["Phase"] = next(iter(PHASE_COLORS), "TRACE")
+                row["Phase"] = "TRACE"
             # Detect regression
             row["_is_regression"] = any(
-                p.search(row.get("Root cause", ""))
+                p.search(row.get(REGRESSION_COLUMN, ""))
                 for p in REGRESSION_PATTERNS
             )
             result["rows"].append(row)
@@ -193,13 +211,10 @@ def ascii_line_chart(per_round_counts):
         threshold = max_count * h / height
         row = ""
         for c in counts:
-            row += "█  " if c >= threshold else "   "
+            row += "█ " if c >= threshold else "  "
         lines.append(f"{int(threshold):4d} | {row}")
-    lines.append("     +" + "-" * (len(counts) * 3 + 1))
-    # review-finding 3: 3-char columns + left-aligned round numbers (no "R" prefix) so multi-digit rounds
-    # (R>=10, exactly when the 10-round gate fires) stay aligned under their bars and don't run
-    # together ("R10R11"). The 7-space lead matches the "{:4d} | " bar-row prefix width.
-    lines.append("       " + "".join(f"{r:<3}" for r in rounds))
+    lines.append("     +" + "-" * (len(counts) * 2 + 1))
+    lines.append("     " + "".join(f"R{r} " if r < 10 else f"R{r}" for r in rounds))
     return "\n".join(lines)
 
 
@@ -215,10 +230,14 @@ def render_html(ledger, ledger_path, round_label="Round"):
     # Per-round counts
     per_round = defaultdict(int)
     for row in ledger["rows"]:
-        try:
-            per_round[int(row.get("_round") or 0)] += 1
-        except ValueError:
-            pass
+        # Skip a blank/non-numeric Round cell rather than bucketing it: `int("" or 0)`
+        # would silently fold blank-Round rows into a phantom round 0 (rendered "R0"),
+        # while a value like "1a" would hit ValueError and vanish — two different wrong
+        # states. A row with no real round number simply isn't charted.
+        rr = (row.get("_round") or "").strip()
+        if not rr.isdigit():
+            continue
+        per_round[int(rr)] += 1
 
     chart = html.escape(ascii_line_chart(per_round))
 
@@ -247,9 +266,10 @@ def render_html(ledger, ledger_path, round_label="Round"):
             f'<span class="chip">{html.escape(f.strip())}</span>'
             for f in flags.split(",") if f.strip()
         )
+        phase_css = re.sub(r"[^a-z0-9]+", "-", phase.lower()).strip("-")
 
         rows_html += f"""
-        <tr class="phase-{phase.lower()}{regression_class}">
+        <tr class="phase-{phase_css}{regression_class}">
             <td>{runtime}</td>
             <td>{round_num}</td>
             <td class="phase-cell" style="background:{color}">{html.escape(phase)}</td>
@@ -293,7 +313,7 @@ th {{ background: #eee; position: sticky; top: 0; }}
 .regression-badge {{ font-size: 0.75em; color: #a00; font-weight: normal; margin-left: 0.4em; }}
 .chip {{ display: inline-block; padding: 0.1em 0.5em; background: #e0e8f0; border-radius: 10px; font-size: 0.8em; font-family: monospace; margin: 0.1em; }}
 .alert {{ background: #fff3cd; border: 1px solid #ffd970; padding: 1em; border-radius: 6px; margin-top: 1em; }}
-.legend {{ display: flex; gap: 1em; margin: 1em 0; font-size: 0.9em; }}
+.legend {{ display: flex; gap: 1em; margin: 1em 0; font-size: 0.9em; flex-wrap: wrap; }}
 .legend-item {{ display: flex; align-items: center; gap: 0.5em; }}
 .legend-color {{ width: 1.5em; height: 1em; border: 1px solid #999; }}
 </style>
@@ -360,7 +380,10 @@ def open_in_browser(path):
             os.startfile(str(path))
         return True
     except Exception as e:
-        print(f"(could not open in browser: {e})\nTo view the HTML, open the file manually: navigate to the path printed to stdout.", file=sys.stderr)
+        # Include the exception TYPE name, not just str(e) — a bare str(e) can be empty
+        # or uninformative for some exception classes (e.g. a bare FileNotFoundError()
+        # str()s to ""), which makes this diagnostic silently useless without the type name.
+        print(f"(could not open in browser: {type(e).__name__}: {e})\nTo view the HTML, open the file manually: navigate to the path printed to stdout.", file=sys.stderr)
         return False
 
 
@@ -368,7 +391,7 @@ def main():
     global PHASE_COLORS, REGRESSION_PATTERNS, VALID_ACTIONS
     parser = argparse.ArgumentParser(description="Render a skill-tracer/skill-publisher audit ledger as HTML")
     parser.add_argument("ledger_path", help="Path to the markdown ledger file")
-    parser.add_argument("--output", default=None, help="Output HTML path (default: <ledger>.html)")
+    parser.add_argument("--output", default=None, help="Output HTML path (default: the ledger path with its suffix replaced by .html)")
     parser.add_argument("--open", action="store_true", help="Open the resulting HTML in default browser")
     parser.add_argument("--config", default=None,
                         help="JSON (inline or @path) overriding {phase_colors, regression_patterns, "
@@ -385,7 +408,7 @@ def main():
             if not cfgp.is_file():
                 print(f"Error: --config file not found: {cfgp}", file=sys.stderr)
                 sys.exit(2)
-            raw = cfgp.read_text()
+            raw = cfgp.read_text(encoding="utf-8")
         try:
             cfg = json.loads(raw)
         except json.JSONDecodeError as e:
@@ -402,13 +425,13 @@ def main():
 
     ledger_path = Path(args.ledger_path).expanduser()
     if not ledger_path.is_file():
-        print(f"Error: ledger not found at {ledger_path}\nThe ledger is written by a run; check the path and ensure at least one round has completed.", file=sys.stderr)
+        print(f"Error: ledger not found at {ledger_path}\nLedgers are written to ~/.local/share/skill-tracer-audit-ledger/<skill-name>.md (tracer) or the equivalent skill-publisher-ledger path (publisher) by a run.\nCheck the skill name and ensure at least one round has completed.", file=sys.stderr)
         sys.exit(1)
 
     try:
         text = ledger_path.read_text(encoding="utf-8")
     except OSError as e:
-        print(f"Error: failed to read ledger at {ledger_path}: {e}", file=sys.stderr)
+        print(f"Error: failed to read ledger at {ledger_path}: {type(e).__name__}: {e}", file=sys.stderr)
         sys.exit(2)
 
     # Auto-detect the round-column word from the header if not given.
@@ -419,8 +442,9 @@ def main():
         ledger = parse_ledger(text)
         html_output = render_html(ledger, ledger_path, round_label=round_label)
     except Exception as e:
-        # Include the exception type so a programming bug (KeyError/AttributeError/…) is
-        # distinguishable from a genuinely malformed ledger, rather than masked as "parse/render".
+        # As in open_in_browser above: a broad except must name the exception class,
+        # not just its (possibly empty) str(), for the diagnostic to actually be
+        # diagnostic.
         print(f"Error: failed to parse/render ledger {ledger_path}: {type(e).__name__}: {e}", file=sys.stderr)
         sys.exit(3)
 
@@ -428,7 +452,7 @@ def main():
     try:
         output_path.write_text(html_output, encoding="utf-8")
     except OSError as e:
-        print(f"Error: failed to write HTML to {output_path}: {e}\nCheck output directory permissions and disk space.", file=sys.stderr)
+        print(f"Error: failed to write HTML to {output_path}: {type(e).__name__}: {e}\nCheck output directory permissions and disk space.", file=sys.stderr)
         sys.exit(4)
     print(f"Wrote HTML to {output_path}")
 
