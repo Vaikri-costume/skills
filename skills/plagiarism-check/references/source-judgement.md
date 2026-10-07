@@ -4,7 +4,7 @@ Delivered to the single judgement agent for ONE source. You judge; scripts have 
 
 You receive: the draft, the paragraph map, this source's text (a Logseq source page's quoted passages, or the full text of the source), the overlap matches for this source (`overlap.json`, authoritative: do not recompute), and the essay type.
 
-SOAS vocabulary (REG-183-10 §2.3 to 2.5, see `soas-categories.md`): label every finding with a SOAS category and a weight. You are flagging for the writer's review. You cannot know intent; a marker decides misconduct.
+UK university misconduct vocabulary (see `misconduct-categories.md`): label every finding with a category and a weight. You are flagging for the writer's review. You cannot know intent; a marker decides misconduct.
 
 ---
 
@@ -40,7 +40,7 @@ Compare passages of this source with the draft's corresponding passages. Flag a 
 2. words are swapped for synonyms but the sequence of ideas is identical;
 3. the passage sits in the same argumentative position as in the source.
 
-This is SOAS's "close paraphrasing by changing a few words or altering the order of presentation" (§2.3(b)). Retain when only the key claim or term is borrowed and the sentence is the writer's own construction, or the claim's position, direction or logical relationship has been changed. For each: show source and draft passages side by side and say which conditions hold. Where the cause looks like unfamiliarity with the source (patchwriting), say so; the remedy is re-reading and rewriting from understanding, not swapping synonyms.
+This is the usual "close paraphrasing by changing a few words or altering the order of presentation". Retain when only the key claim or term is borrowed and the sentence is the writer's own construction, or the claim's position, direction or logical relationship has been changed. For each: show source and draft passages side by side and say which conditions hold. Where the cause looks like unfamiliarity with the source (patchwriting), say so; the remedy is re-reading and rewriting from understanding, not swapping synonyms.
 
 ---
 
@@ -52,7 +52,7 @@ Location: paragraph [n] — "[opening words of the passage]"
 Current text: "[exact verbatim quote from draft]"
 Check: [1 / 2 / 3 / 5]
 Source passage: "[relevant passage from this source's text — never from the writer's annotations]"
-SOAS category: [verbatim without reference / close paraphrase / unacknowledged quotation or paraphrase / citation practice]
+Category: [verbatim without reference / close paraphrase / unacknowledged quotation or paraphrase / citation practice]
 Weight: [poor-academic-practice / minor / major]
 Severity: RED / YELLOW / GREEN
 Explanation: [one sentence]

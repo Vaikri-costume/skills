@@ -29,7 +29,7 @@ Rewrite on the research refresh.
 - Voice and texture: never flags formal prose; baseline departures are context only. Authorship-consistency view moved here from plagiarism-check.
 - SKILL.md from 512 lines to 53; mechanics in the shared protocol; persistence as in the other skills.
 #### Added
-- `authenticity-evidence.md` (dated policy context: Jisc, SOAS REG-183-10, Turnitin guidance, studies), the no-evasion rule, an "Evidence you can show" checklist, citation and quotation integrity via shared scripts.
+- `authenticity-evidence.md` (dated policy context: Jisc, a UK university misconduct procedure, Turnitin guidance, studies), the no-evasion rule, an "Evidence you can show" checklist, citation and quotation integrity via shared scripts.
 ### 1.0.0 (pre-rewrite) — 2026-05-14
 Layer A: `compute_metrics.py` (TTR direction, sample variance, abbreviation-aware splitter, hedge false-positive filters), `find_ai_patterns.py` (Pattern 5, 8, 13 fixes, curly quotes), `subagent_type` Explore changed to general-purpose. Pending then, now closed: persistence redesign, line discipline (482 lines), 12-step architecture (replaced by the protocol), trimming `base.md` duplication (partly: patterns kept in `base.md`, hedging in `agent-quant.md`), `mkdir -p` ordering. Still open: `evals/` content was not touched and may reference the old behaviour.
 

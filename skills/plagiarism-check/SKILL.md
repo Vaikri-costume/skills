@@ -1,6 +1,6 @@
 ---
 name: plagiarism-check
-description: "Check a draft essay for plagiarism risk before submission: unmarked verbatim overlap with sources, close paraphrase (patchwriting), summary instead of synthesis, unattributed frameworks, self-plagiarism against earlier submissions, and citation integrity (quotations missing from the source, uncited reference-list entries, unmatched citations). Handles author-date, footnote, Logseq markdown and plain Markdown drafts. Categories follow SOAS University of London's public misconduct policy as a worked UK higher-education example; adapt category names and thresholds to your own institution. Use when the user asks to check for plagiarism, originality, or whether the draft is too close to its sources, or before submitting a research essay. Modes: citation-check (cited sources) and full-scan (all project sources). Do NOT use for grammar/spelling (use proofread), argument feedback (use review-writing) or AI-style review (use ai-detection-check)."
+description: "Check a draft essay for plagiarism risk before submission: unmarked verbatim overlap with sources, close paraphrase (patchwriting), summary instead of synthesis, unattributed frameworks, self-plagiarism against earlier submissions, and citation integrity (quotations missing from the source, uncited reference-list entries, unmatched citations). Handles author-date, footnote, Logseq markdown and plain Markdown drafts. Categories follow common UK university misconduct procedures; adapt category names and thresholds to your own institution. Use when the user asks to check for plagiarism, originality, or whether the draft is too close to its sources, or before submitting a research essay. Modes: citation-check (cited sources) and full-scan (all project sources). Do NOT use for grammar/spelling (use proofread), argument feedback (use review-writing) or AI-style review (use ai-detection-check)."
 license: MIT
 compatibility: Claude Code 2.0 or newer, Python 3
 metadata:
@@ -25,7 +25,7 @@ allowed-tools:
 
 # plagiarism-check
 
-Scripts find; one read-only agent per source judges; one challenger verifies against the texts; one agent presents. Shared mechanics are in `${CLAUDE_SKILL_DIR}/references/dispatch-protocol.md` (read it at the start of a run). Vocabulary and limits: `references/soas-categories.md`. The categories follow SOAS's public misconduct policy as a worked UK higher-education example; adapt the category names and thresholds to the user's own institution.
+Scripts find; one read-only agent per source judges; one challenger verifies against the texts; one agent presents. Shared mechanics are in `${CLAUDE_SKILL_DIR}/references/dispatch-protocol.md` (read it at the start of a run). Vocabulary and limits: `references/misconduct-categories.md`. The categories follow common UK university misconduct procedures; adapt the category names and thresholds to the user's own institution.
 
 Voice comparison against the writer's past work is not part of this skill (it is an authorship question; see ai-detection-check). Quote-integration and floating-quote checks live in review-writing.
 
@@ -57,7 +57,7 @@ Voice comparison against the writer's past work is not part of this skill (it is
 
 User: "Check this essay for plagiarism before I submit" (draft path given).
 Actions: citation-check mode, `detect_sources.py`, Zotero lookup for unresolved works, the three scripts, one agent per source, challenger, presentation agent.
-Result: a report with flags by category and weight (SOAS example terms), a citation-integrity checklist, and a limits statement.
+Result: a report with flags by category and weight (typical UK terms), a citation-integrity checklist, and a limits statement.
 
 ## Troubleshooting
 
@@ -69,4 +69,4 @@ Result: a report with flags by category and weight (SOAS example terms), a citat
 
 ## Files
 
-`references/`: `source-judgement.md`, `source-judgement-research.md`, `source-judgement-personal.md`, `soas-categories.md`, `field-name-standard.md`, `challenger-synthesis-rules.md`, `presentation-format.md`, `glossary.md`. `scripts/`: `overlap_check.py`, `tests/`. Shared: `${CLAUDE_SKILL_DIR}/scripts/shared/` (`citation_audit.py`, `quote_verify.py`, `detect_sources.py`, paragraph and location scripts, `synthesise_verdicts.py`), `${CLAUDE_SKILL_DIR}/references/dispatch-protocol.md`.
+`references/`: `source-judgement.md`, `source-judgement-research.md`, `source-judgement-personal.md`, `misconduct-categories.md`, `field-name-standard.md`, `challenger-synthesis-rules.md`, `presentation-format.md`, `glossary.md`. `scripts/`: `overlap_check.py`, `tests/`. Shared: `${CLAUDE_SKILL_DIR}/scripts/shared/` (`citation_audit.py`, `quote_verify.py`, `detect_sources.py`, paragraph and location scripts, `synthesise_verdicts.py`), `${CLAUDE_SKILL_DIR}/references/dispatch-protocol.md`.

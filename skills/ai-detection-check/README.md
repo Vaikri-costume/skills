@@ -9,7 +9,7 @@ Reviews a draft for AI-typical language, over-smooth texture, hedging calibratio
 
 ## Intent
 
-Detectors are unreliable, easy to evade and biased against formal and second-language writing, so this skill is a revision aid, not a detector: no scores, no RED/YELLOW/GREEN on metrics (no published thresholds exist), no claim about authorship, no advice on evasion. The machine-checkable SOAS §2.8 indicators (non-existent quotations, uncited bibliography entries, repeated introductions) are checked by scripts. Pattern lists are perishable and dated.
+Detectors are unreliable, easy to evade and biased against formal and second-language writing, so this skill is a revision aid, not a detector: no scores, no RED/YELLOW/GREEN on metrics (no published thresholds exist), no claim about authorship, no advice on evasion. The machine-checkable indicators from typical UK misconduct procedures (non-existent quotations, uncited bibliography entries, repeated introductions) are checked by scripts. Pattern lists are perishable and dated.
 
 ## When to use / When NOT to use
 

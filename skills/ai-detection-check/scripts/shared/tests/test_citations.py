@@ -21,7 +21,7 @@ Smith claimed "an invented sentence that appears nowhere" (Hughes and Smith 2005
 
 Bohlman, Philip V. 1988. The study of folk music. Bloomington: Indiana University Press.
 
-Jones, Michael. 2002. Referencing systems at SOAS. Fake Journal 23 (2): 34-9.
+Jones, Michael. 2002. Referencing systems at a university. Fake Journal 23 (2): 34-9.
 
 Hughes, Anna, and Smith, Tom. 2005. Referencing is boring. London: Press.
 

@@ -2,14 +2,14 @@
 
 ## What this skill does
 
-Checks a draft for plagiarism risk before submission and reports in SOAS misconduct-procedure terms (SOAS's public policy is a worked UK higher-education example; adapt category names and thresholds to your own institution's policy): unmarked verbatim overlap with sources, close paraphrase, summary instead of synthesis, unattributed frameworks, self-plagiarism, and citation integrity.
+Checks a draft for plagiarism risk before submission and reports in UK university misconduct-procedure terms (adapt category names and thresholds to your own institution's policy): unmarked verbatim overlap with sources, close paraphrase, summary instead of synthesis, unattributed frameworks, self-plagiarism, and citation integrity.
 
-- **Citation check** — trigger: "check for plagiarism" → steps: find cited works, overlap script, citation and quote audits, one judgement agent per source, challenger, report → result: flags by SOAS category and weight, plus a citation-integrity checklist.
-- **Self-plagiarism check** — trigger: supply earlier submissions → steps: overlap against those files → result: reuse percentage and locations (SOAS §2.6).
+- **Citation check** — trigger: "check for plagiarism" → steps: find cited works, overlap script, citation and quote audits, one judgement agent per source, challenger, report → result: flags by category and weight, plus a citation-integrity checklist.
+- **Self-plagiarism check** — trigger: supply earlier submissions → steps: overlap against those files → result: reuse percentage and locations (self-plagiarism).
 
 ## Intent
 
-Categories and weights follow SOAS University of London's public misconduct policy as a worked UK higher-education example; adapt the category names and thresholds to your own institution's policy. Scripts find, agents judge, a challenger verifies against the texts. It reports flags, not accusations, and says every time what it cannot do: it compares only the sources it is given and cannot replace the Turnitin similarity report. Overlap thresholds (6 words verbatim, 4 to 5 weak) are heuristics because SOAS and QAA publish none. Voice comparison with the writer's past work was removed (an authorship question) and quote-integration moved to review-writing.
+Categories and weights follow common UK university misconduct procedures; adapt the category names and thresholds to your own institution's policy. Scripts find, agents judge, a challenger verifies against the texts. It reports flags, not accusations, and says every time what it cannot do: it compares only the sources it is given and cannot replace the Turnitin similarity report. Overlap thresholds (6 words verbatim, 4 to 5 weak) are heuristics because institutions and QAA publish none. Voice comparison with the writer's past work was removed (an authorship question) and quote-integration moved to review-writing.
 
 ## When to use / When NOT to use
 

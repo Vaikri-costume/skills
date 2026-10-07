@@ -3,7 +3,7 @@
 citelib.py — citation parsing shared by citation_audit.py, quote_verify.py,
 detect_sources.py and build_citation_map.py.
 
-Supported in-text forms (SOAS lists Harvard author-date and footnotes as the two
+Supported in-text forms (UK university guides list Harvard author-date and footnotes as the two
 main systems; Logseq/Obsidian drafts also use links):
   harvard    (Jones 2002)  (Jones 2002:34)  (Jones 2002, p. 34)  (Hughes and Smith 2005)
              (Gardner et al. 2007)  (Jones 2002; Hughes and Smith 2005)  (Simons 1980; cited in James 1990:67)
