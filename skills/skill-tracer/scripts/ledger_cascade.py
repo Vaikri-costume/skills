@@ -487,7 +487,7 @@ def _fill_address(args, ledger: Path) -> int:
     malformed_addr = [
         {"cluster": d.get("cluster", ""), "address": d.get("address", "")}
         for d in decisions
-        if d.get("decision", "FIX").upper() != "ORCHESTRATOR-PAUSE"
+        if str(d.get("decision", "FIX")).strip().upper() != "ORCHESTRATOR-PAUSE"
         and not lc.address_kind_ok(d.get("address", ""))
     ]
     if malformed_addr:
@@ -508,7 +508,7 @@ def _fill_address(args, ledger: Path) -> int:
     # ------------------------------------------------------------------
     fix_decisions = [
         d for d in decisions
-        if d.get("decision", "FIX").upper() == "FIX"
+        if str(d.get("decision", "FIX")).strip().upper() == "FIX"
     ]
     if fix_decisions:
         rc = _closure_failure(args, fix_decisions)
@@ -522,21 +522,15 @@ def _fill_address(args, ledger: Path) -> int:
     for dec in decisions:
         c_id    = dec.get("cluster", "")
         address = dec.get("address", "")
-        decision_kind = dec.get("decision", "FIX").upper()
+        decision_kind = str(dec.get("decision", "FIX")).strip().upper()
 
         if decision_kind == "ORCHESTRATOR-PAUSE":
             has_orch_pause = True
 
-        # Validate address (ORCHESTRATOR-PAUSE gets ORCHESTRATOR-PAUSE form)
-        if decision_kind == "ORCHESTRATOR-PAUSE":
-            if not lc.address_kind_ok(address):
-                address = f"ORCHESTRATOR-PAUSE ({address or c_id})"
-        else:
-            if not lc.address_kind_ok(address):
-                print(
-                    f"WARN: address for {c_id} is not a valid ADDRESS_KIND: {address!r}",
-                    file=sys.stderr,
-                )
+        # A bare-question pause address is wrapped as ORCHESTRATOR-PAUSE (<question>); every other
+        # address already passed the canonical-kind pre-validation above.
+        if decision_kind == "ORCHESTRATOR-PAUSE" and not lc.address_kind_ok(address):
+            address = f"ORCHESTRATOR-PAUSE ({address or c_id})"
 
         # Safety: strip forbidden chars
         address = address.replace("|", "/").replace("\n", " ").replace("\r", " ")

@@ -7,22 +7,31 @@ orchestrator's cluster assignment (cr-clusters-<N>.json), enforces two gates, th
 pass writes PENDING ledger rows, advances the marker, and stages the fixer prompt.
 
 Gates:
-  Gate 1 — no-drop:        every verified flag appears in exactly one orchestrator cluster.
+  Gate 1 — no-drop:        every verified flag appears in exactly one orchestrator
+                            cluster, and no cluster names a flag id the collector did not verify.
+                            Each cluster also needs a distinct non-empty "cluster" id and a
+                            non-empty "flags" list.
   Gate 2 — no-split-blast: no advisory blast group (computed from verified flags) is split
                             across multiple orchestrator clusters.
 
+Exit codes:
+  1  A gate failed, --verified-flags is not a "verified-flags" status JSON, or staging / the
+     ledger_cascade cluster call failed: JSON to stderr, a gate object ({"gate", "message", ...})
+     or {"error": ...} (the ledger_cascade failure adds "stderr").
+  2  Invocation error: --target is not a directory, or --verified-flags / --clusters is missing,
+     not valid JSON, or not a JSON object or array: {"error": ...} to stderr.
 On gate failure: print JSON to stderr naming the violation, exit 1.
 On gate pass:
   - Renumber the orchestrator's clusters to CONTINUE the round's C-sequence (ids are placeholders in
     cr-clusters-<N>.json; earlier phases of the round already hold C1..Ck) and report the mapping.
-  - Build clusters+blast payload (radius = member locs ∪ advisory token sites; preserve
+  - Build clusters+blast payload (radius = member locs ∪ advisory group sites; preserve
     any `guidance` key from the orchestrator cluster).
+  - Stage the fixer batches (lc.stage_fixer_batches, label "code-review-b<k>"): 12 clusters or
+    fewer are one batch; only above 12 are the code clusters and the doc-only clusters each
+    chunked separately into batches of at most 12, code batches first. Model opus when the pass has more than 15 clusters,
+    sonnet otherwise; one staged prompt per batch. Staging runs before any ledger write.
   - Call `ledger_cascade --mode cluster --phase "Code Review"` to write PENDING rows.
   - Call lc.write_marker(ledger, "<runtime> code-review addressing round-<N>").
-  - Stage the fixer batches (lc.stage_fixer_batches, label "code-review-b<k>"): 12 clusters or
-    fewer are one batch; only above 12 are they split into batches of at most 12, code clusters
-    first, then doc-only ones. Model opus for a batch with a cluster that touches a .py file,
-    sonnet for an all-doc batch; one staged prompt per batch.
   - Print result JSON to stdout with status "needs-fix", batches ([{batch, model, clusters,
     staged_prompt}], dispatched in sequence), staged_fixer_prompt (batch 1's prompt), blast (the
     array fill-address needs written to a file), cluster_id_map and then[].
@@ -78,14 +87,46 @@ def check_no_drop(
     verified_flag_ids: Set[str],
     clusters: List[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    """Gate 1: every verified flag is in exactly one cluster.
+    """Gate 1: every verified flag is in exactly one cluster, and every cluster has a distinct
+    non-empty id and a non-empty flags list.
+
+    WHY the structure check lives here: a cluster with no flags adds nothing to the coverage sets
+    below, and two clusters sharing an id collapse into one entry of the renumbering map and of
+    Gate 2's flag-to-cluster map, so neither would otherwise be caught before staging.
 
     Returns None on pass, or an error dict on fail.
     """
+    malformed: List[str] = []
+    seen_ids: Set[str] = set()
+    for i, c in enumerate(clusters, 1):
+        if not isinstance(c, dict):
+            malformed.append(f"entry {i} is not an object")
+            continue
+        cid = c.get("cluster")
+        flags = c.get("flags")
+        if not isinstance(cid, str) or not cid.strip():
+            malformed.append(f"entry {i} has no cluster id")
+        elif cid in seen_ids:
+            malformed.append(f"cluster id {cid} is used more than once")
+        else:
+            seen_ids.add(cid)
+        if not isinstance(flags, list) or not flags:
+            malformed.append(f"cluster {cid if isinstance(cid, str) and cid.strip() else i} has an empty or missing flags list")
+    if malformed:
+        return {
+            "gate":       "no-drop",
+            "dropped":    [],
+            "extra":      [],
+            "duplicated": [],
+            "message": (
+                "Gate 1 FAILED: the clusters file is malformed: " + "; ".join(malformed) + ". "
+                "Each cluster needs a distinct non-empty \"cluster\" id and a non-empty \"flags\" list."
+            ),
+        }
+
     assigned: List[str] = []
     for c in clusters:
-        flags = c.get("flags", [])
-        assigned.extend(flags)
+        assigned.extend(c["flags"])
 
     assigned_set = set(assigned)
 
@@ -159,7 +200,7 @@ def check_no_split_blast(
 # ---------------------------------------------------------------------------
 # Build blast payload for cluster_enforce pass
 #
-# blast radius per cluster = union of member locs + advisory token sites
+# blast radius per cluster = union of member locs + advisory group sites
 # (i.e. all locs in the cluster, plus any locs of advisory-group siblings)
 # ---------------------------------------------------------------------------
 
@@ -170,10 +211,10 @@ def _build_blast(
 ) -> List[Dict[str, Any]]:
     """Compute blast radius per orchestrator cluster.
 
-    Radius = member locs (from the verified flags) ∪ advisory token sites
+    Radius = member locs (from the verified flags) ∪ advisory group sites
     (locs of all flags that share an advisory group with any cluster member).
 
-    The advisory_groups list links flags sharing a token or file:line; the
+    The advisory_groups list links flags sharing a file:line locus (reviewer flags carry no token); the
     blast for a cluster that contains ANY member of an advisory group must
     also include the locs of ALL flags in that group (which per Gate 2 are
     in the same cluster anyway, but we enumerate for completeness).
@@ -332,7 +373,7 @@ def _expand_blast_with_doc_sites(
     all_flags_by_id: Dict[str, Dict[str, Any]],
     skill_root: Path,
 ) -> None:
-    """Mutate blast and enriched_clusters to add doc blast sites.
+    """Mutate blast entries to add doc blast sites (enriched_clusters is only read, for each cluster's flag ids).
 
     For each cluster whose member locs include a code file (scripts/ or .py),
     extract doc-file basenames explicitly named in findings' claim/target strings,
@@ -483,6 +524,20 @@ def main() -> int:
     if isinstance(vf_data, list):
         all_flags: List[Dict[str, Any]] = vf_data
     elif isinstance(vf_data, dict):
+        # code_review_collect.py also prints "code-review-clean" and "changed-scope-clean" (no
+        # flags): clustering them would advance the marker to "addressing" with nothing to fix.
+        if vf_data.get("status") != "verified-flags":
+            print(
+                json.dumps({
+                    "gate": "verified-flags",
+                    "message": (
+                        f"--verified-flags status is {vf_data.get('status')!r}, not 'verified-flags': "
+                        "there are no flags to cluster; follow that status's own next step."
+                    ),
+                }),
+                file=sys.stderr,
+            )
+            return 1
         all_flags = vf_data.get("flags", [])
     else:
         print(json.dumps({"error": "verified-flags must be a JSON object or array"}), file=sys.stderr)
@@ -553,6 +608,27 @@ def main() -> int:
     _expand_blast_with_doc_sites(blast, enriched_clusters, all_flags_by_id, skill_root)
 
     # ------------------------------------------------------------------
+    # Stage the fixer prompts, one per batch
+    # WHY: staging runs before any ledger write, so a staging failure (exit 1) leaves the ledger
+    # and marker untouched and the re-run renumbers from the same first id instead of adding a
+    # second set of PENDING rows.
+    # ------------------------------------------------------------------
+    try:
+        batches = lc.stage_fixer_batches(
+            clusters=enriched_clusters,
+            blast=blast,
+            skill_root=skill_root,
+            rnd=rnd,
+            runtime=runtime,
+            out_dir=out_dir,
+            label="code-review",
+            run_rnd=lc.run_round(ledger, rnd),
+        )
+    except RuntimeError as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr)
+        return 1
+
+    # ------------------------------------------------------------------
     # Write PENDING rows via ledger_cascade --mode cluster --phase "Code Review"
     # ------------------------------------------------------------------
     pending_payload = {
@@ -592,31 +668,13 @@ def main() -> int:
     lc.write_marker(ledger, f"{runtime} code-review addressing round-{rnd}")
 
     # ------------------------------------------------------------------
-    # Stage the fixer prompts, one per batch
-    # ------------------------------------------------------------------
-    try:
-        batches = lc.stage_fixer_batches(
-            clusters=enriched_clusters,
-            blast=blast,
-            skill_root=skill_root,
-            rnd=rnd,
-            runtime=runtime,
-            out_dir=out_dir,
-            label="code-review",
-            run_rnd=lc.run_round(ledger, rnd),
-        )
-    except RuntimeError as exc:
-        print(json.dumps({"error": str(exc)}), file=sys.stderr)
-        return 1
-
-    # ------------------------------------------------------------------
     # Emit result JSON
     # ------------------------------------------------------------------
     blast_file = f"{out_dir}/blast-round-{rnd}-{lc.runtime_slug(runtime)}.json"
     close_then = (
-        "Read its `gate` object — if gate.continue is false report the stop reason and finish, "
+        "Read its `gate` object — if gate.continue is false go to SKILL.md \"Present result\" (tmp cleanup, merge-check, per-round summary) with the stop reason, "
         f"otherwise run: python3 .../scripts/append_ledger.py begin-round <ledger> --round {rnd + 1} "
-        f"--runtime <RT> --target {skill_root} and start round {rnd + 1} at Prepass, since a fix occurred this sweep and "
+        f"--runtime <RT> --target {skill_root} and start round {rnd + 1} at Prepass, since this sweep's findings were addressed and "
         "the next round is the confirming one."
     )
     report = lc.batch_report(batches)
@@ -629,13 +687,13 @@ def main() -> int:
         "blast":               blast,
         "then": [
             f"Dispatch the {len(report)} fixer batch(es) in \"batches\" ONE AT A TIME, in order (never in parallel: they may edit the same files): before each batch k, run: python3 .../scripts/post_fix_gate.py snapshot --target {skill_root} --out {out_dir}/gate-{rnd}-b<k>-<RUN_TIMESTAMP>.json; then, for each, one fixer (general-purpose, the batch's \"model\", edits ONLY <target>) pointed at the batch's staged_prompt with the Fixer provenance wording in references/dispatch.md (not a bare 'read this file' pointer). The fixer's decisions use the renumbered cluster ids in cluster_id_map.",
-            f"After each fixer returns, run: python3 .../scripts/check_decisions.py --fixer-transcript <its transcript> --expect <the batch's cluster ids, comma-separated>. On exit 1, SendMessage the same fixer with the reported problems and ask it to re-emit its decisions, then check again. Once it exits 0, run: python3 .../scripts/post_fix_gate.py check --target {skill_root} --snapshot <that batch's gate snapshot>; on exit 1 follow SKILL.md \"Post-fix gate\" (inner passes, then ORCHESTRATOR-PAUSE). Dispatch the next batch only after both exit 0.",
+            f"After each fixer returns, run: python3 .../scripts/check_decisions.py --fixer-transcript <its transcript> --expect <the batch's cluster ids, comma-separated>. On exit 1, SendMessage the same fixer with the reported problems and ask it to re-emit its decisions, then check again. Once it exits 0, run: python3 .../scripts/post_fix_gate.py check --target {skill_root} --snapshot <that batch's gate snapshot> --fixer-transcript <that batch's transcript>; on exit 1 follow references/dispatch.md \"Post-fix gate\" (inner passes, then ORCHESTRATOR-PAUSE). Dispatch the next batch once the decision check exits 0 and `check` has exited 0 or its problems are recorded as ORCHESTRATOR-PAUSE.",
             f"Write this result's \"blast\" array to {blast_file}, as {{\"blast_radius\": <the blast array>}} — fill-address requires --skill-root/--blast-json whenever any decision is FIX, but Code Review clusters are LOCAL with no token, so it re-checks nothing for them: closure for a Code Review FIX rests on the fixer's own check_fix_radius.py run (references/how-to-fix.md \"Fix-impact closure\").",
             f"Run: python3 .../scripts/ledger_cascade.py <ledger> --mode fill-address --phase \"Code Review\" --round {rnd} --runtime <RT> --fixer-transcript {transcripts} --skill-root {skill_root} --blast-json {blast_file}   (every batch's transcript in one call; NO --reenter for code-review fixes; no on-disk decisions file needed)",
             f"Run: python3 .../scripts/doc_lint.py --target {skill_root}   (advisory doc lint: for each finding that is real, fix it and record a 'doc-lint' FIX row with append_ledger.py append; exits 0 whatever it finds — does NOT block close).",
             f"Run: python3 .../scripts/append_ledger.py check-pauses <ledger>. If any ORCHESTRATOR-PAUSE/USER-PAUSE is open, you CANNOT close — resolve each (orchestrator decides the fix from the README intent; promote to USER-PAUSE only if genuine user attention is truly needed), apply it, and append a row whose Address says 'resolves ORCHESTRATOR-PAUSE <flag>'.",
             f"Run: python3 .../scripts/cleanup_tmp_prompts.py --run-timestamp \"<RT>\" --dir {out_dir}  (scoped to this run's <RUN_TIMESTAMP>; never --all — the out-dir is shared).",
-            f"Run: python3 .../scripts/append_ledger.py close-round <ledger> --round {rnd}  (it REFUSES if a pause is open). " + close_then,
+            f"Run: python3 .../scripts/append_ledger.py close-round <ledger> --round {rnd}  (it REFUSES if a pause is open, or if the round has no FIX row: when every finding was a legitimate STRENGTHEN, add --strengthen-only \"<reason naming the how-to-fix.md case>\"). " + close_then,
         ],
     }
     print(json.dumps(result, indent=2))

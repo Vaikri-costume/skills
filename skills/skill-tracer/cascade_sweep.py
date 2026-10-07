@@ -15,7 +15,8 @@ converged while `detector_errors` is non-empty.
 Usage:
     cascade_sweep.py <target-skill-dir> [--level prepass|advisory] [--json]
         --level  run only that level and exit 1 when it has findings (the gate signal prepass_run.py
-                 uses); without it, exit 0 always.
+                 uses); without it, exit 0 always once the target is a directory.
+        Exit 2 when <target-skill-dir> is not a directory.
 """
 from __future__ import annotations
 

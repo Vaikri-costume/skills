@@ -1,15 +1,20 @@
 """substep-label-mismatch — lettered substep label mismatch (Prepass check for lettered sub-step labels).
 
 Fires ONLY when ALL of the following hold:
-  1. A `Step N(x)` reference (or `Step Nx` bare form) exists in the file.
+  1. A `Step N(x)` reference (or `Step Nx` bare form) exists in the file on a line outside
+     a code fence. Only fences exempt a reference: one inside inline backticks or double
+     quotes, in "<other-skill>'s Step 3(b)" phrasing, or on a line citing another file
+     ("references/x.md Step 3(b)") is still checked against THIS file's own Step N body
+     (steps_dangling_ref.py skips those cases; this check does not).
   2. Step N's body exists and contains at least one EXPLICIT lettered sub-marker at
      line-start — i.e. a line that starts (after optional indent / list-bullet) with
-     `(a)`, `(b)`, `### (b)`, `- (c)`, `* (b)`.
+     `(a)`, `(b)`, `(ii)`, `### (b)`, `- (c)`, `* (b)`.
   3. The referenced label `x` is NOT among the explicit markers found in Step N's body.
 
 This is a purely mechanical membership check — no semantic judgment needed.
 
-Why this is Prepass (0-FP):
+Why this is Prepass (a mechanical check; the one reference shape it can misjudge is a quoted
+or other-file citation of a Step N this file also defines, listed under condition 1):
   - If the body has explicit `(a)` / `(b)` / ... markers, the enumeration is structured
     and presence/absence of a given label is unambiguous.
   - If the body uses implicit/prose enumeration ("first ... then ...") with no
@@ -53,13 +58,13 @@ _STEP_HEADER_LINE_RE = re.compile(
 )
 
 # Explicit lettered sub-label at the START of a line (after optional indent / list bullet).
-# Matches:  (a)  /  (b)  /  ### (b)  /  - (c)  /  * (b)
+# Matches:  (a)  /  (b)  /  (ii)  /  ### (b)  /  - (c)  /  * (b)
 # Does NOT match mid-sentence "(b)" or code-fence content.
 _EXPLICIT_LABEL_RE = re.compile(
     r"^[ \t]*"               # optional leading whitespace
     r"(?:#{1,6}\s+)?"        # optional heading markers
     r"(?:[-*+]\s+)?"         # optional list bullet
-    r"\(([a-zA-Z])\)"        # the label: (a), (b), ...
+    r"\(([a-zA-Z](?:i{1,4}|ii?|iv|vi{0,3})?)\)"  # the label: (a), (b), (ii), ... (the shape `_common.SUBSTEP_REF_RE` captures)
     ,
     re.MULTILINE,
 )

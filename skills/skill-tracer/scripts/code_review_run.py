@@ -3,8 +3,8 @@
 
 There is NO mechanical sweep at Code Review (irreducibly semantic); this script decides the review
 scope, stages the one all-lens (ALLLENS) prompt for that scope, records the scope for the collector,
-and flips the marker to dispatched. Dispatch is always two Sonnet generalists on the same prompt
-(their findings are unioned): the October 2026 self-run measured little overlap between two
+and flips the marker to dispatched. Dispatch is always two Sonnet generalists on the same prompt (from round 2 G2's copy adds one
+reading-order line, below; their findings are unioned): the October 2026 self-run measured little overlap between two
 reviewers (8% of flags), so the second one roughly doubles the finds per round.
 
 Review scope (--scope, default auto):
@@ -173,14 +173,13 @@ def _build_alllens_prompt(
         "You are a single cold code-review agent performing ALL FIVE lenses "
         "(fidelity, executor, logic, integrity, design) in one pass.",
     )
-    filled = filled.replace("[AGENT_NAME]", "all-lenses")
+    # One regex pass over the template, as stage_cold_prompts.py does: a slot name that a slot's VALUE quotes
+    # (a lens body or a file path containing "[SCOPE]") stays literal instead of being substituted again.
     # templates/agent-cold-code-review.md carries [SKILL_FILES] exactly once (under "## Files"); its
     # prose refers to that section by name, so a multi-line list never lands mid-sentence.
-    filled = filled.replace("[SKILL_FILES]", skill_files_block)
-    filled = filled.replace("[SCOPE]", scope_text)
-    # The lens bodies go in last, so a slot name a lens body quotes ("[SKILL_FILES]") stays literal
-    # instead of being substituted inside the body.
-    filled = filled.replace("[AGENT_TASK_BODY]", assembled_task_body)
+    slots = {"[AGENT_NAME]": "all-lenses", "[SKILL_FILES]": skill_files_block, "[SCOPE]": scope_text,
+             "[AGENT_TASK_BODY]": assembled_task_body}
+    filled = re.sub("|".join(re.escape(k) for k in slots), lambda m: slots[m.group(0)], filled)
 
     # No lens-tag note added: which lens a finding came from is not read by any downstream
     # consumer, so tagging it would be noise on top of the base template's own dedup rules.

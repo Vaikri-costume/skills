@@ -46,7 +46,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ledger_common as lc  # noqa: E402
 
-SLOT_RE = re.compile(r"\[[A-Z][A-Z0-9_]*\]")  # [DIRECTION], [SKILL_NAME], [INLINED_TRACE_DEFINITION], ...
+SLOT_RE = re.compile(r"\[[A-Z][A-Z0-9_]*\]")  # [AGENT_NAME], [AGENT_TASK_BODY], [SCOPE], [SKILL_FILES], ...
 
 
 def main() -> int:

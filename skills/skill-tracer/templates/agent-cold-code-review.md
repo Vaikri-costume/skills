@@ -9,7 +9,7 @@ You are **read-only** on every file in this trace. Do not run any Bash command t
 **Fixing is the orchestrator's role — never yours.** The orchestrator (the one that dispatched you) reads your ISSUE blocks, decides whether each item is a real issue, and applies any fixes. The trace agent and the orchestrator are two distinct roles that never collapse:
 
 - The trace agent never touches a file it evaluates. If you find yourself wanting to "just fix this small thing", stop — that is the orchestrator's job, and your reaching for it breaks the cold-read property each independent dispatch depends on.
-- The orchestrator never rewrites your ISSUE report. The report goes into the trace history unmodified.
+- The orchestrator never rewrites your ISSUE report. The report goes into the review collector's input unmodified.
 - You have no access to the orchestrator's fix history. Each dispatch is cold; you read the files as they currently exist on disk and form your view from scratch.
 
 If a fix is obvious to you, write the issue clearly enough that the orchestrator will apply the obvious fix without help. Resist the urge to write the fix yourself — that authority is not yours.
@@ -79,12 +79,12 @@ Measure against the narrowest scope. A definition, a WHY, a reference, a precond
 When a skill dispatches agents with inlined briefs — the orchestrator reads the brief files and embeds the content into the Agent prompt; the dispatched agent never reads the brief from disk and never sees other agents' briefs — the brief is the agent's complete world.
 
 Briefs deliberately hide orchestration details that the orchestrator owns:
-- Parallel-agent structure (multiple agents running on the same source; agents do not know about each other)
+- The audited skill's parallel-agent structure (it runs several agents on the same source; its agents do not know about each other)
 - Escalation tiers (harsh / large-file / chunk re-dispatch)
 - Dispatch logic, in-flight handling, recovery, compile
 - Cross-source aggregation
 
-Do not flag the absence of these orchestration mentions in briefs as gaps. The omission is by design — the brief is a self-contained instruction set for one agent. If the brief mentioned parallel agents, the agent would behave differently knowing another agent exists, and the agent-independence the orchestration relies on would be broken.
+Do not flag the absence of these orchestration mentions in briefs as gaps. The omission is by design — the brief is a self-contained instruction set for one agent. If the audited skill's brief mentioned parallel agents, its agent would behave differently knowing another agent exists, and the agent-independence that skill's orchestration relies on would be broken.
 
 Flag only when:
 - A brief makes a claim about orchestration (e.g. "your output will be merged with another agent's") that the orchestrator does not implement — that is real drift.
@@ -144,4 +144,4 @@ After all issues, conclude with exactly one trailing line. The form depends on t
 - When the report has zero `ISSUE` blocks: emit `No issues found` (literal, no count).
 - When the report has one or more surviving `ISSUE` blocks: emit `No of issues found:: N` where `N` counts the surviving `ISSUE` blocks only. A withdrawn block (one whose `Claim:`, after its locus, or `Target:` opens with "Withdrawn", "Withdrawing", "Considered and rejected", "Not a finding" or "No defect found") is not counted. The count is a contract: a report whose surviving `ISSUE` blocks number more or fewer than `N` is returned to you for re-emission, never trimmed to fit.
 
-Use the Logseq double-colon property syntax exactly as written; do not substitute a single colon, do not add spaces around the double colon, and do not rephrase the line. The double-colon form is load-bearing because the compile step's malformed-report detection checks for the exact trailing strings `No issues found` and `No of issues found:: N` — an alternate form would not match the expected trailing-line patterns, causing the report to be treated as malformed.
+Use the Logseq double-colon property syntax exactly as written; do not substitute a single colon, do not add spaces around the double colon, and do not rephrase the line. The double-colon form is load-bearing because the review collector's malformed-report detection checks for the exact trailing strings `No issues found` and `No of issues found:: N` — an alternate form would not match the expected trailing-line patterns, causing the report to be treated as malformed.

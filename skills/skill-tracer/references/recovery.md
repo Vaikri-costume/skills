@@ -18,7 +18,7 @@ decision is ORCHESTRATOR-PAUSE). This is the `VALID_STATES` / `VALID_PHASES` set
 `scripts/ledger_common.py` defines; the code is the source of truth if this list and the code
 disagree. `ledger_common.parse_in_flight` reports `phase_valid` / `state_valid` for a marker, but no
 script refuses an invalid one, so check them when reading a marker: a phase or state outside these
-sets is a broken ledger (Hard unrecoverable errors, item 1).
+sets is a broken ledger (Hard unrecoverable errors, "A broken ledger").
 
 *Legacy phase.* Ledgers written before 3.1.0 may carry a `minor-bugs` phase; for legacy
 compatibility the parser migrates it to `code-review running` (code-review followed that removed
@@ -56,21 +56,23 @@ auto-pause row for a signature that already has an open one.
 names that tier's phase and that batch's agent transcript ends with a `{"decisions": …}` object
 whose cluster ids are the batch's PENDING rows' ids. When every batch's fixer ran, run the decision
 check on each, then the post-fix gate `check` for each batch whose `check` you have not seen pass,
-with that batch's snapshot `<out-dir>/gate-<N>-b<k>-<RUN_TIMESTAMP>.json` (SKILL.md "Post-fix gate";
+with that batch's snapshot `<out-dir>/gate-<N>-b<k>-<RUN_TIMESTAMP>.json` (`references/dispatch.md` "Post-fix gate";
 a missing snapshot is its `snapshot-unusable` cause), and record all their transcripts in one
 `--fixer-transcript` list only once each `check` exits 0 or its problems are ORCHESTRATOR-PAUSE. When only the first
-batches ran, dispatch the remaining batches from their staged prompts (`prepass-b<k>-<RUN_TIMESTAMP>.txt` or
-`code-review-b<k>-<RUN_TIMESTAMP>.txt` in `<out-dir>`), then record. When no fixer ran, re-run that tier's front-half
-script, same round.
+batches ran, or at Code Review while the round has `Code Review` PENDING rows and no batch ran, dispatch the remaining
+batches from their staged prompts (`prepass-b<k>-<RUN_TIMESTAMP>.txt` or `code-review-b<k>-<RUN_TIMESTAMP>.txt` in
+`<out-dir>`), then record: re-running `code_review_run.py` there would re-review (the review is not deterministic) and
+`cluster_enforce.py` would then supersede those rows. When no fixer ran and no such Code Review PENDING rows exist,
+re-run that tier's front-half script, same round.
 
 | Marker | Resume action |
 |---|---|
 | `prepass *` | If this round has `Prepass` PENDING rows and a fixer already ran, run its checks and record its decisions first ("A fixer already ran" above; fix-recording step, `--phase Prepass --reenter`). Otherwise re-run `prepass_run.py`, same round; for `prepass orch-fixes`, first resolve each open pause (`append_ledger.py check-pauses`) so the re-run does not send the paused defect to a fixer again |
-| `code-review running` / `addressing` / `orch-fixes` | If this round has `Code Review` PENDING rows and a fixer already ran, run its checks and record its decisions first ("A fixer already ran" above; fix-recording step, `--phase "Code Review"`, no `--reenter`): re-running the tier would supersede them (`cluster_enforce.py` writes rows through `ledger_cascade.py --mode cluster`, which drops this round's stale Code Review PENDING rows; `code_review_run.py` itself writes no rows). If this round has `Code Review` rows and none is PENDING, the fixes are recorded: continue at doc lint / check-pauses / close-round. If this round has no `Code Review` row, re-run `code_review_run.py`, same round (it derives the scope from the ledger again, so it picks the same scope) |
+| `code-review running` / `addressing` / `orch-fixes` | If this round has `Code Review` PENDING rows and no fixer ran, dispatch their batches from the staged prompts and record ("A fixer already ran" above). If it has them and a fixer already ran, run its checks and record its decisions first ("A fixer already ran" above; fix-recording step, `--phase "Code Review"`, no `--reenter`): re-running the tier would supersede them (`cluster_enforce.py` writes rows through `ledger_cascade.py --mode cluster`, which drops this round's stale Code Review PENDING rows; `code_review_run.py` itself writes no rows). If this round has `Code Review` rows and none is PENDING, the fixes are recorded: continue at doc lint / check-pauses / close-round. If this round has no `Code Review` row, re-run `code_review_run.py`, same round (it derives the scope from the ledger again, so it picks the same scope) |
 | `code-review dispatched` | Re-collect if the transcripts named in the review manifest exist in `<projects-dir>`, else re-dispatch; then `code_review_collect.py` with the marker's `<Runtime>`. The collector needs the scope record (see the review-scope note below) |
-| `converged round-N` | Terminal. A fresh invocation re-verifies from a clean state: start round N+1 |
-| Any marker naming a round that already has a `Round N total` summary comment | That round was closed without converging (`close-round` leaves the last marker in place). Start round N+1; `begin-round` refuses to restart a closed round |
-| No marker, prior rounds exist | Round N+1 (`begin-round` takes `--set` options only on a fresh run, which SKILL.md's fresh-run-or-resume test decides; "Persisted run options" below) |
+| `converged round-N` | Terminal. When SKILL.md's fresh-run-or-resume test finds a fresh run (invoked this turn, no `begin-round` since), start round N+1; otherwise go to "Present result" |
+| Any marker naming a round that already has a `Round N total` summary comment | That round was closed without converging (`close-round` leaves the last marker in place). Apply SKILL.md's fresh-run-or-resume test: a fresh run starts round N+1; otherwise start round N+1 only when `append_ledger.py gate <ledger> --round <N>` exits 0, else go to "Present result". `begin-round` refuses to restart a closed round |
+| No marker, prior rounds exist | Round N+1, subject to the same gate test as the closed-round row above, which a fresh run skips (`begin-round` takes `--set` options only on a fresh run, which SKILL.md's fresh-run-or-resume test decides; "Persisted run options" below) |
 | No marker, no ledger | Round 1 |
 
 *Review scope on resume.* `code_review_run.py` writes the scope record
@@ -81,8 +83,9 @@ assumes a full sweep and a changed-files review fails its coverage gate: re-run
 interrupted `--scope full` re-run after `changed-scope-clean`), the manifest's agents reviewed only
 the changed files: dispatch the full sweep rather than re-collecting.
 
-Manifests and cluster JSON live under `<out-dir>` in `/tmp`; if `/tmp` was cleared, re-run the
-front-half script (it re-stages) instead of looking for them.
+Manifests and cluster JSON live under `<out-dir>` in `/tmp`; if `/tmp` was cleared and no fixer ran
+for the round's PENDING rows, re-run the front-half script (it re-stages) instead of looking for them; for a
+round whose PENDING rows await a fixer or its recording, follow "A fixer already ran" above (and "Lost blast file" below).
 
 *Lost blast file.* When a fixer already ran (`needs-record`, or a recorded-fixer resume) and the
 blast file `<out-dir>/blast-round-<N>-<RUN_TIMESTAMP>.json` is gone, re-running the front-half script
@@ -117,8 +120,9 @@ The run stops, NOT verified clean, on any of these:
 
 1. A broken ledger: a row or header line the scripts reject, or a marker no script can advance.
 2. A missing prerequisite (SKILL.md "Prerequisites").
-3. A prepass detector that crashes or cannot load (`prepass_run.py` exit 1 with `detector_errors`);
-   it is never read as a clean tier.
+3. A prepass detector that crashes or cannot load (`prepass_run.py` exit 1 with `detector_errors`),
+   or a sub-script of `prepass_run.py` that fails (exit 1 with an `error` key on stderr and no
+   `detector_errors`); neither is ever read as a clean tier.
 4. A cold code-review agent that aborts because files in its staged list do not exist
    (`aborted_agents` from `code_review_collect.py`).
 5. A cold-agent slot that stays invalid after the retries in `references/dispatch.md` "Contract
@@ -145,9 +149,10 @@ still-active run's files. Clean only with a timestamp to scope to, never `--all`
   `close-round --converged` writes this marker, and the marker's timestamp is the time of that
   close, not the run's `<Runtime>`, so it selects none of the run's files.
 - No marker (prior rounds or none): do not clean; there is no timestamp to scope to.
-- Never for a `dispatched` state, including a hard-error stop reached in that state (the Convergence step is not such a stop: its
-  collection is complete): recovery checks whether the agents' transcripts already exist in `<projects-dir>` (and the dispatch
-  manifest and scope record in `<out-dir>`) before deciding to re-collect or re-dispatch.
+- Never after a stop that leaves an open round (a USER-PAUSE or hard-error stop), whatever its marker: "A fixer already ran"
+  and the marker table above read the fixer manifest, the staged prompts and the gate snapshots in `<out-dir>`, and a
+  `dispatched` state also reads the review manifest and scope record (the agents' transcripts in `<projects-dir>` are
+  checked before deciding to re-collect or re-dispatch). The Convergence step is not such a stop: its collection is complete.
 
 There is deliberately no self-perpetuating resume wakeup: recovery is always to read the marker on
 disk and re-run the front-half script.

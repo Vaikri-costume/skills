@@ -30,13 +30,13 @@
     {
       "id": 2,
       "prompt": "Trace ~/.claude/skills/pdf-viewer/ for bugs; it already has a ledger from an earlier run, and this run reaches round 3.",
-      "expected_output": "Rounds 1-2 of this run review every in-scope file. From round 3 code_review_run.py reviews only the files the previous round's fixes touched; a clean changed-files review is followed by a --scope full sweep in the same round, and only a clean full sweep is reported as convergence. No fix in any round of the run adds a CLI flag, mode, subcommand, file, ledger field, run-options key, row kind, shared helper module or doc section unless it is the only way to fix a real behaviour bug; a round of 12 clusters or fewer has one fixer, a larger round is split into fixer batches of at most 12 that run one at a time.",
+      "expected_output": "Rounds 1-2 of this run review every in-scope file. From round 3 code_review_run.py reviews only the files the previous round's fixes touched; a clean changed-files review is followed by a --scope full sweep in the same round, and only a clean full sweep is reported as convergence. No fix in any round of the run adds a CLI flag, mode, subcommand, file, ledger field, run-options key, row kind, shared helper module, doc section, or any other new interface element such as an output JSON field, status value or exit code unless it is the only way to fix a real behaviour bug; a round of 12 clusters or fewer has one fixer, a larger round is split into fixer batches of at most 12 that run one at a time.",
       "expectations": [
         "begin-round set run-start-round to this run's first round, so round counting starts at this run",
         "The code-review scope was full in rounds 1-2 of the run and changed from round 3 (unless no changed file was named, then full)",
         "A changed-scope-clean result was followed by code_review_run.py --scope full in the same round, never by close-round --converged",
-        "No fix in any round of the run added a CLI flag, mode, subcommand, file, ledger field, run-options key, row kind, shared helper module or doc section except to fix a real behaviour bug; any other such need was recorded as an ORCHESTRATOR-PAUSE",
-        "A round with 12 clusters or fewer had a single fixer; a larger round's fixers were dispatched one batch at a time (at most 12 clusters per batch); check_decisions.py ran on each fixer before fill-address",
+        "No fix in any round of the run added a CLI flag, mode, subcommand, file, ledger field, run-options key, row kind, shared helper module, doc section, or any other new interface element such as an output JSON field, status value or exit code except to fix a real behaviour bug; any other such need was recorded as an ORCHESTRATOR-PAUSE",
+        "A tier pass with 12 clusters or fewer had a single fixer; a larger pass's fixers were dispatched one batch at a time (at most 12 clusters per batch); check_decisions.py ran on each fixer before fill-address",
         "No fixer added new behaviour (a retry, cap, branch or exit path, or a removed fallback); any such need was recorded as an ORCHESTRATOR-PAUSE"
       ]
     },

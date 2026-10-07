@@ -5,11 +5,10 @@ Dispatch staging writes /tmp/skill-tracer-prompts/<name>-<RUN_TIMESTAMP>.* files
 manifests, blast / cluster json). RUN_TIMESTAMP is the `<Runtime>` with ':' replaced by '-'
 (ledger_common.runtime_slug); every file the scripts name for a run carries it. Over many rounds
 and many traces these accumulate without bound. Must be
-deleted at every terminal state (convergence, a round-gate stop, a USER-PAUSE or hard-error stop; SKILL.md "Stop rules") -- not just at convergence -- except a
-hard-error stop whose marker is still a `dispatched` state, whose dispatch manifest the resume reads
-(references/recovery.md "Stale-tmp cleanup"). At every other terminal state the next session
-restages from scratch (re-running the front-half script re-stages every tmp file, including the
-dispatch manifests), so tmp is not load-bearing for resume there and is safe to delete.
+deleted when a round closes (convergence or a round-gate stop; SKILL.md "Present result") -- not just at convergence -- but
+never after a stop that leaves an open round (a USER-PAUSE or hard-error stop): the resume of that
+round reads the staged prompts, the fixer manifest and, for a `dispatched` state, the review manifest
+and scope record (references/recovery.md "Resume" and "Stale-tmp cleanup").
 
 Usage:
     cleanup_tmp_prompts.py --run-timestamp <Runtime or RUN_TIMESTAMP> [--dir /tmp/skill-tracer-prompts]
