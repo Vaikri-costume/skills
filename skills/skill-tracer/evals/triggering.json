@@ -1,0 +1,19 @@
+[
+  {"query": "trace the skill at ~/.claude/skills/drive-organizer/ for bugs", "should_trigger": true},
+  {"query": "audit ~/.claude/skills/skill-publisher/ for correctness", "should_trigger": true},
+  {"query": "run the cascade on ~/.claude/skills/pdf-viewer/", "should_trigger": true},
+  {"query": "check ~/.claude/skills/skill-creator-ccvw/ for bugs", "should_trigger": true},
+  {"query": "verify ~/.claude/skills/skill-tracer/ is clean", "should_trigger": true},
+  {"query": "find bugs in the skill-publisher skill", "should_trigger": true},
+  {"query": "review ~/.claude/skills/drive-organizer/ for issues", "should_trigger": true},
+  {"query": "validate ~/.claude/skills/pdf-viewer/ scripts", "should_trigger": true},
+  {"query": "is ~/.claude/skills/skill-creator-ccvw/ clean?", "should_trigger": true},
+  {"query": "run the cascade on skill-tracer with --rounds 1", "should_trigger": true},
+  {"query": "write me a poem about skill-tracer", "should_trigger": false},
+  {"query": "create a new skill for organizing my Google Drive", "should_trigger": false},
+  {"query": "ship skill-tracer to the marketplace", "should_trigger": false},
+  {"query": "publish the drive-organizer skill and open a PR", "should_trigger": false},
+  {"query": "add a stack trace to the logs in my Flask app", "should_trigger": false},
+  {"query": "trace this network request through the middleware pipeline", "should_trigger": false},
+  {"query": "what's the weather in San Francisco today?", "should_trigger": false}
+]
