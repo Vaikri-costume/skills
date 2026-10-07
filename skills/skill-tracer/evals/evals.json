@@ -1,0 +1,78 @@
+{
+  "skill_name": "skill-tracer",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "Trace the skill at ~/.claude/skills/drive-organizer/ for bugs.",
+      "expected_output": "The skill runs the 2-tier cascade (prepass → code-review) over the drive-organizer skill directory. Any bugs found are fixed and the cascade re-runs until convergence (zero flags surfaced in a clean full-sweep code-review). The final result states how many rounds ran and points the user at the audit ledger.",
+      "expectations": [
+        "The cascade ran prepass → code-review in order within each round",
+        "Convergence was declared only when a clean full-sweep code-review was reached (code-review-clean status) with all pauses resolved; a changed-scope-clean result was followed by a --scope full sweep in the same round",
+        "Code-review agents were dispatched with subagent_type Explore (read-only), not general-purpose",
+        "Each fixer agent was dispatched with subagent_type general-purpose (edit-capable)",
+        "Fixes were recorded in the audit ledger (at the XDG-resolved path, e.g. ~/.local/share/skill-tracer-audit-ledger/drive-organizer.md)",
+        "The orchestrator did not stop early for 'tail issues' or 'diminishing returns' — the only valid stops are convergence, the mechanical round gate (round-cap, budget-exhausted, stalled; reported as NOT verified clean), a genuine USER-PAUSE, or a hard unrecoverable error",
+        "The session log received a round-START entry and a CONVERGED entry"
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "Run the cascade on ~/.claude/skills/skill-publisher/ with --rounds 1.",
+      "expected_output": "A single prepass → code-review round is completed with its fixes applied. Findings are reported with per-round counts (raw flags, clusters, FIX/STRENGTHEN/ORCHESTRATOR-PAUSE breakdown). The skill does not loop: the round gate stops it with budget-exhausted (reported as NOT verified clean) unless the round converged.",
+      "expectations": [
+        "Exactly one round was executed (prepass → code-review), then the skill stopped",
+        "begin-round persisted rounds-budget=1 and the stop came from the round gate (budget-exhausted), not from counting in memory",
+        "The result reported raw flag count, cluster count, and address breakdown per round",
+        "The skill did NOT continue to a second round even if findings were present",
+        "The audit ledger was created or updated (at the XDG-resolved path, e.g. ~/.local/share/skill-tracer-audit-ledger/skill-publisher.md)"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Trace ~/.claude/skills/pdf-viewer/ for bugs; it already has a ledger from an earlier run, and this run reaches round 3.",
+      "expected_output": "Rounds 1-2 of this run review every in-scope file. From round 3 code_review_run.py reviews only the files the previous round's fixes touched; a clean changed-files review is followed by a --scope full sweep in the same round, and only a clean full sweep is reported as convergence. No fix in any round of the run adds a CLI flag, mode, subcommand, file, ledger field, run-options key, row kind, shared helper module, doc section, or any other new interface element such as an output JSON field, status value or exit code unless it is the only way to fix a real behaviour bug; a round of 12 clusters or fewer has one fixer, a larger round is split into fixer batches of at most 12 that run one at a time.",
+      "expectations": [
+        "begin-round set run-start-round to this run's first round, so round counting starts at this run",
+        "The code-review scope was full in rounds 1-2 of the run and changed from round 3 (unless no changed file was named, then full)",
+        "A changed-scope-clean result was followed by code_review_run.py --scope full in the same round, never by close-round --converged",
+        "No fix in any round of the run added a CLI flag, mode, subcommand, file, ledger field, run-options key, row kind, shared helper module, doc section, or any other new interface element such as an output JSON field, status value or exit code except to fix a real behaviour bug; any other such need was recorded as an ORCHESTRATOR-PAUSE",
+        "A tier pass with 12 clusters or fewer had a single fixer; a larger pass's fixers were dispatched one batch at a time (at most 12 clusters per batch); check_decisions.py ran on each fixer before fill-address",
+        "No fixer added new behaviour (a retry, cap, branch or exit path, or a removed fallback); any such need was recorded as an ORCHESTRATOR-PAUSE"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Check ~/.claude/skills/skill-creator-ccvw/ for issues using --rounds 2.",
+      "expected_output": "At most 2 rounds are run. Each round runs prepass → code-review in order. If convergence is reached before round 2 completes, the skill stops early (convergence is the only valid early stop that counts as verified clean; the round gate's budget-exhausted at round 2 is the other stop, reported as not verified clean). After 2 rounds or convergence, the result summarizes rounds run and points to the ledger.",
+      "expectations": [
+        "No more than 2 rounds were executed",
+        "Each round followed the prepass → code-review order",
+        "If convergence was reached in round 1 (clean full-sweep code-review), the skill stopped — it did not force a second round",
+        "The deepest root fix that does not widen the interface was applied on every round (round 2 of 2 is not treated specially)",
+        "The forbidden-pause rule was observed — no mid-run offer to pause for 'tail issues' or 'minor findings'"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Run the cascade on ~/.claude/skills/skill-tracer/.",
+      "expected_output": "The code-review tier dispatches two Sonnet generalist agents (G1, G2) on the all-lens prompt in parallel; their findings are unioned before clustering.",
+      "expectations": [
+        "In the code-review tier, exactly 2 Explore agents were dispatched in a single same-turn message",
+        "Both agents were dispatched with subagent_type Explore (read-only) and model sonnet",
+        "A dispatch manifest {\"G1\",\"G2\"} was written to the out-dir before any other work after dispatch returned",
+        "code_review_collect.py was called with agent-flags G1,G2 and both transcript paths"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Find bugs in ~/.claude/skills/drive-organizer/scripts/run_loop.py — but run this check from inside a subagent context.",
+      "expected_output": "The skill detects it is running inside a subagent (Agent tool absent) and immediately stops, telling the user that skill-tracer must be invoked from the top-level Claude session because it needs the Agent tool to dispatch cold reviewers.",
+      "expectations": [
+        "The skill did not attempt to run any cascade stage",
+        "The skill emitted a clear message explaining that it must be invoked from the top-level session",
+        "The message stated that it cannot run as a subagent because it needs the Agent tool to dispatch cold reviewers",
+        "No files in the target were read or modified before the stop"
+      ]
+    }
+  ]
+}
