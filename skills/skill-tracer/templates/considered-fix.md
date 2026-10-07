@@ -11,7 +11,7 @@ Read **[HOW_TO_FIX]** then **[README]** before making any fix and before reading
 - `[HOW_TO_FIX]` is the complete doctrine: how to choose FIX vs STRENGTHEN, the ORCHESTRATOR-PAUSE criteria, blast-closure, and the No-orphan-flag invariant.
 - `[README]` — the target's intent source. Normally its README.md, whose `## Intent` section governs every decision below; when the target has no README.md this path is its SKILL.md and the frontmatter `description:` is the documented intent (how-to-fix.md "The considered-fix constraint").
 
-If either file is unreadable (no README.md and no SKILL.md means the intent is null), emit ORCHESTRATOR-PAUSE for every cluster with the question naming the unreadable path.
+If either file is unreadable, or `[README]` is readable but has neither a `## Intent` section nor a frontmatter `description:` (the intent is null; how-to-fix.md "The considered-fix constraint"), emit ORCHESTRATOR-PAUSE for every cluster with the question naming the unreadable path, or saying the intent is null.
 
 ---
 
@@ -71,7 +71,7 @@ Emit a single JSON object with a `decisions` array — one decision block per cl
 Rules:
 - The top-level value is an object with one key, `decisions`, whose value is the array of per-cluster blocks.
 - `decision` must be exactly `FIX`, `STRENGTHEN`, or `ORCHESTRATOR-PAUSE`.
-- `address` must start with the decision word (upper-case) **immediately followed by a space and an open paren** — `FIX (<file>: <summary>)` or `STRENGTHEN (added at <file>:<lines>: "...")`. A colon right after the kind (e.g. `FIX: added X`) is **REJECTED** by the downstream `fill-address` step (it tallies as zero and the round can't record the fix) — always use the `FIX (…)` / `STRENGTHEN (…)` paren form. Name every blast-covered file touched (for FIX/STRENGTHEN). See `[HOW_TO_FIX]` "Address column formats (required for the ledger row)" for the exact format per decision type.
+- `address` must start with the decision word (upper-case) **immediately followed by a space and an open paren** — `FIX (<file>: <summary>)` or `STRENGTHEN (added at <file>:<lines>: "...")`. An ORCHESTRATOR-PAUSE address is `ORCHESTRATOR-PAUSE (<question>)` or the bare question, which `ledger_cascade.py` wraps in that form. A colon right after the kind (e.g. `FIX: added X`) is **REJECTED** by the downstream `fill-address` step (it tallies as zero and the round can't record the fix) — always use the `FIX (…)` / `STRENGTHEN (…)` paren form. Name every blast-covered file touched (for FIX/STRENGTHEN). See `[HOW_TO_FIX]` "Address column formats (required for the ledger row)" for the exact format per decision type.
 - `touched_files` lists every file edited; empty list for ORCHESTRATOR-PAUSE.
 - `closure` is required on every FIX (the Closure block, `[HOW_TO_FIX]` "Closure block"): four one-line strings labelled `Siblings:`, `Bound:`, `Claims:` and `Blocks:`, none empty. `check_decisions.py` sends back a FIX without them.
 - No `|` and no newlines inside any field value.
@@ -81,7 +81,7 @@ Rules:
 Apply the **deepest root fix that does not widen the interface** (`[HOW_TO_FIX]` "Fix at the root" and
 "Frozen interface"): where a doc and code disagree, decide which side states the documented intent and
 change the other side, at the shared source rather than at each symptom. "Does not widen the interface"
-means no new CLI flag, mode, subcommand, file, ledger field, run-options key, row kind, shared helper module or doc section (moving
+means no new CLI flag, mode, subcommand, file, ledger field, run-options key, row kind, shared helper module, doc section, or any other new interface element such as an output JSON field, status value or exit code (moving
 duplicated logic into an existing shared module is fine; it adds no interface). When the behaviour is
 already correct and only a comment or doc is wrong, fix the comment or doc, not the code.
 

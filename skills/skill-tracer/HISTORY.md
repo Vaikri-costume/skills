@@ -31,10 +31,16 @@ Major upgrade from the published 2.2.0: the 3.x line replaces the three-agent lo
 Built from 3.5.0-trimplus-v3 against the v3 self-run (not converged: 30 flags, 3 cascades, all in the
 SKILL.md post-fix-gate exit-2 remedy paragraph, rewritten in all 5 rounds; about 58k tokens per finding).
 The author picked candidates 1 and 2 ("V3.6"); the exit-2 paragraph is made enforced rather than written.
-#### Known limits (stated plainly)
+**Known limits (stated plainly)**
 - **Did not converge in its own self-run.** Run on itself, v3.6 stalled after round 4 (flags 2, 4, 4, 8) and an extra full sweep still found 2. Cascades fell from 3 (v3) to 0, so the fixer change worked, but about 74k tokens per finding.
 - **The finder is inconsistent between runs.** 16 of 18 flags were not found by earlier rounds, and the two cold reviewers vary a lot from run to run. A clean round is weaker evidence than it looks.
 - **The block-reread gate trusts the fixer's `Blocks:` line.** It checks that a decision names a rewritten block, not that the fixer actually re-read it, so one bad fix got through.
+- **The skill-creator-ccvw re-trace never ran clean.** Eight rounds on the final tree reached the round cap (raw flags 17, 10, 13, 3, 2, 2, 5, 4); 4 flags were still arriving in round 8, so no clean full sweep exists for 3.6.0.
+- **The 11 fixes from the final full review were not reviewed again.** That review (round 9, all 48 files) had a one-round budget, so its fixes rest on the post-fix gate, 89 tests and `doc_lint` alone.
+- **One eval-2 check was never exercised.** No changed-files review came back clean, so the "changed-scope-clean, then re-run with `--scope full`" path is untested, and the fixer manifests and decision-check outputs for rounds 1 to 8 were not kept.
+- **Eval 0 is incomplete.** A `--rounds 2` trace of an archived multi-skill skill stopped in round 2 with that round's 71 findings unfixed; 4 of them were follow-on problems caused by round 1's own fixes.
+- **Eval 5 cannot tell the versions apart.** The nested-subagent stop check scores 4 of 4 on both the old and the new version.
+- **Multi-skill folders are not handled.** On a target that holds two skills in one folder, the fixer reads its intent only from `<target>/README.md` or `<target>/SKILL.md`, cannot find each skill's own design docs and pauses clusters as "intent unreadable"; `doc_lint.py`'s `$VAR` check reads only the top-level `SKILL.md`, so variables an inner `SKILL.md` defines are reported as undefined. Trace each skill folder as its own target.
 #### Added
 - **Rewritten-block gate.** `post_fix_gate.py check` finds each rewritten doc block (3 or more lines,
   at least 2 and 30% changed), lints and name-checks its untouched lines too, and raises a
@@ -50,7 +56,47 @@ The author picked candidates 1 and 2 ("V3.6"); the exit-2 paragraph is made enfo
   more than 12 untouched lines are counted in `siblings_omitted`, not listed; at most 15 terms, fewest
   lines first. On the v3 tree with a 40-line SKILL.md edit: 2565 hits across 35 terms before, 54 across 15 after.
 - `snapshot` lint failure is its own cause (`snapshot-lint-failed`): the batch is not dispatched.
-Tests: 87 (10 new). doc_lint 0, cascade_sweep clean.
+#### Changed
+After the v3.6 build (2026-10-06, before shipping): edits made after the v3.6 build, from the publisher-run audit and from the skill-creator-ccvw re-trace.
+- **Post-fix gate procedure moved** to `references/dispatch.md` "Post-fix gate"; SKILL.md keeps a
+  summary and the exit-2 table. Step-1 reads are batched; cleanup is not repeated in Present result.
+- **`metadata.version` removed** (nothing reads it; versions live in this file). Session-log markers are
+  `SKILL:` / `RUN:` / `STEP:` (start, closed, converged). Added an Example section and a Troubleshooting table.
+  The description is narrowed to skills.
+- **Merge-check** finds the source copy itself (the installed `~/.claude/skills/<basename>/` or the folder
+  of that name in the git checkout holding the target): one candidate runs, none skips, several ask one question.
+- **Repeated auto-pause** is resolved as any pause and becomes a USER-PAUSE only when the intent is not
+  derivable. Handler-shape is marked reserved (code kept); verify-auditability is an optional manual check;
+  a fresh invocation starts a fresh run ("can be extended" dropped).
+- **Fix-depth rule examples-only (re-trace C4).** The frozen-interface list (CLI flag, mode, subcommand,
+  file, ledger field, run-options key, row kind, shared helper module, doc section) is examples: any
+  other new interface element, such as an output JSON field, status value or exit code, also pauses.
+- **Rename radius (C3).** A removed function or other defined name is a shared token for
+  `check_fix_radius.py`; a `stale-sibling` gate problem is sent to the fixer with that command, and
+  goes to the cluster that defined the name when no cluster touched the file.
+- **Auto-pause loop bound (C6).** `split_repeat_clusters` restarts a finding's repeat count at a resolving
+  row, and `auto_pause` carries `resolutions`; a finding that returns after a resolved pause is a
+  USER-PAUSE, so the prepass loop is bounded.
+- **Fixer model rule.** `fixer_model` takes the pass's cluster count: Opus only above 15 clusters, else
+  Sonnet. The earlier "Opus when a `.py` file is touched" rule came from 3.2.0-trimplus, not from the owner,
+  and conflicted with the agents-Sonnet-or-lesser rule; it is removed.
+- **`cluster_enforce.py` guards (coordinator-approved).** Gate 1 rejects a clusters file with a missing or
+  repeated cluster id or an empty flags list, and a `--verified-flags` status other than `verified-flags`;
+  staging runs before rows and the marker are written, so a staging failure leaves no PENDING rows.
+  These guards add exit-1 branches (the post-fix gate flagged them as new behaviour); they fix real
+  failures, not features, and are documented in `references/script-contract.md`.
+- **Doc fixes from the re-trace (rounds 1 to 8, 61 flags):** tier-script wording (`prepass_run.py` and
+  `cluster_enforce.py` print `batches`), `substep_label_mismatch` roman-numeral labels, resume rules in
+  `references/recovery.md`, the exit-2 cause table (observable named per cause), `code_review_run.py`
+  single-pass slot substitution, null-intent and pause-address wording in the considered-fix template,
+  `prepass_run.py` exit-1 causes, `check_fix_radius.py` output keys, directory-order note for `--agent-transcripts`.
+#### Changed
+At ship (2026-10-07):
+- **Final full review and publisher pass.** 11 fixes from the round-9 full review, publisher polish and audit wording fixes (Expected output lines, one-clause WHY lines, a placeholder path in an example), and a note that cold reviewers and fixers are separate agents. README gains "Features & modes" and "Structure" sections and fuller "How to invoke" bullets. Not applied, deferred to a later "improve skill-tracer" task: the root-level layout (`cascade_sweep.py`, `cluster_prepass.py`, `prompts/`, `templates/`, `detectors/`, `tests/` outside `scripts/` and `assets/`) and the self-run history wording in references. The proactive start stays out of the description.
+**Re-trace result (not clean)**
+skill-creator-ccvw's re-trace ran 8 rounds (the round cap) on this tree: raw flags per round 17, 10, 13, 3, 2, 2, 5, 4, every flag fixed, no clean full sweep. Rounds 5 to 8 reviewed only the changed files.
+A fresh full-skill review of all 48 files then found 11 more flags (cascade 3: how-to-fix versus the considered-fix template on null intent, a docstring quoting SKILL.md text rewritten earlier, the Troubleshooting row; finder miss 8, in code and docs no earlier round had flagged), fixed after the sweep and not re-reviewed. Those fixes have had no second review, so treat this tree as not verified clean.
+Tests: 89 (12 new since the build). doc_lint 0, cascade_sweep clean.
 
 ### 3.5.0-trimplus-v3 — 2026-10-05 (never published — folded into 3.6.0)
 Fixer changes against the 7 fixer cascades of the v3 analysis (`/home/claude/stwork/cascade-analysis.md`).

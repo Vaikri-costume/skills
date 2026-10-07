@@ -345,7 +345,11 @@ def main() -> int:
         "--target",
         metavar="DIR",
         default=None,
-        help="Root directory of the audit target; enables handler_shape sub-clustering.",
+        help=(
+            "Root directory of the audit target, read to compute handler_shape. handler_shape "
+            "is computed only for checks in _EXCEPT_CHECKS, which is empty, so --target does "
+            "not change the clusters."
+        ),
     )
     ap.add_argument(
         "--ledger",
@@ -386,7 +390,11 @@ def main() -> int:
     if args.json:
         print(json.dumps({"clusters": clusters}, indent=2))
     else:
-        key_desc = "check × file × handler_shape" if args.target else "check × file"
+        key_desc = (
+            "check × file × handler_shape"
+            if any("handler_shape" in c for c in clusters)
+            else "check × file"
+        )
         print(f"=== Prepass mechanical clusters: {len(clusters)} (key = {key_desc}) ===")
         for c in clusters:
             ln = ",".join(str(x) for x in c["lines"][:8]) + ("…" if len(c["lines"]) > 8 else "")

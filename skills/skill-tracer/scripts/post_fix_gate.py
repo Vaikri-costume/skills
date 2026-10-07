@@ -113,20 +113,21 @@ EXIT2 = (
     ("unreadable-target-file", "`cannot read <path>: ...` (an in-scope target file that is not UTF-8 text)",
      "fix that file and re-run"),
     ("snapshot-unusable", "`unreadable snapshot <path>: ...` (the `--snapshot` path names no file, or the file is not a snapshot), "
-     "or `lint data is not a JSON object` / `<source> lint data is not a JSON object` with this `cause` "
-     "(the snapshot's stored `lint` field is malformed)",
+     "or `lint data is not a JSON object` / `<source> lint data is not a JSON object` when the stderr JSON "
+     "`cause` is this one (printed by `check`; the snapshot's stored `lint` field is malformed)",
      "the batch's baseline is lost: take no new snapshot after the batch has edited the target, report the batch "
      "as unchecked and `SendMessage` the fixer to re-emit the decision of each of its clusters as "
      "`ORCHESTRATOR-PAUSE (post-fix gate: snapshot missing or unreadable)`"),
-    ("lint-run-failed", "`<script> printed no JSON ...`, `<script> exited <N>: ...` or `lint data is not a JSON object`, "
-     "printed by `check` (`doc_lint.py` or `cascade_sweep.py` failed)",
+    ("lint-run-failed", "`<script> printed no JSON ...`, `<script> exited <N>: ...` (`doc_lint.py` or `cascade_sweep.py` failed) or "
+     "`lint data is not a JSON object` / `<source> lint data is not a JSON object` when the stderr JSON `cause` "
+     "is this one (printed by `check` on a lint it just ran)",
      "report the batch as unchecked and `SendMessage` the fixer to re-emit the decision of each of its clusters as "
      "`ORCHESTRATOR-PAUSE (post-fix gate: lint run failed)`"),
-    ("snapshot-lint-failed", "the same texts, printed by `snapshot` (before the batch is dispatched)",
+    ("snapshot-lint-failed", "the same texts, with this stderr JSON `cause`, printed by `snapshot` (before the batch is dispatched)",
      "do not dispatch the batch: leave its transcript out of the fix-recording step so fill-address records its "
      "clusters as ORCHESTRATOR-PAUSE"),
-    ("baseline-unusable", "`unreadable --baseline-lint <path>: ...` or `<source> lint data is not a JSON object` "
-     "(including a dict holding only one of `doc_lint` / `cascade`)",
+    ("baseline-unusable", "`unreadable --baseline-lint <path>: ...` or `<source> lint data is not a JSON object` when the stderr JSON "
+     "`cause` is this one (including a dict holding only one of `doc_lint` / `cascade`)",
      "fix that file and re-run (SKILL.md's commands never pass `--baseline-lint`)"),
     ("ledger-unreadable", "`unreadable ledger <path>: ...` (`survival`)", "stop (\"Broken ledger\" in `references/script-contract.md`)"),
     ("survival-row-ambiguous", "`--row <id> matches <N> ledger rows (pass --round)`, N above 1 (`survival`)",

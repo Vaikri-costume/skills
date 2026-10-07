@@ -93,8 +93,8 @@ def cmd_append(args) -> int:
     errs = []
     for fname, val in (("root-cause", args.root_cause), ("address", args.address), ("flags", args.flags)):
         errs.extend(lc.reject_unsafe(fname, val))
-    for fname, val in (("root-cause", args.root_cause), ("address", args.address)):
-        errs.extend(lc.reject_banned_vocabulary(fname, val))
+    # Address only, as in ledger_cascade.py: a root-cause cell is quoted from the target's own text.
+    errs.extend(lc.reject_banned_vocabulary("address", args.address))
     # Address kind: must begin with a known kind at a TOKEN BOUNDARY (rejects bare `FIX`,
     # `FIXED…`, `STRENGTHENING`) — the address formats are in references/how-to-fix.md "Address column formats".
     if not lc.address_kind_ok(args.address):

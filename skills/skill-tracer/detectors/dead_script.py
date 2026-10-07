@@ -43,8 +43,10 @@ _PACKAGE_MARKERS = {"__init__.py", "__main__.py", "conftest.py"}
 # Matches a .py basename anywhere in text: e.g. "helper.py"
 _SCRIPT_NAME_RE = re.compile(r"\b([\w-]+\.py)\b")
 
-# Matches import stems: `import foo` or `from foo import …` (module stem only, not dotted)
-_IMPORT_STEM_RE = re.compile(r"^\s*(?:from|import)\s+([\w]+)", re.MULTILINE)
+# Matches import stems: `from foo import …`, `import foo` and `import foo, bar` (module stems only,
+# not dotted)
+_IMPORT_STEM_RE = re.compile(r"^\s*from\s+([\w]+)", re.MULTILINE)
+_IMPORT_LIST_RE = re.compile(r"^\s*import\s+([\w]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w]+(?:\s+as\s+\w+)?)*)", re.MULTILINE)
 
 
 def _find_skill_root(scripts_dir: Path) -> Path:
@@ -90,6 +92,8 @@ def _collect_py_import_stems(root: Path, exclude: Path) -> set[str]:
         except OSError:
             continue
         stems.update(_IMPORT_STEM_RE.findall(src))
+        for names in _IMPORT_LIST_RE.findall(src):
+            stems.update(part.split()[0] for part in names.split(","))
     return stems
 
 

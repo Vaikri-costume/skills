@@ -9,7 +9,10 @@ clusters the verified flags by root cause.
 
 Args:
     --agent-transcripts  Comma-separated JSONL paths (one per agent, in --agent-flags order), or a
-                         directory of *.jsonl files.
+                         directory of *.jsonl files. A directory binds by sorted filename, not
+                         dispatch order (files are agent-<agentId>.jsonl), so --agent-flags must
+                         then list the flags in that sorted filename order; the comma form is
+                         the one that follows dispatch order.
     --agent-flags        Comma-separated flags in the same order as --agent-transcripts
                          (default: G1,G2).
     --target             Skill directory.
@@ -40,9 +43,11 @@ Behavior (in order):
         each agent's findings get ITS flag prefix (G1.., G2..),
         numbered from max_flag_in_round(ledger, rnd, prefix)+1.
         Independent per-prefix sequences.
-  (d) ADVISORY BLAST GROUPS — compute advisory token-blast groupings over
-        all verified flags (group by shared token or shared file:line region)
-        with ledger_common.compute_advisory_groups. Advisory only: the orchestrator may
+  (d) ADVISORY BLAST GROUPS — compute advisory blast groupings over
+        all verified flags (group by the same lowercased file basename plus first cited line
+        number; nearby lines do not group; reviewer flags carry no token, so the shared-token
+        key of ledger_common.compute_advisory_groups never applies here) with
+        ledger_common.compute_advisory_groups. Advisory only: the orchestrator may
         merge groups; cluster_enforce.py enforces that no advisory group is split across
         orchestrator clusters.
   (e) EMIT verified-flags JSON:
@@ -321,7 +326,7 @@ def main() -> int:
         "--agent-transcripts", required=True,
         help=(
             "Comma-separated paths to the agent JSONL transcripts (one per flag prefix), "
-            "OR a directory of *.jsonl files."
+            "OR a directory of *.jsonl files (bound to --agent-flags by sorted filename)."
         ),
     )
     ap.add_argument(
@@ -598,8 +603,9 @@ def main() -> int:
         all_findings.extend(assigned)
 
     # ------------------------------------------------------------------
-    # (d) ADVISORY BLAST GROUPS — group verified flags by shared token
-    #     (same token OR same file:line region → one advisory group).
+    # (d) ADVISORY BLAST GROUPS — group verified flags by the same lowercased
+    #     file basename plus first cited line number (reviewer flags carry no
+    #     token) → one advisory group.
     #     This is advisory only: the orchestrator reads this and clusters
     #     by root cause; cluster_enforce.py enforces that advisory groups
     #     are not split across orchestrator clusters.

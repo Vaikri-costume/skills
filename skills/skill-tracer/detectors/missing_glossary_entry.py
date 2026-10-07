@@ -2,7 +2,7 @@
 
 Mechanical, deterministic check: this skill's own naming convention (see
 SKILL.md "## The four invariants" — `1. **Cold-read.** Every code-review agent...`,
-and SKILL.md's fixer rule — `**Fixer dispatch.** The tier script prints...`)
+and SKILL.md's fixer rule — `**Fixer dispatch.** The fixer-staging script (...`)
 opens a bullet or a standalone paragraph with a bolded phrase immediately
 followed by `.` or `:` to NAME a concept the rest of the sentence defines.
 Every name coined this way — plus every backtick identifier used as a stable

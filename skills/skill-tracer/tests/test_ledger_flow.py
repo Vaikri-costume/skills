@@ -1,5 +1,4 @@
-"""begin-round / close-round gate / fill-address / stale-PENDING supersession / legacy marker and
-run-options migration (scripts/append_ledger.py, scripts/ledger_cascade.py, scripts/ledger_common.py). Run: python3 -m unittest discover -s tests   (from the skill root), or
+"""begin-round / close-round gate / fill-address / stale-PENDING supersession / legacy in-flight marker (scripts/append_ledger.py, scripts/ledger_cascade.py, scripts/ledger_common.py). Run: python3 -m unittest discover -s tests   (from the skill root), or
 python3 tests/test_ledger_flow.py."""
 import json, subprocess, sys, tempfile, unittest
 from pathlib import Path
@@ -34,6 +33,26 @@ class LedgerFlow(unittest.TestCase):
                                "--runtime", "2026-10-05T10:09", "--target", self.tgt).stdout)
         self.assertTrue(again["already_started"])  # a re-run never rewinds the marker
         self.assertEqual(lc.ledger_target(text), self.tgt)
+
+    def test_resolving_row_restarts_the_repeat_count(self):
+        hdr = "| Runtime | Round | Phase | Cluster | Root cause | Address | Flags |\n|---|---|---|---|---|---|---|\n"
+        def row(c, addr):
+            return f"| 2026-10-06T10:00 | 1 | Prepass | {c} | sig-a | {addr} | |\n"
+        led = Path(self._tmp.name) / "r.md"
+        sig = lambda rc: rc or None  # noqa: E731
+        clusters = [{"cluster": "C9", "flags": []}]
+        csig = lambda c: "sig-a"  # noqa: E731
+        led.write_text(hdr + row("C1", "FIX (a: x)") + row("C2", "FIX (a: y)"))
+        fixer, paused = lc.split_repeat_clusters(led, 1, "Prepass", clusters, sig, csig)
+        self.assertEqual((len(fixer), len(paused)), (0, 1))
+        led.write_text(led.read_text() + row("C3", "FIX (a: z; resolves ORCHESTRATOR-PAUSE G1)"))
+        fixer, paused = lc.split_repeat_clusters(led, 1, "Prepass", clusters, sig, csig)
+        self.assertEqual((len(fixer), len(paused)), (1, 0))
+        self.assertEqual(fixer[0]["resolutions"], 1)
+        led.write_text(led.read_text() + row("C4", "FIX (a: p)") + row("C5", "FIX (a: q)"))
+        fixer, paused = lc.split_repeat_clusters(led, 1, "Prepass", clusters, sig, csig)
+        self.assertEqual((len(fixer), len(paused)), (0, 1))
+        self.assertEqual(lc.auto_pause_report(paused)[0]["resolutions"], 1)
 
     def test_begin_round_refuses_other_target_and_adopts_on_legacy_ledger(self):
         other = Path(self._tmp.name) / "elsewhere" / "t"
@@ -104,13 +123,10 @@ class LedgerFlow(unittest.TestCase):
 
 
 class SmallHelpers(unittest.TestCase):
-    def test_fixer_model_by_file_kind(self):
-        doc = {"cluster": "C1", "members": [{"loc": "references/x.md:3"}]}
-        code = {"cluster": "C2", "file": "scripts/a.py"}
-        self.assertEqual(lc.fixer_model([doc]), "sonnet")
-        self.assertEqual(lc.fixer_model([doc, code]), "opus")
-        # a code site reached only through the blast radius still counts
-        self.assertEqual(lc.fixer_model([doc], [{"cluster": "C1", "radius": ["detectors/d.py:9"]}]), "opus")
+    def test_fixer_model_by_cluster_count(self):
+        self.assertEqual(lc.fixer_model(1), "sonnet")
+        self.assertEqual(lc.fixer_model(15), "sonnet")
+        self.assertEqual(lc.fixer_model(16), "opus")
 
     def test_runtime_slug_and_pending(self):
         self.assertEqual(lc.runtime_slug("2026-10-05T10:00"), "2026-10-05T10-00")
@@ -120,7 +136,7 @@ class SmallHelpers(unittest.TestCase):
 
 
 class LegacyMigration(unittest.TestCase):
-    """Ledgers written by 3.0 (minor-bugs tier, mode/cr-mode run options) keep working."""
+    """Ledgers written by 3.0 with the minor-bugs tier marker keep working (the legacy mode/cr-mode run-options migration is tested in tests/test_round_gate.py)."""
 
     def test_minor_bugs_marker_resumes_as_code_review(self):
         m = lc.parse_in_flight("# Audit ledger — t\nin-flight:: T1 minor-bugs dispatched-3 round-2\n")

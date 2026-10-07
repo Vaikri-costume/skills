@@ -27,7 +27,7 @@ Usage:
   --ignore-case : case-insensitive grep.
 
 Output: JSON {token, occurrences:[{file,line,text}], files_with_token:[...],
-              touched:[...], uncovered:[...]}. Exit 0 if uncovered is empty, 1 if not,
+              touched:[...], allow:[...], uncovered:[...]}. Exit 0 if uncovered is empty, 1 if not,
 2 on usage error (skill-root missing, no --token). Pure-stdlib.
 """
 from __future__ import annotations

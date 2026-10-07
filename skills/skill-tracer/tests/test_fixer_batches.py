@@ -32,10 +32,10 @@ def code(i):
 
 
 class BatchSplit(unittest.TestCase):
-    def test_twelve_or_fewer_is_one_batch_opus_if_any_code(self):
+    def test_twelve_or_fewer_is_one_batch_sonnet(self):
         clusters = [doc(i) if i % 2 else code(i) for i in range(1, 13)]  # 6 code, 6 doc
         [b] = lc.fixer_batches(clusters, [])
-        self.assertEqual(b["model"], "opus")
+        self.assertEqual(b["model"], "sonnet")
         self.assertEqual(len(b["clusters"]), 12)
         self.assertEqual([c["cluster"] for c in b["clusters"]][:6], [f"C{i}" for i in (2, 4, 6, 8, 10, 12)])
         [b] = lc.fixer_batches([doc(i) for i in range(1, 13)], [])
@@ -45,7 +45,7 @@ class BatchSplit(unittest.TestCase):
         clusters = [doc(i) if i % 2 else code(i) for i in range(1, 31)]  # 15 code, 15 doc
         batches = lc.fixer_batches(clusters, [])
         self.assertEqual([len(b["clusters"]) for b in batches], [12, 3, 12, 3])
-        self.assertEqual([b["model"] for b in batches], ["opus", "opus", "sonnet", "sonnet"])
+        self.assertEqual([b["model"] for b in batches], ["opus"] * 4)  # 30 clusters: above 15
         self.assertEqual([b["batch"] for b in batches], [1, 2, 3, 4])
         ids = [c["cluster"] for b in batches for c in b["clusters"]]
         self.assertEqual(sorted(ids), sorted(c["cluster"] for c in clusters))  # each cluster exactly once
@@ -90,13 +90,35 @@ class StagedBatches(unittest.TestCase):
         out = json.loads(r.stdout)
         batches = out["batches"]
         self.assertEqual([len(b["clusters"]) for b in batches], [2, 12, 1])  # 15 clusters: split
-        self.assertEqual([b["model"] for b in batches], ["opus", "sonnet", "sonnet"])
+        self.assertEqual([b["model"] for b in batches], ["sonnet"] * 3)  # 15 clusters: not above 15
         for b in batches:
             text = Path(b["staged_prompt"]).read_text()
             self.assertIn(f"code-review-b{b['batch']}-", b["staged_prompt"])
             self.assertIn(", ".join(b["clusters"]), text)  # the batch's own ids in the output check
         self.assertIn("ONE AT A TIME", out["then"][0])
         self.assertIn("check_decisions.py", out["then"][1])
+
+    def enforce(self, vf_obj, clusters):
+        vf, cl = self.out / "vf2.json", self.out / "cl2.json"
+        vf.write_text(json.dumps(vf_obj))
+        cl.write_text(json.dumps({"clusters": clusters}))
+        return run("cluster_enforce.py", str(self.led), "--round", "1", "--runtime", RT, "--target", str(self.tgt),
+                   "--out-dir", str(self.out), "--verified-flags", str(vf), "--clusters", str(cl))
+
+    def test_cluster_enforce_refuses_malformed_clusters_and_flagless_status(self):
+        flags = [{"agent_flag": f"G1{i}", "file": "a.md", "tag": "t", "claim": f"a.md:{i} \"x\"",
+                  "target": f"t{i}"} for i in (1, 2)]
+        vf = {"status": "verified-flags", "flags": flags}
+        for clusters in ([{"cluster": "C1", "flags": ["G11", "G12"]}, {"cluster": "C2", "flags": []}],
+                         [{"cluster": "C1", "flags": ["G11"]}, {"cluster": "C1", "flags": ["G12"]}],
+                         [{"flags": ["G11", "G12"]}]):
+            r = self.enforce(vf, clusters)
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertEqual(json.loads(r.stderr)["gate"], "no-drop")
+        self.assertFalse(self.led.read_text().count("PENDING"))
+        r = self.enforce({"status": "code-review-clean"}, [])
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(json.loads(r.stderr)["gate"], "verified-flags")
 
     def test_staged_prompt_states_contract_and_banned_vocabulary_first(self):
         [b] = lc.stage_fixer_batches(clusters=[doc(1)], blast=[], skill_root=self.tgt, rnd=1, runtime=RT,

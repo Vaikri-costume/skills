@@ -1,5 +1,7 @@
 # How to Fix — Fix-Executor Doctrine
 
+Contents: context · FIX vs STRENGTHEN · considered-fix and pauses · no-orphan-flag · fix depth · frozen interface · batch edits · fix-impact closure · closure block · naming · fix comments · root not symptom · fix everything · address formats · regression vs cascade · escalation ladder · verifying STRENGTHEN · decision tree.
+
 This guide tells a fix-executor agent exactly how to decide and apply every fix or strengthen for a confirmed defect. Read it before touching any file.
 
 ---
@@ -47,11 +49,11 @@ Any address that claims "this defect is intentional" without one of the four leg
 
 ## The considered-fix constraint and ORCHESTRATOR-PAUSE criteria
 
-Before applying any FIX, check it against the target skill's documented intent (the README `## Intent` section; if absent, the SKILL.md frontmatter `description:`).
+Before applying any FIX, check it against the target skill's documented intent (the README `## Intent` section; the SKILL.md frontmatter `description:` only when the target has no README.md).
 
 **Would this fix trade away something the skill explicitly optimises for?** If yes → `ORCHESTRATOR-PAUSE` with the conflict stated precisely. Do not apply a "make the tracer happy" edit that degrades the skill's design.
 
-If intent is null (no README, no `description:`), say so in your ORCHESTRATOR-PAUSE and escalate — do not guess at intent.
+If intent is null (a README.md with no `## Intent` section, or no README.md and no `description:`), say so in your ORCHESTRATOR-PAUSE and escalate — do not guess at intent.
 
 **Three independent ORCHESTRATOR-PAUSE criteria** — any one of these alone is sufficient to escalate:
 
@@ -61,7 +63,7 @@ If intent is null (no README, no `description:`), say so in your ORCHESTRATOR-PA
 
 **ORCHESTRATOR-PAUSE is decision-based only — never a fix-failure fallback.** If a FIX attempt did not stick (regression), the fix-executor owns the re-fix — that is an execution problem, not a reason to escalate. Do not auto-escalate to ORCHESTRATOR-PAUSE because fixes are failing. The one precedence exception is the post-fix gate (SKILL.md "Post-fix gate"): when the orchestrator, after its 2 inner passes or at once for a `new-behaviour` problem, asks you to re-emit a decision as `ORCHESTRATOR-PAUSE (post-fix gate: ...)`, that gate outcome overrides this rule; re-emit it as asked.
 
-**Promotion rule (orchestrator layer).** The orchestrator RESOLVES an ORCHESTRATOR-PAUSE by default — deciding the intent-preserving fix from the target's README `## Intent` / the skill's own rationale. It PROMOTES the pause to USER-PAUSE ONLY when genuine user attention is truly needed (the intent is not derivable from the README or skill). Promoting to avoid making a derivable call is the lazy-pause anti-pattern and is forbidden.
+**Promotion rule (orchestrator layer).** The orchestrator RESOLVES an ORCHESTRATOR-PAUSE by default — deciding the intent-preserving fix from the target's README `## Intent` / the skill's own rationale. It PROMOTES the pause to USER-PAUSE ONLY when genuine user attention is truly needed (the intent is not derivable from the README or skill). Promoting to avoid making a derivable call is the lazy-pause anti-pattern and is forbidden. The one standing exception is a prepass `auto_pause` entry with `resolutions` of 1 or more (the finding came back after a resolved pause): that is a USER-PAUSE whether or not the intent is derivable, which bounds the prepass loop (SKILL.md prepass result handling).
 
 ---
 
@@ -80,7 +82,7 @@ There is no DISMISS branch.
 This is the single rule for how big a fix is (skill-tracer's SKILL.md restates it for the orchestrator as "Fix depth"). It resolves the old tension between "smallest change" and "deepest fix" in favour of depth, bounded by the interface:
 
 - *Deepest:* fix the mechanism, not the symptom ("Fix at the root — not the symptom" below): refactor over band-aid, generalise over special-case, and fix every finding regardless of "minor". Do not prefer a smaller patch that leaves the root unfixed. This holds on every round, including the last budgeted one.
-- *Does not widen the interface:* the fix adds no CLI flag, mode, subcommand, file, ledger field, run-options key, row kind, shared helper module or doc section (moving duplicated logic into an existing shared module is fine; it adds no interface). The interface is frozen from round 1 of a run (see "Frozen interface" below).
+- *Does not widen the interface:* the fix adds no CLI flag, mode, subcommand, file, ledger field, run-options key, row kind, shared helper module, doc section, or any other new interface element such as an output JSON field, status value or exit code (moving duplicated logic into an existing shared module is fine; it adds no interface). The interface is frozen from round 1 of a run (see "Frozen interface" below).
 - *Smaller when the behaviour is right:* when the behaviour is already correct and only a comment or doc is wrong, fix the comment or doc, not the code.
 - *No new behaviour:* a fix makes the doc match the code, or the code match its documented contract; adding a retry, cap, branch or exit path, or removing a fallback, is an ORCHESTRATOR-PAUSE (see "Frozen interface" below).
 - *Minimum sprawl:* do not rewrite text the fix does not need. A whole-section rewrite turns a one-cluster round into a multi-cluster round. Re-read the surrounding paragraph after the edit.
@@ -91,7 +93,7 @@ Intent-preservation (the considered-fix constraint above) still governs.
 
 ## Frozen interface
 
-From round 1 of a run, a fixer may **not** add a CLI flag, mode, subcommand, file, ledger field, run-options key, row kind, shared helper module or doc section. When the deepest root fix would need one, apply no edit for that cluster and emit `ORCHESTRATOR-PAUSE` naming the addition and the best non-widening alternative; the orchestrator decides (and promotes to USER-PAUSE only if intent cannot be derived). The one exception is a real behaviour bug (wrong output, wrong exit code, a crash) that cannot be fixed any other way: then make the smallest such addition and say in the FIX address why no non-widening fix exists. When the behaviour is already correct and only a comment or doc is wrong, fix the comment or doc, not the code. A fixer adds no new behaviour: a fix makes the doc match the code, or the code match its documented contract. Adding a retry, cap, branch or exit path, or removing a fallback, is new behaviour: apply no edit for that cluster and emit ORCHESTRATOR-PAUSE naming it. `assemble_fix_prompt.py` fills the fixer prompt's `[INTERFACE_RULE]` slot with this rule for the round.
+From round 1 of a run, a fixer may **not** add a CLI flag, mode, subcommand, file, ledger field, run-options key, row kind, shared helper module, doc section, or any other new interface element such as an output JSON field, status value or exit code. When the deepest root fix would need one, apply no edit for that cluster and emit `ORCHESTRATOR-PAUSE` naming the addition and the best non-widening alternative; the orchestrator decides (and promotes to USER-PAUSE only if intent cannot be derived). The one exception is a real behaviour bug (wrong output, wrong exit code, a crash) that cannot be fixed any other way: then make the smallest such addition and say in the FIX address why no non-widening fix exists. When the behaviour is already correct and only a comment or doc is wrong, fix the comment or doc, not the code. A fixer adds no new behaviour: a fix makes the doc match the code, or the code match its documented contract. Adding a retry, cap, branch or exit path, or removing a fallback, is new behaviour: apply no edit for that cluster and emit ORCHESTRATOR-PAUSE naming it. `assemble_fix_prompt.py` fills the fixer prompt's `[INTERFACE_RULE]` slot with this rule for the round.
 
 *Versioned keys and formats.* In any round, a change to a persisted key or format (a ledger column, a run-options key, the in-flight marker, a JSON field another script reads) must be versioned and migrated: the reader keeps accepting the old form and converts it, and the doc that describes the format names both forms. A rename without a migration breaks every ledger written before it.
 
@@ -120,7 +122,7 @@ After deciding FIX, and **before** emitting the decision, enumerate the blast ra
 
 **Mechanical enforcement — required:**
 
-For every FIX that changed a shared token (renamed step number, flag prefix, status string, value, format, filename, variable, cross-reference), run:
+For every FIX that changed a shared token (renamed step number, flag prefix, status string, value, format, filename, variable, function or other defined name, cross-reference), run:
 
 ```bash
 python3 ~/.claude/skills/skill-tracer/scripts/check_fix_radius.py \
@@ -133,7 +135,7 @@ python3 ~/.claude/skills/skill-tracer/scripts/check_fix_radius.py \
 
 Do **not** emit the cluster's FIX decision until the check exits 0 (the ledger row itself is written later by `ledger_cascade.py --mode fill-address` from that decision; a fixer never edits the ledger). On exit 1: fix the named uncovered sites and re-run. If an in-scope site legitimately keeps the token (e.g. a deliberate quotation of the old value in a WHY comment), add it to `--allow` and state the reason in the FIX address (`README.md`, `HISTORY.md` and `LICENSE` are outside the check's scope and never need `--allow`): pass `--allow <files>` to `check_fix_radius.py` yourself, and name those files and the reason in your decision's address; the orchestrator then passes the same `--allow <files>` to `ledger_cascade.py --mode fill-address`, whose mechanical re-check uses exactly the files it is given.
 
-**Where this is enforced, and where it is not.** For a TOKEN-BLAST cluster (Prepass clusters whose detector names a shared token), `ledger_cascade.py --mode fill-address` re-runs this exact check itself (via `fix_blast.run_check_fix_radius_all`, once per token of the cluster) against your decision's `touched_files` plus the cluster's own definition file, which the blast computation already counted as touched (`auto_touched` in the blast entry) — it does not trust that you ran it. It refuses to write any row (every decision of the call rejected) if `--skill-root`/`--blast-json` are missing or if any TOKEN-BLAST FIX still has uncovered sites. Code Review clusters are always LOCAL with no token (a reviewer's finding is prose, so no token is known before the fix), so for a Code Review FIX that changes a shared token the closure check rests on your own `check_fix_radius.py` run; the only later backstop is the next round's cold sweep. Running the check yourself is therefore required on every tier — on TOKEN-BLAST clusters the mechanical re-check is a backstop, not a substitute.
+**Where this is enforced, and where it is not.** For a TOKEN-BLAST cluster (Prepass clusters whose detector names a shared token), `ledger_cascade.py --mode fill-address` re-runs this exact check itself (via `fix_blast.run_check_fix_radius_all`, once per token of the cluster) against your decision's `touched_files` plus the cluster's own definition file, which the blast computation already counted as touched (`auto_touched` in the blast entry) — it does not trust that you ran it. It refuses to write any row (every decision of the call rejected) if `--skill-root`/`--blast-json` are missing or if any TOKEN-BLAST FIX still has uncovered sites. Code Review clusters are always LOCAL with no token (a reviewer's finding is prose, so no token is known before the fix), so for a Code Review FIX that changes a shared token the closure check rests on your own `check_fix_radius.py` run; the post-fix gate adds a `stale-sibling` check for a removed file, flag or defined name (`post_fix_gate.py` `stale_siblings`), but not for a changed value or format, whose only later backstop is the next round's cold sweep. Running the check yourself is therefore required on every tier — on TOKEN-BLAST clusters the mechanical re-check is a backstop, not a substitute.
 
 ---
 
@@ -267,13 +269,13 @@ Name the file, exact line range where the new text landed, and the first 80 char
 ```
 ORCHESTRATOR-PAUSE (<one-line question with both candidate fixes named>)
 ```
-State the question and the two or three plausible fix paths so the orchestrator can answer without requesting further context.
+The bare question is also accepted: `ledger_cascade.py` wraps it as `ORCHESTRATOR-PAUSE (<question>)`, and `templates/considered-fix.md` and `assemble_fix_prompt.py` allow either form. State the question and the two or three plausible fix paths so the orchestrator can answer without requesting further context.
 
 ---
 
 ## Regression vs cascade — how to read a reappearing root cause
 
-- **Regression** — a later round's cluster has the same root cause as one already addressed. The prior address was incomplete. Investigate and strengthen further, and name the regression and the failure mode of the prior address in the new FIX address, using the exact phrase `regression of round <N> <C-id>` for the prior cluster (e.g. `FIX (scripts/x.py: regression of round 2 C4 — the prior fix patched one call site; ...)`): `scripts/render_ledger.py` highlights a regression row by that phrase in the Address column. The Root cause cell is script-generated, and the ledger repeat-count guard parses it, so a fixer never edits or prefixes it.
+- **Regression** — a later round's cluster has the same root cause as one already addressed. The prior address was incomplete. Investigate and strengthen further, and name the regression and the failure mode of the prior address in the new FIX address, using the exact phrase `regression of round <N> <C-id>` for the prior cluster (e.g. `FIX (<file>: regression of round 2 C4 — the prior fix patched one call site; ...)`): `scripts/render_ledger.py` highlights a regression row by that phrase in the Address column. The Root cause cell is script-generated, and the ledger repeat-count guard parses it, so a fixer never edits or prefixes it.
 - **Discovery cascade (expected)** — later clusters are genuinely independent latent defects a prior fix exposed. Raw flag count may stay flat or tick up. This is healthy.
 - **Propagation cascade (avoidable)** — a later cluster is the same change as a prior FIX left unpropagated. Fix-impact closure ("Fix-impact closure — cover the full blast radius" above) should have caught it in the earlier round. When you spot one, note it and tighten the closure pass.
 

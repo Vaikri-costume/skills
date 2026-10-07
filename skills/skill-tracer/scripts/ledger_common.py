@@ -86,7 +86,7 @@ IN_FLIGHT_RE = re.compile(r"^in-flight::[ \t]*(.*)$", re.MULTILINE)
 # (A cold agent also emits "PRE-FLIGHT <path>: <N> lines, ..." lines. No script parses them: they make the
 # agent state each file's length before reading, and coverage is enforced by coverage_check.py on the
 # agent's Read-tool calls, so a missing PRE-FLIGHT line is not a contract violation.)
-# ISSUE block opener a cold agent (direction or lens) emits: "ISSUE [<tag>]: ...". One match per finding.
+# ISSUE block opener a cold code-review agent emits: "ISSUE [<tag>]: ...". One match per finding.
 # Single source of truth for issue-block counting: code_review_collect.py imports this for
 # its raw-block count, so the same regex that counts a round's findings is used everywhere
 # a finding needs to be counted.
@@ -412,17 +412,27 @@ def split_repeat_clusters(ledger_path: "Path | str", rnd: int, phase: str, clust
     from pathlib import Path as _Path
     p = _Path(ledger_path).expanduser()
     counts: dict = {}
+    resolved: dict = {}
     if p.is_file():
         for row in round_rows(p.read_text(encoding="utf-8"), rnd):
             if row.get("phase", "").upper() != phase.strip().upper() or is_pending(row.get("address", "")):
                 continue
             sig = row_sig(row.get("root_cause", ""))
-            if sig is not None:
+            if sig is None:
+                continue
+            addr = row.get("address", "")
+            # A resolving row (the orchestrator's different fix for an auto-paused finding) settles the
+            # pause: the signature starts a fresh count, so resolving it does not re-pause it at once.
+            if "resolves ORCHESTRATOR-PAUSE" in addr or "resolves USER-PAUSE" in addr:
+                counts[sig] = 0
+                resolved[sig] = resolved.get(sig, 0) + 1
+            else:
                 counts[sig] = counts.get(sig, 0) + 1
     fixer, paused = [], []
     for c in clusters:
         annotated = dict(c)
         annotated["repeat_count"] = counts.get(cluster_sig(c), 0)
+        annotated["resolutions"] = resolved.get(cluster_sig(c), 0)
         (paused if annotated["repeat_count"] >= AUTO_PAUSE_REPEATS else fixer).append(annotated)
     return fixer, paused
 
@@ -434,6 +444,7 @@ def auto_pause_report(paused: list) -> list:
             "cluster":      c["cluster"],
             "flags":        c.get("flags", []),
             "repeat_count": c["repeat_count"],
+            "resolutions":  c.get("resolutions", 0),
             "reason":       (
                 f"Cluster {c['cluster']} has been addressed "
                 f"{c['repeat_count']} time(s) this round without convergence."
@@ -452,7 +463,8 @@ def auto_pause_then(rerun: str) -> str:
         "ORCHESTRATOR-PAUSE row. Resolve each by deciding a DIFFERENT intent-preserving fix from the "
         "target's README `## Intent` (a fix that is not sticking needs a different approach), apply it, "
         "and append a row whose Address says 'resolves ORCHESTRATOR-PAUSE <flag>' (append_ledger.py "
-        "check-pauses must exit 0 before the round closes). No fixer is dispatched for these clusters: "
+        "check-pauses must exit 0 before the round closes). Exception: an entry whose `resolutions` is 1 "
+        "or more came back after a resolved pause and is a USER-PAUSE: stop and ask the user. No fixer is dispatched for these clusters: "
         f"once the pauses are resolved, {rerun}"
     )
 
@@ -565,11 +577,12 @@ def run_tmp_path(out_dir, stem: str, runtime: str, suffix: str = ".json"):
     return _Path(out_dir) / f"{stem}-{runtime_slug(runtime)}{suffix}"
 
 
-# Fixer batching (SKILL.md "Fixer dispatch"): a round of at most FIXER_BATCH_MAX_CLUSTERS clusters goes
-# to one fixer; only a larger round is split into sequential fixers of at most that many clusters each.
+# Fixer batching (SKILL.md "Fixer dispatch"): a tier pass (one tier-script call) of at most
+# FIXER_BATCH_MAX_CLUSTERS clusters goes to one fixer; only a larger pass is split into sequential
+# fixers of at most that many clusters each.
 # Observed in the October 2026 trim comparison: one fixer given 17 to 22 clusters with the interface open
 # added helpers, fields and a row kind that the next round flagged; in the trim-plus comparison, splitting
-# a round of 12 or fewer into a code and a doc fixer about doubled fixer tokens (both re-read the whole
+# a tier pass of 12 or fewer into a code and a doc fixer about doubled fixer tokens (both re-read the whole
 # skill) with no quality gain.
 FIXER_BATCH_MAX_CLUSTERS = 12
 
@@ -589,20 +602,22 @@ def cluster_touches_code(cluster: dict, blast_entry: "dict | None" = None) -> bo
     return any(f.endswith(".py") for f in cluster_files(cluster, blast_entry))
 
 
-def fixer_model(clusters: list, blast: "list | None" = None) -> str:
-    """The model for one fixer batch: opus when any cluster touches a .py file, sonnet when every
-    cluster is doc-only (.md / .json). Single source for the rule SKILL.md states."""
-    by_id = {b.get("cluster"): b for b in blast or [] if isinstance(b, dict)}
-    return "opus" if any(cluster_touches_code(c, by_id.get(c.get("cluster"))) for c in clusters) else "sonnet"
+FIXER_OPUS_ABOVE = 15  # a tier pass with more clusters than this uses an opus fixer
+
+
+def fixer_model(pass_clusters: int) -> str:
+    """The model for every fixer batch of a tier pass: opus when the pass has more than
+    FIXER_OPUS_ABOVE clusters, else sonnet. Single source for the rule SKILL.md states."""
+    return "opus" if pass_clusters > FIXER_OPUS_ABOVE else "sonnet"
 
 
 def fixer_batches(clusters: list, blast: "list | None" = None) -> list:
     """Split a round's clusters into fixer batches.
 
     Clusters that touch code come first and doc-only clusters after them, each group in its given
-    order. A round of at most FIXER_BATCH_MAX_CLUSTERS clusters is one batch (opus when any cluster
-    touches a .py file, else sonnet). Only a larger round is split, each group into batches of at
-    most FIXER_BATCH_MAX_CLUSTERS, so doc-only batches can use sonnet and run after the code edits.
+    order. A round of at most FIXER_BATCH_MAX_CLUSTERS clusters is one batch. Only a larger round is
+    split, each group into batches of at most FIXER_BATCH_MAX_CLUSTERS, so code edits run first. Every
+    batch uses fixer_model(len(clusters)): opus when the round has more than FIXER_OPUS_ABOVE clusters.
     Returns [{"batch": k, "clusters": [...], "blast": [...], "model": "opus"|"sonnet"}], k from 1."""
     by_id = {b.get("cluster"): b for b in blast or [] if isinstance(b, dict)}
     code = [c for c in clusters if cluster_touches_code(c, by_id.get(c.get("cluster")))]
@@ -613,7 +628,7 @@ def fixer_batches(clusters: list, blast: "list | None" = None) -> list:
             part = group[i:i + FIXER_BATCH_MAX_CLUSTERS]
             part_blast = [by_id[c.get("cluster")] for c in part if c.get("cluster") in by_id]
             out.append({"batch": len(out) + 1, "clusters": part, "blast": part_blast,
-                        "model": fixer_model(part, part_blast)})
+                        "model": fixer_model(len(clusters))})
     return out
 
 
@@ -640,7 +655,7 @@ def interface_rule(run_rnd: int) -> str:
     """The considered-fix template's [INTERFACE_RULE] text for round *run_rnd* of the run (frozen
     in every round)."""
     return (f"Round {run_rnd} of this run: the interface is FROZEN (from round 1 of every run). Do NOT "
-            "add a CLI flag, mode, subcommand, file, ledger field, run-options key, row kind, shared helper module or doc section. "
+            "add a CLI flag, mode, subcommand, file, ledger field, run-options key, row kind, shared helper module, doc section, or any other new interface element such as an output JSON field, status value or exit code. "
             "When the deepest root fix would need one, apply no edit for that cluster and emit "
             "ORCHESTRATOR-PAUSE naming the addition and the best non-widening fix. The one exception is "
             "a real behaviour bug (wrong output, wrong exit code, crash) that cannot be fixed any other "
@@ -767,8 +782,10 @@ def extract_final_assistant_text(transcript_path: "Path | str") -> str:
     The transcript is a JSONL file where each line is a JSON object.  Assistant
     messages have type == "assistant" and message.role == "assistant".  The
     content field is either a plain string or a list of content blocks; blocks
-    with type == "text" carry the text.  Collects all non-empty assistant text
-    messages, returns the LAST one.
+    with type == "text" carry the text, and so does the `message` input of a
+    `SubagentHandback` tool_use block (the harness's hand-back tool).  Collects all non-empty
+    assistant messages (the text blocks and hand-back message of one entry joined), returns the
+    LAST one.
 
     Raises ValueError when no non-empty assistant text message is found.
     Each caller performs its OWN downstream parsing (fence-stripping, JSON

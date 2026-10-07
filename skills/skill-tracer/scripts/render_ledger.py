@@ -67,7 +67,6 @@ DEFAULT_PHASE_COLORS = {
     "REVIEW": "#e6ffe9",
     "CODE-REVIEW": "#fff0e6",
     "PREPASS": "#f3e6ff",
-    "PREPASS ": "#f3e6ff",
     "Prepass": "#f3e6ff",
     # Legacy compatibility: the removed 3.0 tier's rows in old ledgers.
     "Minor Bugs": "#fff9e6",
@@ -207,14 +206,18 @@ def ascii_line_chart(per_round_counts):
 
     lines = []
     height = 8  # rows of ASCII chart
+    # Every round takes one column of `width` characters (its widest label plus a space) in the
+    # bar rows and the label row alike, and both start after the same 7-character prefix, so each
+    # label sits under its own bar.
+    width = max(len(f"R{r}") for r in rounds) + 1
     for h in range(height, 0, -1):
         threshold = max_count * h / height
         row = ""
         for c in counts:
-            row += "█ " if c >= threshold else "  "
+            row += ("█" if c >= threshold else " ").ljust(width)
         lines.append(f"{int(threshold):4d} | {row}")
-    lines.append("     +" + "-" * (len(counts) * 2 + 1))
-    lines.append("     " + "".join(f"R{r} " if r < 10 else f"R{r}" for r in rounds))
+    lines.append("     +" + "-" * (len(counts) * width + 1))
+    lines.append("       " + "".join(f"R{r}".ljust(width) for r in rounds))
     return "\n".join(lines)
 
 
@@ -425,7 +428,7 @@ def main():
 
     ledger_path = Path(args.ledger_path).expanduser()
     if not ledger_path.is_file():
-        print(f"Error: ledger not found at {ledger_path}\nLedgers are written to ~/.local/share/skill-tracer-audit-ledger/<skill-name>.md (tracer) or the equivalent skill-publisher-ledger path (publisher) by a run.\nCheck the skill name and ensure at least one round has completed.", file=sys.stderr)
+        print(f"Error: ledger not found at {ledger_path}\nLedgers are written to ${XDG_DATA_HOME:-$HOME/.local/share}/skill-tracer-audit-ledger/<skill-name>.md (tracer) or the equivalent skill-publisher-ledger path (publisher) by a run.\nCheck the skill name and ensure at least one round has completed.", file=sys.stderr)
         sys.exit(1)
 
     try:

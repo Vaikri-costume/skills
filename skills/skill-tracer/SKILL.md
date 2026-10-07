@@ -1,13 +1,12 @@
 ---
 name: skill-tracer
-description: 'Use when the user''s core intent is defect discovery: finding bugs, auditing correctness, or verifying that code works as intended in an already-built skill, codebase, or directory. Canonical triggers: "trace X", "audit X for bugs", "check X for issues", "validate X scripts", "verify X", "is X clean?", "run the cascade on X". The decisive signal is the ACTION — auditing vs. building vs. shipping. Do NOT use it when the action is ship / publish / release / package / PR (use skill-publisher) or create / build / scaffold (use skill-creator-ccvw) — regardless of what the target is named. Here "trace" means bug-auditing a codebase — not distributed tracing or stack traces.'
+description: 'Use when the user wants to find bugs in, or verify the correctness of, an already-built Claude skill (a skill folder with SKILL.md, scripts and references). Canonical triggers: "trace skill X", "audit skill X for bugs", "check skill X for issues", "validate skill X scripts", "run the cascade on skill X". The decisive signal is the ACTION on a skill: auditing vs. building vs. shipping. Do NOT use it for general code review of other projects (use code-review), for proofreading prose (use proofread), when the action is ship / publish / release / package / PR (use skill-publisher) or create / build / scaffold (use skill-creator-ccvw). Here "trace" means bug-auditing a skill, not distributed tracing or stack traces.'
 license: MIT
 compatibility: Claude Code 2.0 or newer
 metadata:
   tier: claude-users
   created: "2026-06-27"
   created-by: Vaikri-costume
-  version: "3.6.0"
   parent-version: "2.2.0"
   intended-audience: claude-users
 allowed-tools:
@@ -19,36 +18,37 @@ allowed-tools:
   - SendMessage
 ---
 
-<!-- Provenance, version, attribution, and changelog live in HISTORY.md.
-     Human-facing intent lives in README.md.
-     This file is the runnable orchestrator contract for the normal path; resume, stop and
-     hard-error detail lives in references/recovery.md, and the other long procedures in
-     references/ (dispatch.md, script-contract.md, how-to-fix.md, glossary.md). -->
+<!-- Provenance, version, attribution and changelog: HISTORY.md. Intent: README.md.
+     This file is the runnable contract for the normal path; the rest is in references/
+     (see "Where the details live"). -->
 
 # skill-tracer
 
 ## What this skill does
 
-Finds bugs and verifies correctness in a target skill, codebase, or directory by running a
-**2-tier cascade** each round:
+Finds bugs and verifies correctness in a target skill (or another directory of docs and scripts
+named by path) by running a **2-tier cascade** each round:
 
 - **Prepass**: deterministic checks for broken references (cited paths, `Step N` pointers, dead
   scripts, sub-step labels, CLI flags a doc cites for a script that does not register them,
-  duplicated regexes); clusters and fixes them in-round; re-enters until clean, each finding
-  getting at most 2 fixer passes per round before it is auto-paused (the retry bound below).
-- **Code-review**: two cold reviewer agents (READ-ONLY) read the review scope on one all-lens
-  prompt; their flags pass the `coverage gate` and the `no-drop gate`, are clustered and fixed.
+  duplicated regexes). It clusters and fixes them in-round and re-enters until clean; each finding
+  gets at most 2 fixer passes per round, then is auto-paused.
+- **Code-review**: two cold READ-ONLY reviewer agents read the review scope on the all-lens prompt
+  (from round 2, G2's copy adds a reading-order line). Their flags pass the `coverage gate` and the
+  `no-drop gate`, then are clustered and fixed.
 
 Read-only agents are dispatched with `subagent_type: Explore`, which has **no Edit/Write tools**.
-A prompt-only "do not edit" rule is insufficient as enforcement; the prompt's read-only wording
-is a secondary statement, and the missing tools are the enforcement.
+The missing tools are the enforcement. The post-dispatch edit check in `references/dispatch.md` ("A
+reviewer that edits a file") backstops the Bash tool they keep; a prompt's "do not edit" wording is
+only secondary.
 
 ## When to invoke
 
 - "trace <target>", "audit <target>", "run the cascade on <target>", "check <target> for bugs",
   "verify <target>".
-- Proactively after the user creates or significantly edits a skill. A proactive start counts as
-  an invocation in that turn for the fresh-run test (Run options).
+- Proactively after the user creates or significantly edits a skill (an edit is when new defects enter,
+  and the ship phase expects a traced skill). A proactive start counts as an invocation in that turn
+  for the fresh-run test (Run options).
 
 ## Prerequisites
 
@@ -58,12 +58,13 @@ is a secondary statement, and the missing tools are the enforcement.
   `<basename>` is the final component of `<target>`. Resolve it once to an absolute path and pass
   that literal path to every script (no script reads the variables). `begin-round` creates it and
   refuses (exit 2) a ledger that records a different target: then give this target its own path.
-- Scripts live at `~/.claude/skills/skill-tracer/scripts/`. Always run
-  `python3 <absolute-script-path>`; `scripts/<name>.py …` below is shorthand for that. A bare
-  relative path fails under zsh (exit 127).
+- Scripts live at `~/.claude/skills/skill-tracer/scripts/`. Run them as
+  `python3 <absolute-script-path>`; `scripts/<name>.py …` below is shorthand. A relative path fails
+  under zsh (exit 127).
 - `Agent` must be available. It exists only in the **top-level** session: if the `Agent` tool is
   absent, stop and tell the user "skill-tracer must be invoked from the top-level Claude session;
-  it needs the Agent tool to dispatch cold reviewers."
+  it needs the Agent tool to dispatch cold reviewers." Cold reviewers and fixers are separate agents
+  by design, so no mode works without Agent.
 - No network, no external services.
 
 ## The four invariants
@@ -87,10 +88,10 @@ them on its first `begin-round`:
 
 ```bash
 python3 .../scripts/append_ledger.py begin-round <ledger> --round <N> --runtime <Runtime> --target <target> \
-  --set run-start-round=<N> [--set rounds-budget=<N>] [--set max-rounds=<cap>]
+  --set run-start-round=<N> [--set rounds-budget=<budget>] [--set max-rounds=<cap>]
 ```
 
-The `max-rounds` cap defaults to 8; with `--rounds N` above 8 also set `max-rounds=<N>`. On an
+`<budget>` is the N the user gave `--rounds`. The `max-rounds` cap defaults to 8; with `--rounds N` above 8 also set `max-rounds=<N>`. On an
 existing ledger, clear a previous run's `rounds-budget` / `max-rounds` with an empty value
 (`--set rounds-budget=`). Only the first `begin-round` of a fresh run passes `--set`; a resume and
 every later round of the same run pass none (`references/recovery.md` "Persisted run options").
@@ -108,14 +109,17 @@ prints 0).
   has run since that invocation. Its first `begin-round` passes `--set`.
 - Neither (no open-round marker, and either no invocation this turn or a `begin-round` already run
   since it, e.g. a compaction between two rounds of one run, or the next round that `close-round`'s
-  gate starts in the same turn): start the next round of the same run without `--set`.
+  gate starts in the same turn): when the marker is `converged`, or `append_ledger.py gate <ledger>
+  --round <N>` (N the last closed round) exits 1, go to "Present result"; otherwise start the next
+  round of the same run without `--set`.
 
-**Retry bound.** The fixer re-emit after a failed decision check, the fixer re-dispatch after an
-out-of-target edit and the reviewer re-dispatch after an edit each stop after 2 retries, as do the post-fix gate's inner passes (the fixer re-emit after `post_fix_gate.py check` exits 1); the third failure becomes an
-ORCHESTRATOR-PAUSE as each step states (for a reviewer slot, a hard unrecoverable error), never a
-further retry. The prepass re-fix of a returning finding gets 2 fixer passes per round; its next
-return is auto-paused (`ledger_common.AUTO_PAUSE_REPEATS`). Contract recovery
-keeps its own stated limits (`references/dispatch.md` "Contract recovery").
+**Retry bound.** Each of these stops after 2 retries: the fixer re-emit after a failed decision
+check, the fixer re-dispatch after an out-of-target edit, the reviewer re-dispatch after an edit,
+and the post-fix gate's inner passes (the fixer re-emit after `post_fix_gate.py check` exits 1).
+The third failure becomes an ORCHESTRATOR-PAUSE as each step states (for a reviewer slot, a hard
+unrecoverable error), never a further retry. The prepass re-fix of a returning finding gets 2 fixer
+passes per round; its next return is auto-paused (`ledger_common.AUTO_PAUSE_REPEATS`). Contract
+recovery keeps its own stated limits (`references/dispatch.md` "Contract recovery").
 
 ## Stop rules
 
@@ -125,17 +129,16 @@ resolved); the **round gate** (`round-cap`, `budget-exhausted` or `stalled`, rep
 unrecoverable error** (the list is in `references/recovery.md` "Hard unrecoverable errors").
 
 A gate stop is NOT convergence: report "stopped by <reason>, not verified clean", list what the
-last round fixed and what was still flagged, and say the run can be extended.
+last round fixed and what was still flagged.
 
 **FORBIDDEN-PAUSE.** While a run is in progress never offer to pause or stop early for tail
 issues, diminishing returns, "minor" findings, session length, round size, cluster count or token
-cost. The gate
-is the only cost control.
+cost. The gate is the only cost control. Why: a stop for tail issues leaves the tree unverified, so the cascade ends only by convergence, its budget or a genuine USER-PAUSE.
 
 **Fix depth.** Every round, considered-fix and the fixer apply the deepest root fix that does not
 widen the interface, and fix every finding regardless of a "minor" label. The interface is frozen
 from round 1 of a run: a fix that would add a CLI flag, mode, subcommand, file, ledger field, run-options key, row
-kind, shared helper module or doc section becomes an ORCHESTRATOR-PAUSE, unless it is the only way to fix a real
+kind, shared helper module, doc section, or any other new interface element (an output JSON field, status value or exit code) becomes an ORCHESTRATOR-PAUSE, unless it is the only way to fix a real
 behaviour bug. When the behaviour is already correct and only a comment or doc is wrong, fix the
 comment or doc, not the code (`references/how-to-fix.md` "Frozen interface"). A fixer adds no new
 behaviour: a fix makes the doc match the code, or the code match its documented contract. Adding a
@@ -155,30 +158,37 @@ Re-read state from disk; never reason from memory about what is in flight.
   delete files scoped to your own `<RUN_TIMESTAMP>`.
 - If `<ledger>` does not exist (`test -f`), this is round 1 of a fresh run: skip the reads below,
   since `options` exits 2 on a missing ledger. Otherwise read `scripts/append_ledger.py options
-  <ledger>` and `grep '^in-flight::' <ledger>`, then apply the fresh-run-or-resume test (Run
+  <ledger>`, `grep '^in-flight::' <ledger>` and, when a marker is open, the `Round <N> total` grep
+  (Run options), in one Bash call, then apply the fresh-run-or-resume test (Run
   options): an open-round marker means resume it (`references/recovery.md` "Resume"); a `converged`
-  marker, a closed round, or no marker means start round N+1.
+  marker, a closed round, or no marker means start round N+1, except where that test sends you to
+  "Present result".
+
+Expected output: the fresh-run-or-resume verdict, with `<Runtime>` and `<out-dir>` known.
 
 ### 2. Run round N
 
 Run `scripts/append_ledger.py begin-round <ledger> --round <N> --runtime <Runtime> --target <target>`
 (plus `--set` on a fresh run). It writes the round's first marker, `prepass running round-<N>`;
 scripts own the marker, so never write it by hand. Append
-`**[HH:MM:SS] skill-tracer — <basename> — round <N> START**` to
+`**[HH:MM:SS] SKILL:skill-tracer RUN:<basename> STEP:round-<N>-start**` to
 `~/.claude/session-logs/session-log-$(date +%Y-%m-%d).md` (a failed echo never blocks).
 
-**Fixer dispatch.** The tier script prints `batches`, each with a staged prompt and a `model`:
-`opus` when a cluster touches a `.py` file, `sonnet` when all are doc-only. A round of 12 clusters
-or fewer is one batch (one fixer); only above 12 is it split into batches of at most 12, code
-clusters first. Dispatch one fixer per batch (`subagent_type: general-purpose`) ONE AT A TIME,
+**Fixer dispatch.** The fixer-staging script (`prepass_run.py` at Prepass, `cluster_enforce.py` at Code
+review; `code_review_run.py` only stages the reviewers) prints `batches`, each with a staged prompt and a `model`:
+`opus` when the tier pass has more than 15 clusters, else `sonnet`. A tier pass (one
+`prepass_run.py` or `cluster_enforce.py` call) of 12 clusters or fewer is one batch (one fixer); only
+above 12 is it split into batches of at most 12, code clusters first. Dispatch one fixer per batch (`subagent_type: general-purpose`) ONE AT A TIME,
 in order, never in parallel (batches may edit the same files), pointed at its prompt with the
-provenance wording in `references/dispatch.md`; record each `agentId` in the fixer manifest at once.
-A fixer edits only files under `<target>`; check its Edit/Write paths and `touched_files`. On an
+provenance wording in `references/dispatch.md`; record each `agentId` in the fixer manifest at once (a re-dispatched fixer's id replaces the discarded one at its batch's position).
+A fixer edits only files under `<target>`; check its Edit/Write paths and `touched_files` (only those two sources are inspected: a Bash write outside `<target>` is not detected). On an
 out-of-target edit, restore it, discard that fixer's decisions (record none of them) and re-dispatch
 a fresh fixer with the same staged prompt plus an "edit only files under `<target>`" constraint
 (`references/dispatch.md` "A fixer that edits outside `<target>`"). After 2 such re-dispatches for one
-batch, leave that batch's transcript out of the fix-recording step: its clusters get no decision
-and fill-address records them as ORCHESTRATOR-PAUSE.
+batch, leave that batch's transcript out of the fix-recording step (when no transcript is left,
+pipe `{"decisions": []}` on stdin as in the Decision check): its clusters get no decision
+and fill-address records them as ORCHESTRATOR-PAUSE. Expected output: one `{"decisions": …}` JSON
+object per batch, with its `agentId` in the fixer manifest.
 
 **Decision check.** Before the next batch, run `scripts/check_decisions.py --fixer-transcript
 <transcript> --expect <the batch's cluster ids>`. On exit 1 (empty address, wrong kind prefix, banned
@@ -186,43 +196,20 @@ vocabulary, missing cluster, or a FIX without its **Closure block**: non-empty `
 `Claims:` and `Blocks:` lines, `references/how-to-fix.md` "Closure block") `SendMessage` the same fixer the
 problems to re-emit; check again. After
 2 re-emits that still fail, stop asking: leave that batch's transcript out of the fix-recording step
-(when no batch is left, pipe `{"decisions": []}` on stdin instead of `--fixer-transcript`), so
+(when no batch transcript is left for the fix-recording step, whatever the reason: re-emits that keep failing, out-of-target re-dispatches or a failed snapshot lint, pipe `{"decisions": []}` on stdin instead of `--fixer-transcript`), so
 fill-address records its clusters as ORCHESTRATOR-PAUSE; resolve them at the check-pauses step,
-checking the edits that fixer already made.
+checking the edits that fixer already made. Expected output: `check_decisions.py` exits 0.
 
-**Post-fix gate.** Before dispatching each fixer batch, run `scripts/post_fix_gate.py snapshot
---target <target> --out <out-dir>/gate-<N>-b<k>-<RUN_TIMESTAMP>.json` (batch `<k>`), once per batch: an
-out-of-target re-dispatch keeps the batch's first snapshot, so `check` also sees the in-target edits
-of the discarded fixer, which stay on disk. After the batch's
-decision check passes, run `scripts/post_fix_gate.py check --target <target> --snapshot <that file>
---fixer-transcript <the batch's transcript>`.
-Run `check` the same way for a batch left out of the fix-recording step (2 failed re-emits, or 2
-out-of-target re-dispatches): its clusters are already ORCHESTRATOR-PAUSE, so send it nothing and
-resolve its listed problems with those pauses at the check-pauses step.
-Exit 1 blocks closing this round (an orchestrator rule: `close-round` itself does not read the
-gate): send the listed problems to the same fixer as a
-(line, claim, evidence) list (`<file>:<line>`, the problem's `kind`, the problem text; line 0 means
-the whole file, as for a `syntax` problem, a touched .py file that no longer parses) to fix and
-re-emit its decisions, then run the decision check and `check` again; at most 2 such inner passes
-(the retry bound). A `block-reread` problem names a rewritten doc block: the fixer re-reads it whole
-and lists it in its Closure `Blocks:` line (`references/how-to-fix.md` "Closure block"); the next
-`check` reads that line from `--fixer-transcript`. Send with the problems the **siblings list**
-(`check`'s non-blocking `siblings`: the few untouched lines naming a distinctive term of a touched doc
-line; `siblings_omitted` counts the terms too common to list), asking the fixer to update or confirm
-each in its Closure block. A problem still listed after the 2 inner passes, and any `new-behaviour` problem at once, becomes
-an ORCHESTRATOR-PAUSE: `SendMessage` the fixer to re-emit the decision of each cluster that touched
-that file as `ORCHESTRATOR-PAUSE (post-fix gate: <file>:<line> <problem>)`, so fill-address records an
-open pause that the check-pauses step resolves. This gate outcome takes precedence over
-`references/how-to-fix.md`'s "never a fix-failure fallback" rule, and it applies also to a
-contract-required or real-bug fix that adds a raise, return or branch node: the check-pauses step
-resolves that pause like any other. The one exception is a behaviour-preserving
-refactor (the same inputs give the same outputs, exits and messages): re-run
-`post_fix_gate.py check --accept-new-behaviour <file>:<kind>` (`<kind>` is the node kind the problem
-text names, `<kind> count N -> M`: one of `raise`, `return`, `exit`, `if`, `for`, `while`, `try`,
-`ifexp`, `boolop`; not `new-behaviour`), then record the waiver as a ledger row
-appended as in the doc-lint step, with `--phase` the batch's phase (`Prepass` or `"Code Review"`),
-root cause `post-fix gate waiver: <file>:<kind>` and `--address "FIX (<file>: <the refactor>)"`.
-Exit 2 is unreadable input. `post_fix_gate.py` prints `cause` and `remedy` in its stderr JSON; follow
+**Post-fix gate.** Before dispatching each fixer batch run `scripts/post_fix_gate.py snapshot --target
+<target> --out <out-dir>/gate-<N>-b<k>-<RUN_TIMESTAMP>.json` (batch `<k>`); after the batch's decision check
+passes, run `post_fix_gate.py check` with `--snapshot <that file>` and `--fixer-transcript <the batch's
+transcript>`. Exit 1 blocks closing this round (an orchestrator rule: `close-round` itself does not read
+the gate): send the problems back to the same fixer, at most 2 inner passes (the retry bound); a problem
+still listed after them, and any `new-behaviour` problem at once, becomes an ORCHESTRATOR-PAUSE. Dispatch the next
+batch only once this batch's `check` has exited 0 or its remaining problems are ORCHESTRATOR-PAUSE (so the
+next batch's snapshot includes this batch's inner-pass edits). The full
+procedure (send-back format, siblings list, the pause wording, the behaviour-preserving waiver) is
+`references/dispatch.md` "Post-fix gate". Expected output: `check` exits 0. Exit 2 is unreadable input. `post_fix_gate.py` prints `cause` and `remedy` in its stderr JSON; follow
 that remedy. Every cause, with its remedy, is this table, generated from the script
 (`post_fix_gate.py causes --write SKILL.md`; a test fails when it differs or when a raise names no cause), so
 it is not edited by hand:
@@ -232,10 +219,10 @@ it is not edited by hand:
 |---|---|---|
 | not-a-directory | `--target is not a directory: <path>` (`snapshot`, `check`) or `not a directory: <path>` (`merge-check`) | fix the path and re-run |
 | unreadable-target-file | `cannot read <path>: ...` (an in-scope target file that is not UTF-8 text) | fix that file and re-run |
-| snapshot-unusable | `unreadable snapshot <path>: ...` (the `--snapshot` path names no file, or the file is not a snapshot), or `lint data is not a JSON object` / `<source> lint data is not a JSON object` with this `cause` (the snapshot's stored `lint` field is malformed) | the batch's baseline is lost: take no new snapshot after the batch has edited the target, report the batch as unchecked and `SendMessage` the fixer to re-emit the decision of each of its clusters as `ORCHESTRATOR-PAUSE (post-fix gate: snapshot missing or unreadable)` |
-| lint-run-failed | `<script> printed no JSON ...`, `<script> exited <N>: ...` or `lint data is not a JSON object`, printed by `check` (`doc_lint.py` or `cascade_sweep.py` failed) | report the batch as unchecked and `SendMessage` the fixer to re-emit the decision of each of its clusters as `ORCHESTRATOR-PAUSE (post-fix gate: lint run failed)` |
-| snapshot-lint-failed | the same texts, printed by `snapshot` (before the batch is dispatched) | do not dispatch the batch: leave its transcript out of the fix-recording step so fill-address records its clusters as ORCHESTRATOR-PAUSE |
-| baseline-unusable | `unreadable --baseline-lint <path>: ...` or `<source> lint data is not a JSON object` (including a dict holding only one of `doc_lint` / `cascade`) | fix that file and re-run (SKILL.md's commands never pass `--baseline-lint`) |
+| snapshot-unusable | `unreadable snapshot <path>: ...` (the `--snapshot` path names no file, or the file is not a snapshot), or `lint data is not a JSON object` / `<source> lint data is not a JSON object` when the stderr JSON `cause` is this one (printed by `check`; the snapshot's stored `lint` field is malformed) | the batch's baseline is lost: take no new snapshot after the batch has edited the target, report the batch as unchecked and `SendMessage` the fixer to re-emit the decision of each of its clusters as `ORCHESTRATOR-PAUSE (post-fix gate: snapshot missing or unreadable)` |
+| lint-run-failed | `<script> printed no JSON ...`, `<script> exited <N>: ...` (`doc_lint.py` or `cascade_sweep.py` failed) or `lint data is not a JSON object` / `<source> lint data is not a JSON object` when the stderr JSON `cause` is this one (printed by `check` on a lint it just ran) | report the batch as unchecked and `SendMessage` the fixer to re-emit the decision of each of its clusters as `ORCHESTRATOR-PAUSE (post-fix gate: lint run failed)` |
+| snapshot-lint-failed | the same texts, with this stderr JSON `cause`, printed by `snapshot` (before the batch is dispatched) | do not dispatch the batch: leave its transcript out of the fix-recording step so fill-address records its clusters as ORCHESTRATOR-PAUSE |
+| baseline-unusable | `unreadable --baseline-lint <path>: ...` or `<source> lint data is not a JSON object` when the stderr JSON `cause` is this one (including a dict holding only one of `doc_lint` / `cascade`) | fix that file and re-run (SKILL.md's commands never pass `--baseline-lint`) |
 | ledger-unreadable | `unreadable ledger <path>: ...` (`survival`) | stop ("Broken ledger" in `references/script-contract.md`) |
 | survival-row-ambiguous | `--row <id> matches <N> ledger rows (pass --round)`, N above 1 (`survival`) | re-run with the right `--round` |
 | survival-row-missing | `--row <id> matches 0 ledger rows` (`survival`) | correct `--row` or `--round` and re-run |
@@ -249,13 +236,13 @@ python3 .../scripts/ledger_cascade.py <ledger> --mode fill-address --phase "<Pha
   --skill-root <target> --blast-json <out-dir>/blast-round-<N>-<RUN_TIMESTAMP>.json [--reenter] [--allow <files>]
 ```
 
-`--phase` is `Prepass` (with `--reenter`) or `"Code Review"` (without). Write the tier script's
-`"blast"` array to the blast file first as `{"blast_radius": <blast>}`; fill-address re-checks every
+`--phase` is `Prepass` (with `--reenter`) or `"Code Review"` (without). Write the `"blast"` array that
+`prepass_run.py` or `cluster_enforce.py` printed to the blast file first as `{"blast_radius": <blast>}`; fill-address re-checks every
 TOKEN-BLAST cluster with `check_fix_radius.py` and refuses uncovered sites. `--allow` is only for a
 site that legitimately keeps the token, with the reason in the FIX address. A cluster the fixer
 skipped becomes an ORCHESTRATOR-PAUSE; when the printed marker's state (its third field,
 `<Runtime> <phase> orch-fixes round-<N>`) is `orch-fixes`, resolve the pauses (check-pauses step
-below) before re-running any tier script.
+below) before re-running any tier script. Expected output: it exits 0 and the round's rows hold their addresses, none PENDING.
 
 #### Prepass
 
@@ -274,9 +261,14 @@ python3 .../scripts/prepass_run.py --target <target> --ledger <ledger> --round <
 - `auto_pause` (with or without `batches`): a finding already addressed twice this round came
   back; it is an open ORCHESTRATOR-PAUSE row. With `batches`, first dispatch them and run the
   fix-recording step as for `needs-fix`; then resolve each pause with a different fix (check-pauses
-  step), and only then re-run `prepass_run.py`. When the same signature is auto-paused again after
-  the orchestrator has resolved it twice this round, promote it to USER-PAUSE (check-pauses step).
-- Exit 1 with `detector_errors`: a detector crashed; hard error, never `converged`.
+  step), and only then re-run `prepass_run.py`. A resolving row restarts that finding's count, so
+  the finding is fixed again (two more fixer passes) before it can be auto-paused again. An
+  `auto_pause` entry with `resolutions` of 1 or more (the finding came back after a resolved pause)
+  is a USER-PAUSE, not another resolve: stop and ask the user, which bounds the loop; for an entry with
+  `resolutions` 0 promote only when the intent is not derivable (check-pauses step).
+- Exit 1 with `detector_errors` on stderr: a detector crashed; hard error, never `converged`. Exit 1 with an
+  `error` key and no `detector_errors`: a sub-script of the pipeline failed (the error text names it);
+  also a hard error, never `converged` (`references/recovery.md` "Hard unrecoverable errors").
 
 #### Code-review
 
@@ -284,10 +276,10 @@ python3 .../scripts/prepass_run.py --target <target> --ledger <ledger> --round <
 python3 .../scripts/code_review_run.py --target <target> --ledger <ledger> --round <N> --runtime <Runtime> --out-dir <out-dir> [--scope full]
 ```
 
-It decides the review scope (`auto`): every in-scope file (`scripts/inscope.py`) in rounds 1-2 of a run; from round 3,
-only the files the previous round's and this round's ledger addresses name (the files the fixes
-touched), or every in-scope file when those addresses name none (that review is a full sweep, so a
-clean one is `code-review-clean`). It stages the all-lens prompt, records the scope for the collector and prints a
+It decides the review scope (`auto`): every in-scope file (`scripts/inscope.py`) in rounds 1-2 of a run;
+from round 3, only the files the previous round's and this round's ledger addresses name (the files
+the fixes touched). If those addresses name none, it reviews every in-scope file: a full sweep, so a
+clean result is `code-review-clean`. It stages the all-lens prompt, records the scope for the collector and prints a
 `dispatch` array of two generalists (`G1`, `G2`; from round 2 G2's prompt asks for reverse file
 order), each with its staged prompt. Take the edit-detection baseline
 (`references/dispatch.md` "A reviewer that edits a file"), dispatch both in ONE same-turn message
@@ -332,7 +324,7 @@ that file:
      --phase "Code Review" --cluster <next free C-id> --root-cause "doc-lint: <check> <file>:<line>"
      --flags "" --address "FIX (<file>: <edit>)" --blast-radius-status "<closure result>"`. The
      closure result is `clean: token <t>, <n> files, all touched` after `scripts/check_fix_radius.py`
-     exits 0 for a changed shared token, else `n/a: single-site change, no shared token`. The
+     exits 0 for a changed shared token, else `n/a: single-site change, no shared token`. Expected output: `{"findings": [], "count": 0}`, or every real finding fixed and recorded. The
      next free C-id is `C<k+1>`, where `C<k>` is the highest cluster id any row of round N holds
      (`ledger_common.max_cluster_in_round`; a rejected `append` names it).
   6. **check-pauses**: `scripts/append_ledger.py check-pauses <ledger>` must exit 0. Resolve each
@@ -346,8 +338,8 @@ that file:
   7. **Close the round** (only once every batch's post-fix gate `check` of this round exits 0 or its
      remaining problems are recorded as ORCHESTRATOR-PAUSE): `scripts/cleanup_tmp_prompts.py --run-timestamp "<Runtime>" --dir <out-dir>`,
      then `scripts/append_ledger.py close-round <ledger> --round <N>` (add `--strengthen-only
-     "<reason>"` when every finding was a legitimate STRENGTHEN). If its `gate.continue` is false,
-     go to "Present result"; otherwise append `… round <N> CLOSED` to the session log and run
+     "<reason>"` when every finding was a legitimate STRENGTHEN). Expected output: it exits 0 and prints `gate.continue`. If its `gate.continue` is false,
+     go to "Present result"; otherwise append the session-log line of the "Run round N" step with `STEP:round-<N>-closed` and run
      round N+1.
 
 ### 3. Convergence (reached only via a clean full-sweep code-review)
@@ -362,22 +354,28 @@ converges; only the confirming full sweep does.
    of round N (prepass batches included) must have exited 0 or had its remaining problems recorded
    as ORCHESTRATOR-PAUSE, the orchestrator's own condition from the close-the-round step, which
    `close-round` does not check.
-2. Remove this run's tmp files (collection is complete, so the `dispatched` marker no longer needs
-   them), then `scripts/append_ledger.py close-round <ledger> --round <N> --converged`.
+2. Remove this run's tmp files (collection is complete), then `scripts/append_ledger.py close-round <ledger> --round <N> --converged`.
    It writes `in-flight:: <timestamp> converged round-<N>`; never hand-edit that marker.
-3. Append `… round <N> CONVERGED` to the session log and go to "Present result".
+3. Append the session-log line of the "Run round N" step with `STEP:round-<N>-converged` and go to "Present result".
 
 ### 4. Present result
 
 - Clean up with `scripts/cleanup_tmp_prompts.py --run-timestamp "<Runtime>" --dir <out-dir>` (never
-  `--all`), except after a hard-error stop in a `dispatched` state (`references/recovery.md`
-  "Stale-tmp cleanup").
-- When the run audited a copy of a source tree, run `scripts/post_fix_gate.py merge-check --source
-  <src> --audited <copy>` and report each file it lists as differing (fixes not yet merged back).
+  `--all`) unless the close-the-round step or the Convergence step that removes this run's tmp files already ran it this round, and never
+  after a stop that leaves an open round, a USER-PAUSE or hard-error stop (`references/recovery.md` "Stale-tmp cleanup").
+- Find, without asking, any other copy of `<target>` that is its source: the installed
+  `~/.claude/skills/<basename>/` and any directory named `<basename>` inside the git checkout holding
+  `<target>` (take its root from `git -C <target> rev-parse --show-toplevel`, then
+  `find <toplevel> -maxdepth 3 -type d -name <basename>`; when `rev-parse` fails, `<target>` is not in a
+  checkout and this candidate is skipped), skipping a path that resolves to `<target>` itself. With
+  one such copy, run `scripts/post_fix_gate.py merge-check --source <that copy> --audited <target>` and
+  report each file it lists as differing (fixes not yet merged back). With none, skip this step. Ask the
+  user (one question naming the paths) only when several are equally plausible.
 - Point the user at the ledger and say which of these happened:
   - **Convergence**: "Converged after N round(s). Zero flags surfaced in the final full sweep."
   - **Stopped by the gate**: "Stopped after N rounds by <reason>; NOT verified clean." Give the
-    per-round raw flag counts and say the run can be extended.
+    per-round raw flag counts. In both, N is the number of rounds this run executed (the last round's
+    number minus `run-start-round`, plus 1), not the last round number in a reused ledger.
   - **Stopped at a USER-PAUSE**: "Stopped in round N awaiting your decision: <question>; NOT
     verified clean." Give the pause's flag ids and the candidate fixes.
   - **Hard unrecoverable error**: "Stopped in round N on <error>; NOT verified clean." Name the
@@ -385,10 +383,38 @@ converges; only the confirming full sweep does.
 - Give a per-round summary (raw flags, clusters, FIX / STRENGTHEN / ORCHESTRATOR-PAUSE).
 - If converged, suggest `/skill-publisher <target>` for the ship phase.
 
+## Example
+
+User: "trace skill drive-organizer".
+
+1. Resolve `<target>` to `~/.claude/skills/drive-organizer/` and `<ledger>` to
+   `${XDG_DATA_HOME:-$HOME/.local/share}/skill-tracer-audit-ledger/drive-organizer.md`. Expected
+   output: no ledger yet, so round 1 of a fresh run; `begin-round` creates it.
+2. Round 1: prepass until `{"status":"converged"}`, then `code_review_run.py` and two cold reviewers.
+   Expected output: `{"status":"verified-flags", …}`; cluster, fix, record, close the round. Its
+   `gate.continue` is true.
+3. Round 3 or later, after a clean changed-files review: re-run with `--scope full`. Expected output:
+   `{"status":"code-review-clean"}`.
+4. Convergence step, then Present result. Expected output: "Converged after N round(s). Zero flags
+   surfaced in the final full sweep." and a pointer to the ledger.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `skill-tracer must be invoked from the top-level Claude session` | `Agent` is absent: this is a nested or restricted session | Re-invoke from the top-level session |
+| `scripts/<name>.py: No such file` or exit 127 | A relative script path under zsh | Run `python3 <absolute-script-path>` |
+| `begin-round` exits 2 naming a different target | The ledger records another target | Give this target its own `<ledger>` path |
+| `check-pauses` exits 1 | An ORCHESTRATOR-PAUSE or USER-PAUSE is open | Resolve each listed pause (check-pauses step), re-run |
+| `close-round` exits 1 | A row is still PENDING, a pause is open, or no FIX row exists | Run the fix-recording step for PENDING rows; resolve open pauses (check-pauses step); for an all-STRENGTHEN round pass `--strengthen-only "<reason>"` (`references/script-contract.md`) |
+| `post_fix_gate.py` exits 1 | A fix broke a path, flag, identifier or added behaviour | Post-fix gate procedure; after 2 inner passes it becomes an ORCHESTRATOR-PAUSE |
+| `post_fix_gate.py` exits 2 | Unreadable input | The cause and remedy it prints; the exit-2 table in the Post-fix gate paragraph above |
+| A run stopped with "NOT verified clean" | A gate stop, USER-PAUSE or hard error | `references/recovery.md` "Hard unrecoverable errors"; after a gate stop a new invocation starts a fresh run, after a USER-PAUSE or hard error it resumes the open round (fresh-run-or-resume test) |
+
 ## Where the details live
 
 - `references/dispatch.md`: dispatch prompt text, manifests, reviewer edit detection, the
-  out-of-target fixer restore, contract recovery, the Explore trade-off, the provenance pointer.
+  out-of-target fixer restore, the post-fix gate procedure, contract recovery, the Explore trade-off, the provenance pointer.
 - `references/recovery.md`: in-flight marker grammar, resume table, persisted run options,
   hard-error list, stale-tmp cleanup.
 - `references/script-contract.md`: non-zero exit handling per script (including

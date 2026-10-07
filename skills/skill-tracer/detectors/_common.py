@@ -5,8 +5,10 @@ never run as a detector. Each detector loads standalone (importlib.util.spec_fro
 adds its own directory to sys.path before `from _common import X`.
 
 Callers:
-  - find_skill_root_from_file, SIBLING_SKILL_NAMES, cross_skill_context: refs_broken_file.py and
-    steps_dangling_ref.py (walk up to the nearest SKILL.md; skip a citation that names a sibling skill).
+  - find_skill_root_from_file: refs_broken_file.py and steps_dangling_ref.py (walk up to the nearest
+    SKILL.md).
+  - SIBLING_SKILL_NAMES: refs_broken_file.py (skip a citation that names a sibling skill).
+  - cross_skill_context: steps_dangling_ref.py (the same sibling-skill skip).
   - inscope_glob: missing_glossary_entry.py (sibling files restricted to the shared in-scope set).
   - collect_fenced_line_set, SUBSTEP_REF_RE: substep_label_mismatch.py.
   - find_skill_root_from_file: also missing_glossary_entry.py.
