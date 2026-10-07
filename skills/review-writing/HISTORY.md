@@ -25,7 +25,7 @@ Rewrite on the research refresh.
 - Argument brief rebuilt on Toulmin (claim, grounds, warrant, backing, qualifier, rebuttal), weakest warrant first; argument findings now carry `Current text` so location correction and pair matching work for them.
 - Output restructured as feed up, feed back, feed forward (Hattie and Timperley 2007); up to three next steps derived only from upheld findings (the writer-centric output item pending since May).
 - Clarity gains a Gopen and Swan sentence-position sub-category (limited to 5 findings).
-- Quote integration (floating quotes, argumentative substitution) moved here from plagiarism-check; SOAS 30-word block-quotation note.
+- Quote integration (floating quotes, argumentative substitution) moved here from plagiarism-check; 30-word block-quotation note.
 - Severity anchors added; no numeric grades.
 - Citation inventory comes from the shared `citation_audit.py` (author-date, footnote, link, citekey); `count_citations.py` kept for Logseq drafts. The evidence appendix no longer greps a hard-coded `pages/` folder.
 - SKILL.md from 453 lines to 48; persistence as in the other skills.

@@ -16,4 +16,4 @@ Shared mechanics: `$RUN` (temp run folder), `[QUOTE-UNMATCHED]` (the quote is no
 | `PlagSource-<slug>-<run>` | name of the judgement agent for one source (`<slug>` source label, `<run>` run id) |
 | `short-match` | 4 to 5 identical words with 3+ content words; weak evidence |
 | `verbatim-run` | 6 or more identical consecutive words outside quotation marks |
-| `Weight` | poor-academic-practice, minor or major (SOAS §2.4, §2.5; worked UK example) |
+| `Weight` | poor-academic-practice, minor or major (typical UK procedure weights) |

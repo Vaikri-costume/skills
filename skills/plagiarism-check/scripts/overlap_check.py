@@ -11,10 +11,10 @@ Usage:
   --source  reads only lines of the form  "quoted text" (citation)  — the writer's own annotations
             (author:: lines etc.) are NOT source material and are never compared.
   --plain   treats the whole file as source text. Use it for the writer's earlier submissions
-            (self-plagiarism, SOAS REG-183-10 §2.6) or for extracted source text.
+            (self-plagiarism, UK misconduct procedures) or for extracted source text.
 
-What counts as a match (heuristic constants, documented because SOAS and QAA give no numeric
-threshold: SOAS defines plagiarism by behaviour and separates minor from major by amount and by
+What counts as a match (heuristic constants, documented because institutions and QAA give no numeric
+threshold: UK procedures define plagiarism by behaviour and separate minor from major by amount and by
 whether the material is critical to the assignment):
   verbatim-run   a run of >= --min-words (default 6) consecutive words, function words included,
                  identical in draft and source, outside quotation marks.
@@ -128,7 +128,7 @@ def check(draft_text, sources, min_words=6, short_words=4, common=()):
     matches.sort(key=lambda m: (m['paragraph'], -m['words']))
     return {
         'parameters': {'min_words_verbatim': min_words, 'min_words_short': short_words,
-                       'note': 'heuristic constants; no SOAS or QAA numeric threshold exists'},
+                       'note': 'heuristic constants; no institutional or QAA numeric threshold exists'},
         'matches': matches,
         'quoted_matches': quoted,
         'coverage': {k: round(v / total_words, 4) for k, v in covered.items()},

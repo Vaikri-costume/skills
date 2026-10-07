@@ -10,7 +10,7 @@ Location: paragraph [n] — "[opening words of the passage]"
 Current text: "[exact verbatim quote from draft]"
 Check: [1 / 2 / 3 / 5]
 Source passage: "[relevant passage from this source]"
-SOAS category: [verbatim without reference / close paraphrase / unacknowledged quotation or paraphrase / citation practice]
+Category: [verbatim without reference / close paraphrase / unacknowledged quotation or paraphrase / citation practice]
 Weight: [poor-academic-practice / minor / major]
 Severity: RED / YELLOW / GREEN
 Explanation: [one sentence]

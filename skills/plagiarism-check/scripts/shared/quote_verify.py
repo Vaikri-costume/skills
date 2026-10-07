@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 quote_verify.py — check that every quotation in a draft exists in the source it cites
-(SOAS REG-183-10 §2.8 lists "quotations that do not exist and are not taken from the
+(UK misconduct procedures list "quotations that do not exist and are not taken from the
 referenced sources" as an indicator of generative-AI use).
 
 Usage: quote_verify.py <draft_file> --source LABEL=PATH [--source LABEL=PATH ...]

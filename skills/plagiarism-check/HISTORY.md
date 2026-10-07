@@ -29,7 +29,7 @@ Rewrite on the research refresh. All six open design decisions approved by the u
 6. Pairing: scripts for deterministic work, one judgement agent per source, one verifying challenger.
 #### Added
 - `overlap_check.py` (6-word verbatim runs, weak 4 to 5-word matches, quoted spans excluded, prior-submission mode; 8 tests); shared `citation_audit.py`, `quote_verify.py`, `citelib.py` (tests).
-- SOAS vocabulary: categories and weights (poor academic practice, minor, major), self-plagiarism, a limits statement in every report.
+- UK university vocabulary: categories and weights (poor academic practice, minor, major), self-plagiarism, a limits statement in every report.
 #### Changed
 - Frontmatter was invalid YAML (colon in the description); fixed. SKILL.md from 392 lines to 57.
 - The "3 content words" overlap rule replaced by the tiers above.

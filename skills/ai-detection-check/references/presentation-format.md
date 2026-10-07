@@ -22,7 +22,7 @@ Each finding shows: analysis confidence (HIGH = both agents of the pair flagged 
 
 ---
 ### Citation and quotation integrity   (deterministic: audit.json, quotes.json)
-[A checklist, not accusations. Subsections only if non-empty: quotations not found in the cited source; quotations whose source was not supplied (name the authors to supply); citations with no reference-list entry; reference-list entries never cited; repeated reference entries; authors introduced narratively 3+ times; reference artefacts (utm parameters, invalid ISBN checksums, malformed DOIs, placeholder markers). Say these are the machine-checkable items among SOAS REG-183-10 §2.8's indicators and are also ordinary referencing errors.]
+[A checklist, not accusations. Subsections only if non-empty: quotations not found in the cited source; quotations whose source was not supplied (name the authors to supply); citations with no reference-list entry; reference-list entries never cited; repeated reference entries; authors introduced narratively 3+ times; reference artefacts (utm parameters, invalid ISBN checksums, malformed DOIs, placeholder markers). Say these are the machine-checkable items among the human-judgement indicators in typical UK university misconduct procedures and are also ordinary referencing errors.]
 
 ---
 ### Quick wins

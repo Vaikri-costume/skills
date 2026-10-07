@@ -9,7 +9,7 @@ Detailed naming patterns per grouping, plus the `filename_tag` / `date_range` me
 | **WORK** — Admin / Branding | `YYYYMMDD_<Company>_<descriptive>.ext` | `20240521_[COMPANY]_invoice_template_v2.pdf` |
 | **WORK** — Projects | `YYYYMMDD_<Company>_<ProjectTag>_<descriptive>.ext` | `20240521_[COMPANY]_[PROJ]_[Person]_advance.pdf` |
 | **PERSONAL** | `YYYYMMDD_<Issuer>_<Type>_<descriptive>.ext` *(Issuer + Type pulled from content_peek)* | `20240615_CityPower_Bill_electricity_jun24.pdf`, `20240315_FirstBank_Statement_mar24.pdf` |
-| **EDUCATION** | `YYYYMMDD_<Entity>_<descriptive>.ext` *(Entity = institution / publication / author from content_peek)* | `20240601_SOAS_offer_letter.pdf`, `20240515_Nature_microplastics_review.pdf` |
+| **EDUCATION** | `YYYYMMDD_<Entity>_<descriptive>.ext` *(Entity = institution / publication / author from content_peek)* | `20240601_University_offer_letter.pdf`, `20240515_Nature_microplastics_review.pdf` |
 | **ENTERTAINMENT** | `AlbumName - SongTitle - Artist.ext` (no date prefix; album folder carries the year) | `Album Name - Song Title - Artist.mp3` |
 | **RESOURCES** | `<asset_name>.ext` (no date prefix; assets are timeless) | `Helvetica_Neue_Bold.ttf` |
 

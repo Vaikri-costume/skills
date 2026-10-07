@@ -5,7 +5,7 @@ citation_audit.py — deterministic citation and source-reliance audit of a draf
 Usage: citation_audit.py <draft_file>
 Output: JSON on stdout (or {"error": ...}).
 
-Covers the SOAS misconduct procedure §2.8 indicators that can be checked by machine
+Covers the typical UK misconduct-procedure indicators that can be checked by machine
 (REG-183-10: repeated introductions of authors, repeated bibliography entries, an
 extensive bibliography not cited in the text) plus source-reliance patterns and
 citation artefacts typical of machine-written text.
