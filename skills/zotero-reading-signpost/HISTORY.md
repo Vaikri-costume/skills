@@ -30,51 +30,51 @@ Full rewrite with skill-creator-ccvw (improve path), on the user's words "You ha
 - Every stage writes its working file before the next starts (`signpost-work/<attachment key>/`: page texts, points, plan, summary, checks, report), with a session-log marker per pass, so a stopped run leaves inspectable work and can resume. Each workflow step names its expected output. Troubleshooting is cause and fix pairs.
 #### Added
 - `scripts/cap_check.py` (the summary's word count against the length cap) and `scripts/note_html.py` (the note's HTML from the approved summary and the item's properties), each a step that is the same every time, with tests in `scripts/tests/test_cap_note.py`.
-#### Iteration 2 (after test round 1, private research notes)
+**Iteration 2** (after test round 1, private research notes)
 - Aids understanding: a summary that strings the highlighted passages together in the text's sentences fails; each sentence says how the text uses its point; every person, name and term is introduced where it first appears. The summary bullet of step 9 says so.
 - Whole passage: a highlight is at most two sentences; `plan_check.py` flags WALL (more than two sentences or 60 words), with a test. Shows why grows a highlight only within that bound, otherwise adds an evidence highlight.
 - Text's own words names quantifiers ("much of", "some", "most") as hedges; Every claim backed includes the first sentence's main claim.
 - A failing grade is always fixed; only a `plan_check.py` false alarm may be kept.
 - Module AI-rules gate: a tie to an assessed piece that cannot be ruled out stops the run to ask (`references/cases.md` section 1, step 0).
-#### Iteration 3 (after test round 2: rules stated but read past)
+**Iteration 3** (after test round 2: rules stated but read past)
 - Pass 3 writes a sentence table into `checks.md`: per summary sentence, every claim with its highlight, who the text gives it to, its link and the passage that makes it, its role, and where each reference was introduced; every empty cell is fixed before the second check.
 - `scripts/context_check.py` (new, with tests) prints the sentence before and after each highlight; the first check reads them for reasons and evidence the highlight must carry.
 - Nothing added: a claim stays with whoever the text gives it to (a cited source is named), and the authors' contrasts stay contrasts.
-#### Iteration 4 (after test round 3)
+**Iteration 4** (after test round 3)
 - Whole passage: a highlight starts at a sentence or a clause with its own subject; `plan_check.py` flags START (lower-case first letter, page-split continuations excepted), with a test. Bare connectives are dropped; a back-reference that names what it rests on ("All these findings indicate that") stays.
 - `plan_check.py` no longer ends a sentence at "e.g.", "et al.", "p." and the like (WALL counted them), with a test.
 - The sentence table names the pass 1 point each sentence serves and how; Every claim backed covers the sources and people the summary names; the first check records, per highlight, where its reason is carried or that the text gives none.
-#### Iteration 5 (after test round 4, on the user's "One more" and her ruling of 22 Oct)
+**Iteration 5** (after test round 4, on the user's "One more" and her ruling of 22 Oct)
 - No failing grade, flag or table row is kept as a false alarm: each is fixed, and what still fails after the re-runs goes on a "Could not fix" list shown at the gate, with what was tried, and counts as failing. A framing word of one's own flagged WORDING is taken out or replaced by the text's word.
 - Short label: at most five words for every comment; the text's own wording is shortened by dropping words, never by swapping them.
 - Whole passage: a highlight may start mid-sentence when the words from there are all that is needed to make the point. `plan_check.py` no longer flags START; the test now checks it is not flagged.
-#### After test round 5, on the user's "The cap is suggestive"
+**After test round 5**, on the user's "The cap is suggestive"
 - The 15% length cap is a guide: both counts are reported, a summary over it is not a fail, and no highlight, evidence or step is cut to fit it (SKILL.md step 9, Troubleshooting, Output contract; method.md order of work; README; profile template; evals).
 - Alignment fix: words that say what a point does in the argument (the sentence table's roles: claim, evidence, example, case, step, definition, contrast, conclusion, point, argument, supports, leads) are connecting prose of one's own, as Text's own words allows; `plan_check.py` no longer lists them under WORDING, with a test. Round 5 showed the no-keep rule had otherwise made "say what each point does" impossible.
-#### After the retest, on the user's "Only fix the first"
+**After the retest**, on the user's "Only fix the first"
 - A sentence the page repeats (an abstract and the body) is highlighted at its first copy, so the point is kept. Read from the Zotero MCP's highlight code: it starts at the first place the quote's opening words appear and ends at the first place after that where its closing words appear. `anchor_check.py` now flags EDGE REPEATS only when the tool would take another copy, with a test; a loose-match test whose end repeated only after the quote now passes, as the tool lands on it.
-#### After the second retest, on the user's "Fix"
+**After the second retest**, on the user's "Fix"
 - `plan_check.py` WORDING flags only a sentence with no highlight behind it; the wording of a sentence that cites a highlight is free, so the connecting prose can say what each point does (the graders found the per-word check pushed summaries into clipped sentences). The role-word list is gone with it. Swaps and dropped hedges are graded under Text's own words. Tests updated.
-#### After the hand-graded retest, on the user's "I think the cap was needed no?" and "Fix"
+**After the hand-graded retest**, on the user's "I think the cap was needed no?" and "Fix"
 - Aids understanding is graded sentence by sentence in pass 3: a sentence that only re-says its highlight fails and is rewritten to say what its point does, or cut. The cap stays a guide, but a summary over it keeps only sentences that carry evidence or a reason. No new rule: both apply the existing Aids understanding rule.
-#### Trace round 1 (skill-tracer, fixes made by the building session on the user's instruction)
+**Trace round 1** (skill-tracer, fixes made by the building session on the user's instruction)
 - `plan_check.py`: TANDEM compares whole words; LONG COMMENT counts a hyphenated compound or a number as one word; TERM reads the joined parts of a page-split passage; tests added.
 - Docs aligned: term_check.py's role, step 0 after the capability check, sentence and highlight counts, the dry run's report.md, quotes checked against the saved page texts, a verbatim repeat accepted with --allow-repeat at its first copy, plain-line headings, the cap over the pages summarised, note property order, the acknowledgement of AI use.
 - The user's answers (23 Oct, "Check, points, I never asked for that limit"): a resume after the gate reads the item's notes and annotations and continues from the first write not yet in Zotero; where the text never states its main claim, the first sentence gives the argument through its stated highlighted points; the 60-word WALL limit is removed (WALL is past two sentences only).
-#### Trace rounds 2 to 23 (skill-tracer, fixes made by the building session on the user's instruction; rounds 21 to 23 with Opus reviewers on her word)
+**Trace rounds 2 to 23** (skill-tracer, fixes made by the building session on the user's instruction; rounds 21 to 23 with Opus reviewers on her word)
 - Every fix is in the audit ledger, one row per cluster. Alignment fixes only, except where the project coordinator decided a design fork from her rules: an item's earlier signposts stay untouched (a planned quote on one gets no new highlight and is reported); a dry run of a module reading still records the AI use, marked "dry run"; the OCR copy is recorded in `ocr.md` and reused, never attached twice.
 - Scripts: `anchor_check.py` models the Zotero highlight tool (a quote of 100 characters or fewer is found by exact search and highlighted at every copy, so its repeats stay AMBIGUOUS and it has no edge check; the length is the printed page span's; a two-character lowercase form keeps the index map); `plan_check.py` judges a page-split passage on its joined parts for TERM and SAME CLAIM, skips "so-called" and a time "since" for LINK; `note_html.py` escapes property values like the paragraphs; `cut_pattern` is defined once in `copy_check.py`; undecodable input exits 2 in every script. Tests added for each.
 - Workflow: resume reads the working files in pass 3's order of work, honours a recorded gate disagreement, and after the gate reads the item and the keys step 13 recorded; `plan.json` holds the printed span and is saved over on each rebuild; restored words sit in square brackets in the page copy; a blank profile value marked "blank if none" is read as none.
-#### Design read after the trace (23 Oct, on the user's "Do a human eye read of every file in the skill ... Ensure all fixes and steps and instructions are compliant with design logic")
+**Design read after the trace** (23 Oct, on the user's "Do a human eye read of every file in the skill ... Ensure all fixes and steps and instructions are compliant with design logic")
 - Pass 1 no longer suggests "usually 5 to 7 points" (her rule: no artificial limits on steps); the text decides.
 - The session-log markers are removed, and the summary rule that no sentence opens with "this" or "that" is removed: neither traces to her words (coordinator's decisions; her own rules on coherent sentences and introducing every name and term stay).
 - The two-sentence highlight limit is removed (added in iteration 2 without her words; her own 21 Oct plan has a three-sentence highlight): a highlight is as long as its point needs, and a wall is a passage that lumps several points together, graded, not counted. `plan_check.py` no longer flags WALL. The pass 3 re-run bound "one run plus at most three re-runs" (from the 1.2.7 copy check, not her words) is replaced by re-running until nothing fails or a re-run fixes nothing new (coordinator's decisions). The `copy_check.py` tests now run under `python3 -m unittest discover`.
 - README, glossary, eval expectations and the `copy_check.py`, `pin_check.py` and `cap_check.py` docstrings aligned with the current design (summary written last from the phrases; an unanchorable phrase keeps its point on another passage; an unstated main claim goes through the points; the cap is a guide; connecting prose of one's own is kept).
-#### Trace rounds 24 to 26 (Opus reviewers, on the user's "3 more opus traces"; a human-eye design read and fix-radius check between rounds, on her "Do the human eye read and fix check between each round")
+**Trace rounds 24 to 26** (Opus reviewers, on the user's "3 more opus traces"; a human-eye design read and fix-radius check between rounds, on her "Do the human eye read and fix check between each round")
 - Resume and records: gate records stay at the head of `checks.md`; the keys of created highlights and combined annotations are recorded (and recovered on a resume), and earlier signposts are recognised first by those recorded keys, from every earlier run's `checks.md`; a finished run (its `report.md` written) is never resumed or overwritten, and a new request runs in a date-and-time subfolder (coordinator's decision); `scope.md` records step 4's pages; `ocr.md` covers a dry run's local OCR output and an OCR copy attached just before a stop.
 - Text and checks: page texts are the text layer, never an image transcription; a page re-extracted in another order has its other quotes re-anchored; the gate sends a wrong item or attachment back to step 1 or 2; the creation retry runs within the approved quote.
 - Scripts: `plan_check.py` no longer reads "no" or "ed" as abbreviations, counts "n't" as negation, and reads "so" and "since" as links only at a clause start; `term_check.py --plan` joins page-split parts; `copy_check.py` reads strict UTF-8 and ignores curly single-quoted terms. Each with a test that fails on the old code.
-#### Not done in this rewrite, on the user's instruction
+**Not done in this rewrite**, on the user's instruction
 - The pre-edit and post-edit skill-tracer runs of the improve path ("no trace"); the marketplace check (required only for new builds).
 
 ### 1.4.0 — 2026-10-21 (shipped)
