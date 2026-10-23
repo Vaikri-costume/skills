@@ -17,7 +17,8 @@ Usage:
 INCLUDE_LIST.json: [{"file": "pages/X.md", "line": 12}, ...] (line = 1-based,
 matching schema-lint.py's L<N> reporting). Each location is re-validated
 against the current file content before writing (still matches the
-single-colon-label shape, not already fixed) — mismatches are skipped and
+label pattern below (the same shape schema-lint.py reports, without its task-keyword exclusion, so list only lines it reported); a line already converted that still holds a later colon matches again,
+so run one include list once) — mismatches are skipped and
 reported, never forced.
 
 Dry-run by default; --apply writes. Pure stdlib.
@@ -67,7 +68,7 @@ for relfile, linenos in by_file.items():
         open(path, "w", encoding="utf-8").write("\n".join(lines))
 
 print(f"{'CONVERTED' if args.apply else 'would convert'} {len(converted)} line(s)")
-print(f"SKIPPED {len(skipped)} (re-validation failed — file changed since analysis)")
+print(f"SKIPPED {len(skipped)} (re-validation failed or file not readable — reasons below)")
 for f, ln, reason in skipped:
     print(f"  {f}:{ln}: {reason}")
 if not args.apply:

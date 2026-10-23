@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-graph-heading-extract.py — convert bold-labeled bullets with no heading:: true
-ancestor into real heading:: true structure: the label becomes its own bullet
+graph-heading-extract.py — convert bold-labeled bullets whose parent bullet is
+not already a heading:: true heading into real heading:: true structure: the label becomes its own bullet
 (debolded) with heading:: true on a child line, and the original same-line
 content becomes a separate, further-indented child bullet.
 
@@ -14,9 +14,11 @@ Usage:
   graph-heading-extract.py GRAPH_ROOT [--pages-dir DIR] [--apply] [--json]
 
 A bullet is a CANDIDATE when:
-  - it starts with **bold** (immediately after "- ", or "- " + optional list marker)
-  - it has NO heading:: true ancestor already governing it (already-nested bold
-    is graph-link-audit.py's bold-markdown job — plain debold, no restructuring)
+  - it starts with **bold** immediately after "- " (a list marker before the bold is not matched)
+  - its parent bullet (the nearest less-indented bullet) is not already a heading:: true
+    heading, i.e. the parent's next line is not "heading:: true" (already-nested bold is
+    graph-link-audit.py's bold-markdown job — plain debold, no restructuring); higher
+    ancestors are not checked
   - there is non-empty text remaining on the SAME line after the closing **
 
 When the bold span wraps to the end of the line with nothing left over, there
@@ -29,13 +31,13 @@ are two distinct cases:
     that block ends is a judgment call this script does not make — SKIPPED,
     report-only
 
-A bullet is also SKIPPED when the bold is not at the start of the bullet
-(mid-sentence emphasis — nothing to extract as a label; graph-link-audit.py's
-bold-markdown already debolds it).
+A bullet is also IGNORED (not listed in the results) when the bold is not at the
+start of the bullet (mid-sentence emphasis — nothing to extract as a label;
+graph-link-audit.py's bold-markdown already debolds it).
 
 Label cleanup: a single trailing "." or ":" on the label is stripped (cleaner
 heading title). Content cleanup: a leading em/en dash or hyphen + space
-(the old inline separator) is stripped; no separator is invented if one wasn't
+(the old inline separator) or colon + space is stripped; no separator is invented if one wasn't
 there (e.g. bibliography entries where content starts directly with "(1996)").
 Pure stdlib.
 """
@@ -55,9 +57,10 @@ if not os.path.isdir(PAGES):
     sys.exit(f"error: {PAGES} not found — is this a valid graph root?")
 SKIP_DIRS = (".obsidian", "assets", "copilot", "logseq", ".recycle", "bak", ".trash")
 
-BULLET_RE = re.compile(r'^(\t*)-\s(.*)$')
+BULLET_RE = re.compile(r'^([ \t]*)-\s(.*)$')   # tab or space indentation; nesting is compared by indent length
 BOLD_START_RE = re.compile(r'^\*\*([^*]+)\*\*(.*)$')
-FENCE_RE = re.compile(r'^\s*-?\s*```')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # also runs under python3 -I, which leaves the script folder off the path
+from _common import FENCE_OPEN_RE as FENCE_RE
 PROP_RE = re.compile(r'^\s*[a-z][a-z.-]*:: ')
 
 def md_files():
@@ -77,12 +80,12 @@ def clean_label(label):
 
 def clean_content(content):
     content = content.strip()
-    m = re.match(r'^[—–-]\s+(.*)$', content)
+    m = re.match(r'^(?:[—–-]|:)(?:\s+(.*))?$', content)   # old inline separator: dash or a colon outside the bold, alone or before the content
     if m:
-        content = m.group(1)
+        content = m.group(1) or ""
     return content.strip()
 
-results = []   # {file, line, kind: "convert"|"skip-no-content"|"skip-mid-sentence", label, content, old, new}
+results = []   # {file, line, kind: "convert"|"skip-no-content", label, content, old, new}
 
 for p in md_files():
     rel = os.path.relpath(p, G)
@@ -92,6 +95,7 @@ for p in md_files():
         continue
     lines = raw.split("\n")
     in_fence = False
+    space_style = any(re.match(r'^ +- ', x) for x in lines)   # a file indented with spaces gets space-indented children everywhere
     edits = []   # (line_idx, [new_line(s)])
     for i, l in enumerate(lines):
         if FENCE_RE.match(l):
@@ -108,6 +112,7 @@ for p in md_files():
             continue  # not start-of-bullet bold — mid-sentence emphasis, graph-link-audit's job
         # check for a heading:: true ancestor
         tlevel = len(indent)
+        child_indent = "  " if ((" " in indent) or (space_style and "\t" not in indent)) else "\t"   # the child bullet follows the file's own indent style
         has_heading_ancestor = False
         for j in range(i - 1, -1, -1):
             aj = BULLET_RE.match(lines[j])
@@ -137,7 +142,7 @@ for p in md_files():
             # no re-indenting needed
             new_lines = [f"{indent}- {label}", f"{indent}  heading:: true"]
         else:
-            new_lines = [f"{indent}- {label}", f"{indent}  heading:: true", f"{indent}\t- {content}"]
+            new_lines = [f"{indent}- {label}", f"{indent}  heading:: true", f"{indent}{child_indent}- {content}"]
         results.append({"file": rel, "line": i + 1, "kind": "convert",
                         "label": label, "content": content[:100],
                         "old": l.strip()[:120], "new": new_lines})

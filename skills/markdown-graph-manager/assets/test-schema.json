@@ -1,0 +1,40 @@
+{
+  "writer_vocab_plain": [
+    "Alex",
+    "Sam",
+    "Claude"
+  ],
+  "status_vocab": [
+    "TODO",
+    "DOING",
+    "DONE",
+    "WAITING",
+    "CANCELLED"
+  ],
+  "zotero_only_properties": [
+    "author",
+    "authors",
+    "original-title",
+    "language",
+    "links",
+    "item-type",
+    "citekey"
+  ],
+  "link_type_properties": [
+    "related",
+    "project",
+    "lens",
+    "period",
+    "thread"
+  ],
+  "_comment": "Minimal generic schema for the eval fixture graph (evals/fixture); not a template for a real graph.",
+  "type_vocab": [
+    "Person"
+  ],
+  "required_properties": {
+    "Person": [
+      "type",
+      "born"
+    ]
+  }
+}

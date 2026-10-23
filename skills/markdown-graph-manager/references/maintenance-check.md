@@ -1,23 +1,23 @@
 # Maintenance freshness check (Step -1)
 
-Usage-triggered, not scheduled: it runs inline at every skill invocation, throttled to once per 7 days. Rationale: the apps reading these graphs move fast — on a single observed day, one app shipped a save-path corruption fix plus a new release, and another shipped a whole major version adding markdown-folder support. One-time verified assumptions rot quickly; a weekly usage-triggered check keeps the caveats files honest without any background scheduler.
+Usage-triggered, not scheduled: it runs inline before every subcommand once the graph is resolved (SKILL.md Step -1; not when graph resolution refuses), throttled to once per 7 days. Rationale: the apps reading these graphs move fast (a release can fix a save-path corruption or add a whole feature). One-time verified assumptions rot quickly; a weekly usage-triggered check keeps the caveats files honest without any background scheduler.
 
 ## State file
 
-Portable form: runtime-provided per-skill storage (`runtime.storage("markdown-graph-manager").get/set("maintenance-state")` or the equivalent your runtime offers).
+Portable form: runtime-provided per-skill storage (`runtime.storage("markdown-graph-manager").get/set("maintenance-state")` or the equivalent your runtime offers). Use it whenever the runtime offers it.
 
-Claude-Code-tier fallback: `${XDG_DATA_HOME:-$HOME/.claude}/markdown-graph-manager/maintenance-state.json` — create the directory on first use.
+Claude-Code-tier fallback, used only when the runtime offers no storage: `${XDG_DATA_HOME:-$HOME/.claude}/markdown-graph-manager/maintenance-state.json` — create the directory on first use.
 
 Shape:
 ```json
 {"last_check": "2026-08-11T13:44:00Z", "last_results": {"app-id": "current | gap | check-manually"}}
 ```
 
-Rule: under 7 days since `last_check` → silent, proceed. Otherwise run both checks, print ONE compact notice (only apps with gaps or drift; silence per current item), update `last_check` regardless of outcome, continue. A failing check degrades to a "check manually" line — it must never block or error out of the requested subcommand.
+`last_results` is informational: write each checked app's watchlist `id` with `current`, `gap` or `check-manually`; no later run reads it. Rule: under 7 days since `last_check` → silent, proceed. A missing state file or missing `last_check` counts as never checked. Otherwise run both checks, print ONE compact notice (only apps with gaps or drift; silence per current item), update `last_check` regardless of outcome, continue. A failing check degrades to a "check manually" line — it must never block or error out of the requested subcommand.
 
 ## Check 1 — app updates (read-only + notify; NEVER auto-install)
 
-Compare installed vs latest for every app in the registry's watchlist. Installed version for a macOS app: `defaults read "/Applications/<App>.app/Contents/Info.plist" CFBundleShortVersionString` (or read the plist directly). Per-app latest-version source, as verified per app:
+Compare installed vs latest for every app in the registry's `app_watchlist`; an entry's `app_path` is the installed app's path (use it in place of `/Applications/<App>.app` below) and its `latest_source` is the source itself (`github:owner/repo`, `changelog:URL`, `mas`); the table below says how to read each known source and is the fallback for an app whose entry has no `latest_source`. Installed version for a macOS app: `defaults read "/Applications/<App>.app/Contents/Info.plist" CFBundleShortVersionString` (or read the plist directly). Per-app latest-version source, as verified per app:
 
 | App | Latest-version source | Notes |
 |---|---|---|
@@ -26,12 +26,13 @@ Compare installed vs latest for every app in the registry's watchlist. Installed
 | Obsidian | No public version API (closed-source). Fetch `https://obsidian.md/changelog/` and parse the top entry — lower confidence. | Obsidian self-updates, so this is a courtesy cross-check; degrade to "check manually" freely. |
 | Finalist | Mac App Store — no public API. Scriptable check needs the `mas` CLI (`brew install mas`, an explicit-permission install). | Without `mas`: fall back to "glance at App Store → Updates, or confirm automatic app updates are on." Never error. |
 
-For each app with a gap, ask the user ("X vY available, you're on vZ — install?") via the runtime's question mechanism. **Answering yes means the USER installs (or explicitly confirms a download command); this skill never downloads or installs on its own initiative** — that includes `mas` and app updates. (Apple Notes needs no install of any kind — its markdown import is a native, built-in macOS feature; see `references/layers/apple-notes.md`.)
+Inside the single compact notice, ask the user once about all gaps (an unattended run asks nothing: rule Unattended run (weekly routine) in `references/rules.md`) ("X vY available, you're on vZ; Y vB available, you're on vA — install?") via the runtime's question mechanism. **Answering yes means the USER installs (or explicitly confirms a download command); this skill never downloads or installs on its own initiative** — that includes `mas` and app updates. (Apple Notes needs no install of any kind — its markdown import is a native, built-in macOS feature; see `references/layers/apple-notes.md`.)
 
 ## Check 2 — documentation currency
 
 Only the layers whose compatibility is real-but-unverified need tracking (the graph's native apps — Logseq/Obsidian — are the format's own definition, nothing to track):
 
+- **Apple Notes** has no source to re-fetch (its import is a native macOS feature), so it is not tracked here; its manual check stays in `references/layers/apple-notes.md`.
 - **Tine**: re-fetch `https://raw.githubusercontent.com/martinkoutecky/tine/main/CHANGELOG.md` and `.../docs/FEATURES.md`. Diff against `references/layer-tine-caveats.md`: new namespaced properties (→ the schema config's tolerance list may need entries), resolved caveats (e.g. `heading::` support documented), new format risks.
 - **Finalist**: re-fetch its markdown docs page (`https://finalist.works/docs/markdown-files/`). Diff against `references/layer-finalist-caveats.md`: any mention of Logseq-style `property::` support or keyword tasks would change that layer's status.
 
