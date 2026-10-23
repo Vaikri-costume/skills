@@ -1,0 +1,16 @@
+{
+  "_comment": "Relation vocabulary for graph links. Starts from eight verbs; the user edits the list (add, rename or remove verbs here and nowhere else) and it can grow later. A relation line starts with one of these.",
+  "verbs": [
+    "extends",
+    "complicates",
+    "contradicts",
+    "applies to a different case",
+    "supplies the primary source for",
+    "responds to",
+    "reframes",
+    "disputes the reading of"
+  ],
+  "connections_headings": [
+    "Connections"
+  ]
+}

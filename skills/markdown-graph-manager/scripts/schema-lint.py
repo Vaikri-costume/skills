@@ -5,12 +5,14 @@ Read-only; never edits.
 
 Usage:
   schema-lint.py GRAPH_ROOT SCHEMA_CONFIG                  # lint every page in GRAPH_ROOT/pages/
-  schema-lint.py GRAPH_ROOT SCHEMA_CONFIG "Some Page.md"   # lint one page (name or path)
+  schema-lint.py GRAPH_ROOT SCHEMA_CONFIG --pages-dir DIR  # another pages folder; use . for a flat vault
+  schema-lint.py GRAPH_ROOT SCHEMA_CONFIG "Some Page.md"   # lint one page (name or path relative to the pages folder, or an absolute path)
   schema-lint.py GRAPH_ROOT SCHEMA_CONFIG --quiet          # only print files with violations
-Exit code = number of files with violations, capped at 255 (0 = all clean).
+Exit code = number of files with violations, capped at 255 (0 = all clean). It is also 255 when no file was linted at all (a stderr line says so), so a run that lints nothing is never read as clean.
 
 All vocabulary/required-property/tolerance data comes from SCHEMA_CONFIG (JSON);
-this script hardcodes no graph-specific content. Pure stdlib.
+this script hardcodes no graph vocabulary (it fixes only the format-contract rules, such as the
+task-keyword list and the Zotero-page test). Pure stdlib.
 """
 import argparse, fnmatch, json, os, re, sys
 
@@ -25,7 +27,7 @@ args = ap.parse_args()
 G = os.path.abspath(args.graph_root)
 PAGES = os.path.normpath(os.path.join(G, args.pages_dir))
 if not os.path.isdir(PAGES):
-    sys.exit(f"error: {G}/pages not found — is this a valid graph root?")
+    sys.exit(f"error: {PAGES} not found — is this a valid graph root?")
 SCHEMA = json.load(open(args.schema_config, encoding="utf-8"))
 
 TYPE_VOCAB = set(SCHEMA["type_vocab"])
@@ -36,7 +38,7 @@ REQUIRED_PROPS = SCHEMA.get("required_properties", {})
 TOLERATED = set(SCHEMA.get("tolerated_properties", []))
 TOLERATED_PATTERNS = SCHEMA.get("tolerated_property_patterns", [])
 APP_INTERNAL = set(SCHEMA.get("app_internal_properties", []))
-SKIP_DIRS = (".obsidian", "assets", "copilot")
+SKIP_DIRS = (".obsidian", "assets", "copilot", "logseq", ".recycle", "bak", ".trash")   # same list as graph-link-audit.py
 
 def is_tolerated(prop):
     """Property another app (e.g. Tine) or the graph app itself writes — never a violation."""
@@ -46,8 +48,9 @@ def is_tolerated(prop):
 
 def strip_code(text):
     # blank out inline `code` and fenced blocks so examples don't false-positive
-    text = re.sub(r'`[^`]*`', '``', text)
-    text = re.sub(r'```.*?```', '```', text, flags=re.S)
+    # fenced blocks first, keeping their newlines so every later line keeps its real file line number
+    text = re.sub(r'```.*?```', lambda m: '```' + '\n' * m.group(0).count('\n'), text, flags=re.S)
+    text = re.sub(r'`[^`\n]*`', '``', text)
     return text
 
 def lint(path):
@@ -109,7 +112,7 @@ def lint(path):
     if blank_before_prop:
         V.append("page property after a blank line (keep leading props contiguous)")
     # Zotero-only props on a non-Zotero page (heuristic: page not tagged as from zotero)
-    is_zotero = "zotero" in page.get("source", "").lower() or page.get("type") == "" or "citekey" in raw.lower()
+    is_zotero = "zotero" in page.get("source", "").lower() or not page.get("type") or "citekey" in page
     for i, l in enumerate(lines):
         m = re.match(r'^\s*([a-z][a-z.-]*):: ', l)
         if m and m.group(1) in ZOTERO_ONLY and not is_zotero and not is_tolerated(m.group(1)):
@@ -124,7 +127,7 @@ def lint(path):
                     V.append(f"L{i+1}: type:: {v!r} not in vocab")
         m = re.match(r'^\s*writer:: (.+?)\s*$', l)
         if m:
-            for v in (x.strip() for x in m.group(1).split(",")):
+            for v in (x.strip() for x in re.split(r",(?![^\[\]]*\]\])", m.group(1))):   # a comma inside [[...]] belongs to the page name
                 if v and not (v in WRITER_VOCAB_PLAIN or v.startswith("[[")):
                     V.append(f"L{i+1}: writer:: {v!r} not a known writer/entity")
         m = re.match(r'^\s*status:: (.+?)\s*$', l)
@@ -173,8 +176,8 @@ for p in targets:
     elif not args.quiet:
         print(f"✓ {rel}")
 print(f"\nlinted {linted}/{len(targets)} files")
-if linted == 0 and len(targets) > 0:
-    print("!! 0 files linted — target discovery is broken, results below are not trustworthy")
+if linted == 0:
+    print("!! 0 files linted — target discovery is broken, results below are not trustworthy", file=sys.stderr)
     sys.exit(255)
 print(f"{bad} file(s) with violations")
 sys.exit(min(bad, 255))

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Assets audit/repair for a markdown graph whose pages/ folder doubles as an
-Obsidian vault. Verifies the GRAPH_ROOT/assets -> pages/assets symlink, moves any
-stray files if the symlink was ever replaced by a real folder, and rewrites
-../../assets/ links to ../assets/ in pages/journals. Safe to run any time;
-prints what it does. Pure stdlib; no schema config needed (pure filesystem check).
+Obsidian vault. Checks that GRAPH_ROOT/assets is a symlink (printing where it points) or creates it as one to pages/assets, moves any
+stray files if the symlink was ever replaced by a real folder (and stops, moving
+nothing, if a file of the same name is already in pages/assets), and rewrites
+../../assets/ links to ../assets/ in every page under pages/. Prints what it does. Pure stdlib; no schema config needed (pure filesystem check).
 
 Usage: assets-audit.py GRAPH_ROOT
 """
@@ -24,6 +24,9 @@ if os.path.islink(root_assets):
     print("symlink OK:", os.readlink(root_assets))
 elif os.path.isdir(root_assets):
     moved = 0
+    clashes = [f for f in os.listdir(root_assets) if os.path.lexists(os.path.join(pages_assets, f))]
+    if clashes:
+        sys.exit("error: already in pages/assets, nothing moved — resolve by hand: " + ", ".join(sorted(clashes)))
     for f in os.listdir(root_assets):
         shutil.move(os.path.join(root_assets, f), os.path.join(pages_assets, f)); moved += 1
     os.rmdir(root_assets)

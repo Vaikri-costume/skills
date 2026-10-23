@@ -4,36 +4,45 @@ graph-link-audit.py — link, collision, and empty-property audit for a
 property-block markdown graph (Logseq-format pages that are also an Obsidian vault).
 
 Usage:
-  graph-link-audit.py GRAPH_ROOT SCHEMA_CONFIG [--pages-dir DIR] [--json] [--quiet]
+  graph-link-audit.py GRAPH_ROOT SCHEMA_CONFIG [--pages-dir DIR] [--links-only] [--json] [--quiet]
   graph-link-audit.py GRAPH_ROOT SCHEMA_CONFIG --apply-safe-fixes   # write safe fixes
 
 Categories found (safe-fixable marked *):
   should-be-linked*        plain link-property value whose target page exists -> wrap in [[...]]
-  dangling-bracketed-link* [[bracketed]] link-property value whose target does not exist -> unbracket, always
-  dangling-link*           [[bracketed]] link in body prose whose target does not exist -> unbracket, always
+  dangling-bracketed-link* [[bracketed]] link-property value whose target does not exist -> unbracket
+  dangling-link*           [[bracketed]] link in body prose, in a property value whose key is not a
+                           link-type property, or inside one comma-separated element of a link-type property
+                           value that holds more than one link or other text, whose target does not exist -> unbracket
                            (same rule as dangling-bracketed-link, same location-independent rationale —
                            a dangling bracket risks the graph app creating a phantom page wherever it sits)
   empty-property-value*    a `key:: ` line with no value (an explicit blank override in Logseq) -> delete line
+                           (except a blank writer::, kept because graph_audit.py reports it as a template placeholder, and
+                           every blank property line on a template page)
   bold-markdown*           any **bold** text anywhere -> strip the ** markers, keep the plain text
                            (unconditional: no bold formatting anywhere in this graph, ever — confirmed
                            2026-08-11. Distinct from schema-lint's inline-bold-heading, which is a
                            SEPARATE report-only judgment call about whether a bold-plus-dash line was
                            structurally meant as a heading; this fix never restructures, only strips **)
   title-collision          same title/filename/alias (case-insensitive) on 2+ files (report-only)
-  blank-title-collision    2+ files each carrying a valueless title:: line (report-only)
+  blank-title-collision    2+ files each carrying a valueless title:: line (report-only; an --apply-safe-fixes run
+                           deletes those lines, so it reports only those left on template pages)
 
 The bracket rule is existence-conditional and location-independent: any [[bracketed]]
 link — property value or body prose — is unbracketed when its target does not exist,
-always, no exceptions, because the phantom-page-creation risk is identical either way.
+whichever location it is in, because the phantom-page-creation risk is identical either way.
+The links this script leaves alone are listed in references/rules.md, rule Bracket rule.
 A plain (unbracketed) link-property value is wrapped in [[...]] only when its target
 demonstrably exists.
 
-Default is report-only. --apply-safe-fixes writes ONLY the four starred categories.
+Default is report-only. --apply-safe-fixes writes ONLY the five starred categories.
 Content inside fenced code blocks (```...```) is never scanned or modified.
-Exit code = number of files with findings, capped at 255. Pure stdlib.
+Exit code = number of files with findings, capped at 255; also 255 when no file was scanned
+(a stderr line says so). Pure stdlib.
 """
 import argparse, json, os, re, sys
 from collections import defaultdict
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # also runs under python3 -I, which leaves the script folder off the path
+from _common import FENCE_OPEN_RE
 
 ap = argparse.ArgumentParser()
 ap.add_argument("graph_root")
@@ -45,7 +54,7 @@ ap.add_argument("--links-only", action="store_true",
                      "collisions don't apply there and would be false positives")
 ap.add_argument("--apply-safe-fixes", action="store_true", help="write the safe-fix subset (default: report only)")
 ap.add_argument("--json", action="store_true", dest="as_json", help="machine-readable JSON output")
-ap.add_argument("--quiet", action="store_true", help="suppress per-file OK lines")
+ap.add_argument("--quiet", action="store_true", help="accepted for symmetry with schema-lint.py; this script prints no per-file OK lines")
 args = ap.parse_args()
 
 G = os.path.abspath(args.graph_root)
@@ -63,7 +72,8 @@ BOLD_RE = re.compile(r'\*\*([^*]+)\*\*')
 def md_files():
     dirs_to_walk = [PAGES]
     journals = os.path.join(G, "journals")
-    if os.path.isdir(journals) and os.path.normpath(journals) != PAGES:
+    # a journals folder inside PAGES (e.g. pages_dir "." for a flat vault) is walked with PAGES already
+    if os.path.isdir(journals) and os.path.commonpath([os.path.normpath(journals), PAGES]) != PAGES:
         dirs_to_walk.append(journals)
     out = []
     for top in dirs_to_walk:
@@ -122,15 +132,49 @@ for p in FILES:
             if val == "":
                 blank_title_files.append(rel)
             else:
-                names.add(val)
+                names.add(val.strip('"'))     # same reading as graph_audit.py
         elif key == "alias":
             for v in split_values(val):
                 names.add(v.strip("[]"))
     for n in names:
         index.setdefault(n.lower(), set()).add(rel)
 
+# attachment names ([[photo.png]]): every file name under the pages folder and the graph's assets folders
+file_names = set()
+for top in {PAGES, os.path.join(G, "assets")}:
+    for _base, _dirs, _files in os.walk(top):
+        file_names.update(f.lower() for f in _files)
+
+def template_path(path):
+    """A template page: under a Templates folder of the pages folder, or named "... Template"."""
+    return "Templates" in os.path.relpath(path, PAGES).split(os.sep)[:-1] or os.path.splitext(os.path.basename(path))[0].endswith(" Template")
+
+TEMPLATE_PAGE = False   # set per page: a template's links are placeholders, so none of them is dangling
+
 def exists(name):
-    return name.lower() in index
+    # an Obsidian link may carry a display alias ([[Page|alias]]) or a heading ([[Page#Heading]]);
+    # [[#Heading]] points into the same page, and [[file.ext]] may name an attachment
+    page = name.split("|")[0].split("#")[0].strip().lower()
+    return TEMPLATE_PAGE or page == "" or page in index or page in file_names
+
+def unbracket_dangling(text, rel, lineno, where):
+    """Unbracket every [[link]] in text whose target does not exist (a URL or a namespaced "/" link
+    is left alone) and report each as a dangling-link finding; returns the new text."""
+    edits = []
+    for mm in WIKI_RE.finditer(mask_inline_code(text)):
+        target = mm.group(1)
+        if target.startswith("http") or "/" in target:
+            continue
+        if not exists(target):
+            add(rel, lineno, "dangling-link", f"{where} link [[{target}]] — target does not exist; unbracket")
+            edits.append((mm.start(), mm.end(), plain_text(target)))
+    for start, end, repl in sorted(edits, key=lambda r: -r[0]):
+        text = text[:start] + repl + text[end:]
+    return text
+
+def plain_text(target):
+    """What an unbracketed [[target|alias]] reads as: the alias if there is one, else the target."""
+    return target.split("|", 1)[1].strip() if "|" in target else target
 
 # ---- pass 2: per-file findings ----
 findings = []                    # {file, line, category, detail, fixed_line or None}
@@ -148,10 +192,12 @@ for p in FILES:
     except (UnicodeDecodeError, OSError):
         continue
     raw_lines = raw.split("\n")
-    fixes = {}                   # lineno(0-based) -> new line text ("" sentinel means delete? no: None)
+    is_template_page = template_path(p)
+    TEMPLATE_PAGE = is_template_page
+    fixes = {}                   # lineno(0-based) -> replacement line text (deleted lines are in `deletes`)
     deletes = set()
     in_fence = False
-    fence_re = re.compile(r'^\s*-?\s*```')   # Logseq bullets prefix fences with "- ```"
+    fence_re = FENCE_OPEN_RE   # Logseq bullets prefix fences with "- ```"
     for i, l in enumerate(raw_lines):
         if fence_re.match(l):
             in_fence = not in_fence
@@ -161,6 +207,10 @@ for p in FILES:
         m = PROP_RE.match(l) if not args.links_only else None
         if m:
             indent, key, _sp, val = m.group(1), m.group(2), m.group(3), m.group(4)
+            if val == "" and (key == "writer" or is_template_page):
+                # a blank writer:: is the template placeholder graph_audit.py reports (blank-writer), and a
+                # template page keeps all its blank property lines; never delete them
+                continue
             if val == "":
                 add(rel, i + 1, "empty-property-value",
                     f"{key}:: line has no value (explicit blank override) — delete the line",
@@ -168,35 +218,49 @@ for p in FILES:
                 deletes.add(i)
                 continue
             prop_line_changed = False
-            if BOLD_RE.search(val):
-                for mm in BOLD_RE.finditer(val):
+            masked_val = mask_inline_code(val)   # bold inside inline code is example text, as in body prose
+            bold_spans = list(BOLD_RE.finditer(masked_val))
+            if bold_spans:
+                pieces, prev = [], 0
+                for mm in bold_spans:
+                    inner = val[mm.start(1):mm.end(1)]
                     add(rel, i + 1, "bold-markdown",
-                        f"**{mm.group(1)}** in {key}:: value — no bold formatting anywhere in this graph; strip the ** markers")
-                val = BOLD_RE.sub(lambda m: m.group(1), val)
+                        f"**{inner}** in {key}:: value — no bold formatting anywhere in this graph; strip the ** markers")
+                    pieces.append(val[prev:mm.start()] + inner)
+                    prev = mm.end()
+                val = "".join(pieces) + val[prev:]
                 prop_line_changed = True
             if key in LINK_PROPS:
                 vals = split_values(val)
                 new_vals, changed = [], False
                 for v in vals:
-                    mm = re.fullmatch(r'\[\[(.+)\]\]', v)
+                    mm = re.fullmatch(r'\[\[([^\[\]]+)\]\]', v)   # one link only: "[[A]] [[B]]" is not a single target
                     if mm:
                         target = mm.group(1)
-                        if not exists(target) and not target.startswith("http"):
+                        if not exists(target) and not target.startswith("http") and "/" not in target:
                             add(rel, i + 1, "dangling-bracketed-link",
                                 f"{key}:: [[{target}]] — target does not exist; unbracket")
-                            new_vals.append(target); changed = True
+                            new_vals.append(plain_text(target)); changed = True
                         else:
                             new_vals.append(v)
                     else:
-                        if exists(v):
+                        if v.lower() in index:   # plain text: exact name match only
                             add(rel, i + 1, "should-be-linked",
                                 f"{key}:: {v} — target page exists; bracket it")
                             new_vals.append(f"[[{v}]]"); changed = True
                         else:
-                            new_vals.append(v)
+                            # a compound element such as "[[A]] [[B]]" or "[[A]] (draft)": unbracket its dangling links
+                            fixed_v = unbracket_dangling(v, rel, i + 1, f"{key}:: value")
+                            new_vals.append(fixed_v); changed = changed or fixed_v != v
                 if changed:
                     prop_line_changed = True
                     val = ", ".join(new_vals)
+            else:
+                # not a link-type property: the dangling-bracket rule is location-independent, so
+                # it applies to this value exactly as it does to body prose
+                new_val = unbracket_dangling(val, rel, i + 1, f"{key}:: value")
+                if new_val != val:
+                    val, prop_line_changed = new_val, True
             if prop_line_changed:
                 fixes[i] = f"{indent}{key}:: {val}"
                 # record the fixed line on each finding for this line
@@ -204,27 +268,20 @@ for p in FILES:
                     if fnd["file"] == rel and fnd["line"] == i + 1 and fnd["fixed_line"] is None:
                         fnd["fixed_line"] = fixes[i]
             continue
-        # body prose: dangling bracketed links (unbracket-always) + bold markdown (strip-always).
-        # Both computed against the same masked (code-blind) line and merged into one set of
-        # (start, end, replacement) edits so they compose correctly when both occur on one line.
-        masked = mask_inline_code(l)
-        replacements = []
-        for mm in WIKI_RE.finditer(masked):
-            target = mm.group(1)
-            if target.startswith("http") or "/" in target:
-                continue     # URLs handled elsewhere; namespaced links are schema-lint's finding
-            if not exists(target):
-                add(rel, i + 1, "dangling-link",
-                    f"body link [[{target}]] — target does not exist; unbracket")
-                replacements.append((mm.start(), mm.end(), target))
-        for mm in BOLD_RE.finditer(masked):
+        # body prose: bold markdown (strip-always), then dangling bracketed links (unbracket-always).
+        # Two passes, each against its own masked (code-blind) line, so a link inside bold
+        # (**[[Gone]]**) is first unbolded and then found and unbracketed at its new offsets.
+        newl = l
+        bold_edits = []
+        # bold is a format-contract rule of a declared-schema graph; a plain vault (--links-only) has none
+        for mm in (BOLD_RE.finditer(mask_inline_code(newl)) if not args.links_only else []):
             add(rel, i + 1, "bold-markdown",
                 f"**{mm.group(1)}** — no bold formatting anywhere in this graph; strip the ** markers")
-            replacements.append((mm.start(), mm.end(), mm.group(1)))
-        if replacements:
-            newl = l
-            for start, end, repl in sorted(replacements, key=lambda r: -r[0]):
-                newl = newl[:start] + repl + newl[end:]
+            bold_edits.append((mm.start(), mm.end(), newl[mm.start(1):mm.end(1)]))   # text from the real line, not the masked one
+        for start, end, repl in sorted(bold_edits, key=lambda r: -r[0]):
+            newl = newl[:start] + repl + newl[end:]
+        newl = unbracket_dangling(newl, rel, i + 1, "body")
+        if newl != l:
             fixes[i] = newl
             for fnd in findings:
                 if fnd["file"] == rel and fnd["line"] == i + 1 and fnd["category"] in ("dangling-link", "bold-markdown") and fnd["fixed_line"] is None:
@@ -242,6 +299,8 @@ for name, owners in (sorted(index.items()) if not args.links_only else []):
             files_with_findings.add(o)
         findings.append({"file": sorted(owners)[0], "line": 0,
                          "category": "title-collision", "detail": detail, "fixed_line": None})
+if args.apply_safe_fixes:      # an apply run deletes the blank title:: lines, except on template pages
+    blank_title_files = [f for f in blank_title_files if template_path(os.path.join(G, f))]
 if len(blank_title_files) > 1 and not args.links_only:
     findings.append({"file": blank_title_files[0], "line": 0, "category": "blank-title-collision",
                      "detail": f"{len(blank_title_files)} files carry a valueless title:: line and fight "

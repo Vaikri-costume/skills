@@ -13,7 +13,10 @@ REGISTRY is a JSON file: {"live": [{"id","name","root","pages_dir","schema_confi
 a retired graph folder looks exactly like a live one.
 
 Exit codes: 0 = ok; 1 = rejected (dead path); 2 = unknown (not in registry);
-3 = registry/structure problem. Output is JSON on stdout. Pure stdlib.
+3 = a registered graph that is not ok: its root or pages folder is missing, or (--list) its root
+lies under a dead path. A usage error (neither --list nor
+--resolve, or no registry argument) also exits 2, but prints usage on stderr and no JSON on stdout. An unreadable or malformed
+registry file is not caught: it ends in a Python traceback with exit 1. Output is JSON on stdout. Pure stdlib.
 """
 import argparse, json, os, sys
 
@@ -65,8 +68,8 @@ if args.resolve:
             print(json.dumps(v, indent=2))
             sys.exit(0 if v["ok"] else 3)
     print(json.dumps({"path": args.resolve, "status": "unknown",
-                      "reason": "not in the registry — update the registry (and the memory it derives "
-                                "from) before operating on this graph; do not guess"}))
+                      "reason": "not in the registry — update the registry "
+                                "before operating on this graph; do not guess"}))
     sys.exit(2)
 
 ap.error("pass --list or --resolve PATH")
