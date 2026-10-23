@@ -14,6 +14,7 @@ The meta-tooling that produces everything else here — chain them: **build** a 
 | [**skill-tracer**](skills/skill-tracer/) | 🔍 trace | Finds bugs in a finished skill or codebase with a 2-tier cascade: deterministic prepass detectors, then two cold reviewers over five lenses, with a post-fix gate on every fix. Known limits: it did not converge in its own self-run, and its reviewers vary between runs. |
 | [**skill-publisher**](skills/skill-publisher/) | 🚀 ship | Make a finished skill release-ready — polish, CCVW Word/Spirit audit, per-tier portability + attribution + security checks, version bump, package, and PR. |
 | [**zotero-reading-signpost**](skills/zotero-reading-signpost/) | 📖 read | Signpost dense academic reading in Zotero: highlights the exact source words behind each point of the argument and writes a short summary from them, after you approve both |
+| [**markdown-graph-manager**](skills/markdown-graph-manager/) | 🕸️ graph | Keeps a dual-format Logseq/Obsidian markdown graph healthy: audits it against a schema, applies only mechanically-safe fixes, and creates or edits pages with the format contract enforced up front. |
 
 ## Other skills
 
@@ -21,7 +22,6 @@ _More skills I build for my workflows will land here._ (Each gets its own row + 
 
 | Skill | What it does |
 |---|---|
-| [**markdown-graph-manager**](skills/markdown-graph-manager/) | Keeps a dual-format Logseq/Obsidian markdown graph healthy: audits it against a schema, applies only mechanically-safe fixes, and creates or edits pages with the format contract enforced up front. |
 | [**marketplace-discover**](skills/marketplace-discover/) | Searches the live Claude Code marketplace catalog for an existing plugin or skill that fits your need, so you can install instead of building. |
 | [**review-writing**](skills/review-writing/) | Reviews a draft's argument, clarity, evidence and voice as feed up, feed back and feed forward, so you know what to revise first. |
 | [**ai-detection-check**](skills/ai-detection-check/) | Flags AI-typical patterns, over-smooth texture and citation problems in a draft, and what evidence of your own process you can show; descriptive, never a verdict on authorship. |
