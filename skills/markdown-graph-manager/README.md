@@ -16,12 +16,13 @@ It also prioritizes **portability of the engine over baked-in personalization**:
 
 **Don't use when:** you have an ordinary Obsidian vault with YAML frontmatter and no Logseq compatibility requirement — Obsidian's own tooling or a frontmatter-native linter serves that better. Don't use it for bulk content migration between formats; it validates against one format contract, it doesn't convert between contracts.
 
-**Cross-runtime testing status:** the skill body is pure-stdlib Python + agentskills.io-spec markdown (no Claude-Code-only constructs), but live round-trip testing to date has only been done on Claude Code with MCP-connected Obsidian and Logseq instances. It has not yet been run against Gemini CLI, Cursor, or OpenCode — the `references/layers/logseq-obsidian.md` fallback (direct file write when no live write API is reachable) is the expected path there, untested in practice.
+**Tested on:** Claude Code with MCP-connected Obsidian and Logseq instances. When no live write API is reachable, the direct-file-write fallback in `references/layers/logseq-obsidian.md` is the path; it is untested against a live app window.
 
 ## How to invoke
 
-- Slash command: `/markdown-graph-manager audit` (also `fix`, `fix --assets-only`, `write`, `edit`, `raw`, `list`/`read`/`search`/`list-tags`)
+- Slash command: `/markdown-graph-manager audit` (also `fix`, `fix --assets-only`, `write` (alias `create`), `edit`, `raw`, `list`/`read`/`search`/`list-tags`)
 - Natural language: "audit my markdown graph", "check the graph for dangling links", "apply safe fixes to the graph", "add a new person page to my graph", "fix the graph's asset symlinks", "let me make a raw/unvalidated edit to this page", "find my page about X" / "list pages tagged Y"
+- Also by phrase: "check for stale verified dates" (the stale-date check runs only on request); on a graph registered without a schema, `audit` narrows to link checks and says so; name an app (Apple Notes, Tine, Finalist) for its layer-specific operations.
 - The three judgment-gated cleanup scripts (heading extraction, colon-label fix, property normalize) aren't invoked by phrase — they're run manually by whoever's operating the skill, one at a time, once a report-only finding has been reviewed. See `SKILL.md`'s "Judgment-gated maintenance scripts" for when each applies.
 
 Example:
@@ -34,44 +35,56 @@ Example:
 
 ## Features & modes
 
-- **Audit (read-only)** — scans the whole graph and reports every schema, property and link problem in one categorized list; never changes a file. Trigger: `audit`, "audit my graph", "check graph schema", "check dangling links", "graph health check". With a declared schema it runs both the property/vocabulary linter and the link auditor; on a plain vault with no schema it narrows to link-checking only and says so, since format-contract rules would give false positives there.
-- **Safe fixes** — re-audits fresh, then writes only fixes that are mechanically certain: wrapping a link in `[[brackets]]` once the target page is confirmed to exist, unwrapping a bracketed link whose target doesn't exist, deleting a property line with no value, stripping stray `**bold**`, and known canonical vocabulary mappings. Everything else stays report-only, each with a specific recommendation. Before applying, it shows the full pre-fix report and saves a copy to a scratch file, because stripping bold erases the evidence of bold-labeled bullets that should be headings. The schema pass runs as a dry run first. Trigger: `fix`, "apply safe fixes", "clean up graph schema".
-- **Asset repair** — a separate maintenance action: checks the assets folder is correctly symlinked into the pages folder and repairs asset links in journal pages. Trigger: `fix --assets-only`, "fix assets".
-- **Create a new page** — builds a page with the schema enforced as it's written: prefills the type's required properties (asking for values it can't derive), brackets links only to pages that exist (so no phantom pages), checks the title/filename/aliases are unique graph-wide, and follows the graph's format rules (no bold, no single-colon pseudo-labels, real headings, keyword tasks). Refuses on a graph with no schema unless you accept passthrough-equivalent behavior. Trigger: `write` / `create`, "add a page to my graph".
-- **Edit an existing page** — runs the same checks on whatever you add or change, then writes through the right app's preferred path. Trigger: `edit`, "edit this graph page".
-- **Raw / passthrough edits** — an explicit opt-in mode that skips schema checking and allows anything (delete, rename, retag, arbitrary edits). Prints a `PASSTHROUGH` warning banner and waits for confirmation; never entered by inference. Trigger: `raw`, or explicitly ask for raw / unvalidated editing.
-- **Read-only lookup** — list, read, search and list tags; always available on any graph and can't break the format contract. Trigger: `list` / `read` / `search`, "find my page on X", "list pages tagged Y".
-- **Graph resolution safety** — before any operation the graph path is checked against a registry of live and retired graphs; a retired graph is refused even when named explicitly, and an unknown path prompts a question instead of a guess. Automatic.
-- **Per-app layers** — each app that reads these files has its own write-up of what it supports (Logseq/Obsidian full write support; Tine filesystem only; Apple Notes a manual read-compatibility check only; Finalist). An unsupported operation is reported as unsupported, never silently skipped. Automatic.
-- **Judgment-gated cleanup tools** (run manually, one at a time, never bundled into "apply safe fixes"):
-  - turning a bold-labeled bullet into a proper heading structure, where it's a genuine heading rather than ordinary text that merely looks like one;
-  - converting a specific, pre-approved list of "Label: value" lines into "Label - value" (never a blanket find-replace, since that shape also occurs in quotes and citations);
-  - Title-Casing property values and merging old duplicate property names into the current ones — an occasional tidy-up pass.
-- **Maintenance freshness check** — runs quietly at most once every 7 days before any of the above: checks whether the apps that read this graph (Logseq, Obsidian, Tine, Finalist) have newer versions or documentation changes worth knowing about. It only reports or asks; it never downloads or installs anything, and never blocks your request.
+Every request goes to exactly one mode. The graph is always checked against a registry of live graphs first, so you never need to say which mode runs the safety check.
+
+- **Audit (read-only)**: scans the whole graph and gives you one categorized report of schema, property, format and link problems. It never changes a file. Each finding names the page and line and is marked safe-fix or report-only. Trigger: `audit`, "audit my graph", "check graph schema", "check dangling links", "graph health check". It asks about draft pages before it starts. On a graph registered without a schema it checks links only and says so.
+- **Deeper graph checks (part of audit)**: link health (dead-end pages, orphans, hub pages), unlinked mentions, relation verbs in Connections sections, and leftover template placeholders. Each finding is rated error, warn or info, and every fix is proposed with a reason, never applied automatically. Stale `verified::` dates are checked only if you ask. Trigger: runs inside `audit`; ask "check for stale verified dates" for the date check.
+- **Safe fixes**: re-audits fresh, shows you a full pre-fix report, waits for your go-ahead, then applies only fixes that are mechanically certain. The schema pass is a dry run first. Everything else stays report-only, each finding with a specific recommendation. Trigger: `fix`, "apply safe fixes", "clean up graph schema".
+- **Asset repair**: a separate maintenance action that repairs the assets folder link and asset links in pages. Trigger: `fix --assets-only`, "fix the graph's asset symlinks".
+- **Create a page**: builds a new page with the schema enforced as it is written. It fills in the required properties for the page type, asks for values it cannot work out, and checks that the title and aliases are unique. Trigger: `write` or `create`, "add a page to my graph".
+- **Edit a page**: applies the same checks to whatever you add or change, then writes through the right app's path. Both create and edit end with a read-back of the page on disk. Trigger: `edit`, "edit this graph page".
+- **Raw / passthrough edit**: an explicit opt-in that skips validation and allows anything, including delete, rename and retag. It prints a PASSTHROUGH banner and waits for your confirmation. It is never entered on its own. Trigger: `raw`, or explicitly ask for an unvalidated edit.
+- **Read-only lookup**: list, read, search and list tags. It works on any graph and cannot break the format. Where an app cannot do an operation (Apple Notes supports none), the skill says so. Trigger: `list`, `read`, `search`, `list-tags`, "find my page about X", "does this page exist", "list pages tagged Y".
+- **Layer-specific operations**: tasks tied to one app, such as generating text for an app with no API, or a manual compatibility check for Apple Notes. An unsupported operation is reported as unsupported, never silently skipped. Trigger: name the app in the request.
+- **Knowledge-graph rules**: when you create or restructure pages, the skill proposes and checks, and you write the notes. The rules cover:
+  - whether a note is a concept, a topic or a fleeting stub, with three promotion criteria;
+  - vocabulary pages written as codebook entries;
+  - every Connections link starting with a relation verb from an editable list;
+  - a duplicate check across filenames, titles and aliases before any page is created;
+  - using only your existing Reading Notes and Reading Report templates.
+
+  The skill never writes notes, relations or definitions for you, and it checks with you first if a page touches assessed work. Trigger: applies automatically on create and edit. Details: `references/graph-rules.md`.
+- **Judgment-gated cleanup tools** (run by hand, one at a time, never bundled into safe fixes): turn a bold-labelled bullet into a real heading, convert a pre-approved list of "Label: value" lines to "Label - value", and normalize `type::` values and retired property names. These run only after you have reviewed the related report-only finding.
+- **Graph resolution safety**: the graph path is validated against a registry. A retired graph is refused even if you name it, and an unknown path prompts a question instead of a guess. Automatic.
+- **Maintenance freshness check**: at most once every 7 days it checks whether the apps that read your graph (Logseq, Obsidian, Tine, Finalist) have newer versions or documentation changes. It only reports or asks, never installs or downloads on its own, and never blocks your request. Automatic.
+- **Unattended weekly run**: audit can run as a scheduled routine. It follows a fixed rule for what it may do without you present, which is read-only reporting. Trigger: set up a scheduled audit.
 
 ## Structure
 
-- **`SKILL.md`** — the main instructions: which mode to use for a request, the steps for each, and the rules that always apply (never guess the graph location, never enter passthrough by inference, always give a recommendation for report-only findings).
-- **`references/`** — background material loaded as needed:
-  - `glossary.md` (audit/graph vocabulary) and `maintenance-check.md` (the weekly freshness check and where its timestamp is stored);
-  - `layers/` — one write-up per app that touches these files (Logseq/Obsidian, Tine, Apple Notes, Finalist): what each can do and how writes reach it;
-  - `layer-tine-caveats.md` and `layer-finalist-caveats.md` — what is still unverified for those two apps; test on a throwaway copy before trusting them on a real graph.
-- **`scripts/`** — dependency-free Python programs taking an explicit graph root and, where relevant, a schema config: `graph-discovery.py` (resolve the graph); `schema-lint.py` and `graph-link-audit.py` (audit engines); `graph-link-audit.py --apply-safe-fixes` and `schema-pass.py` (automatic safe-fix engines); `assets-audit.py` (assets symlink repair); `graph-heading-extract.py`, `graph-colon-label-fix.py`, `property-normalize.py` (manually-run cleanup tools).
-- **`assets/`** — the two swappable JSON files that make the skill reusable: a schema config (vocabulary, required properties, tolerances) and a graph registry (which graph roots are live or retired, and which schema each uses). `example-graphs.json` and `example-schema.json` are shipped samples to copy and adapt.
-- **Outputs**: reports print in the conversation; the one exception is the pre-fix report, saved to a scratch file such as `${TMPDIR:-/tmp}/mgm-prefix-report.md` before safe fixes. Outside your graph, the only persistent file written is the maintenance-check timestamp, kept in per-skill runtime storage (Claude-Code fallback: `${XDG_DATA_HOME:-$HOME/.claude}/markdown-graph-manager/maintenance-state.json`).
+- **`SKILL.md`**: the workflow itself. It sets how a request is routed to a mode, the steps of each mode, the graph-rules summary and the report format. Read this first if you want to change behaviour.
+- **`references/`**: detail loaded only when needed.
+  - Rules and checks: `rules.md` (the shared rules: drafts, bracket rule, safe-fix scope, pre-fix report, exit codes, read-back after a write), `graph-rules.md` (knowledge-graph conventions), `audit-checks.md` (what the deeper checks look for), `glossary.md` (finding names and terms).
+  - Upkeep: `maintenance-check.md` (the weekly freshness check and where its timestamp is kept).
+  - Per-app layers: `layers/` has one file each for Logseq/Obsidian (primary), Tine, Apple Notes and Finalist, covering what each app supports and how writes reach it. `layer-tine-caveats.md` and `layer-finalist-caveats.md` list what is still unverified; test those apps on a scratch copy first.
+- **`scripts/`**: dependency-free Python helpers (standard library only), grouped by job.
+  - Finding the graph: `graph-discovery.py`.
+  - Auditing, read-only: `schema-lint.py`, `graph-link-audit.py`, `graph_audit.py`.
+  - Safe fixes: `schema-pass.py` and `graph-link-audit.py --apply-safe-fixes`, plus `assets-audit.py` for assets.
+  - Manual cleanup: `graph-heading-extract.py`, `graph-colon-label-fix.py`, `property-normalize.py`.
+  - Shared code: `_common.py`, imported by the other scripts and never run directly.
+  - `tests/`: unit tests for the audit and the maintenance scripts. Run `python3 -I -m unittest discover -s scripts/tests` from the skill folder.
+- **`assets/`**: the swappable configuration and samples. Copy `example-graphs.json` (the graph registry) and `example-schema.json` (the schema vocabulary, required properties and tolerances) and adapt them for your own graph. `relation-vocabulary.json` holds the relation verbs you edit. `test-registry.json` and `test-schema.json` belong to the test fixture.
+- **`evals/`**: `evals.json` (the test prompts) and a small fixture graph they run against. Copy the fixture to a scratch folder before running.
+- **Where outputs go**: reports print in the conversation and nothing is saved, except the pre-fix report, which is saved to a scratch file before safe fixes. Page writes land in your graph. Outside the graph, the only persistent file is the maintenance-check timestamp.
 
 ## How to install
 
-No package registry entry exists for this skill yet — install manually (source: `skills/markdown-graph-manager` in https://github.com/Vaikri-costume/skills, once the ship PR is merged):
-
-- **Claude Code**: copy this folder to `~/.claude/skills/markdown-graph-manager/`, or unzip the packaged `.skill` archive there.
-- **Other agentskills.io@1.0 runtimes** (Gemini CLI, Cursor, OpenCode, etc.): the skill is spec-conformant (`compatibility: agentskills.io@1.0`, no Claude-Code-only frontmatter extensions), but install commands are runtime-specific and this skill has not yet been verified running on any of them (see "Cross-runtime testing status" above) — follow your runtime's own skill-install instructions for a local `.skill` package or raw skill folder, and treat the first run as a test.
+Version 2.0.0. Install from the public skills repository by copying the folder `skills/markdown-graph-manager/` from `https://github.com/Vaikri-costume/skills` to `~/.claude/skills/markdown-graph-manager/` (or a project's `.claude/skills/`). It needs Python 3 and nothing else. Copy `assets/example-graphs.json` and `assets/example-schema.json` somewhere you keep your own configuration and adapt them to your graph; the skill asks where the registry is on first use.
 
 ## Sibling skills
 
 Optional, not required to use or maintain this skill:
-- **skill-tracer** — finds bugs/regressions in this skill's own instructions via cold-parallel audit.
-- **skill-publisher** — polishes, versions, packages, and ships this skill (this is how it was published).
+- `skill-creator-ccvw`, `skill-tracer`, `skill-publisher`: build, audit and ship.
 
 ## For developers
 
