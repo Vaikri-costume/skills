@@ -13,6 +13,7 @@ The meta-tooling that produces everything else here — chain them: **build** a 
 | [**skill-creator-ccvw**](skills/skill-creator-ccvw/) | 🔨 build | Create, edit, and eval skills against the CCVW conventions — scaffolds the `SKILL.md` + `README.md` + `HISTORY.md` structure, captures design intent + attribution, iterates via centralized evals. |
 | [**skill-tracer**](skills/skill-tracer/) | 🔍 trace | Finds bugs in a finished skill or codebase with a 2-tier cascade: deterministic prepass detectors, then two cold reviewers over five lenses, with a post-fix gate on every fix. Known limits: it did not converge in its own self-run, and its reviewers vary between runs. |
 | [**skill-publisher**](skills/skill-publisher/) | 🚀 ship | Make a finished skill release-ready — polish, CCVW Word/Spirit audit, per-tier portability + attribution + security checks, version bump, package, and PR. |
+| [**zotero-reading-signpost**](skills/zotero-reading-signpost/) | — | Signpost dense academic reading in Zotero: highlights the exact source words behind each point of the argument and writes a short summary from them, after you approve both |
 
 ## Other skills
 

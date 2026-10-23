@@ -1,0 +1,62 @@
+{
+  "skill_name": "zotero-reading-signpost",
+  "evals": [
+    {
+      "id": 0,
+      "prompt": "Signpost the test copy of Boesten and Wilding, 'Transformative Gender Justice: Setting an Agenda' (Zotero item <item key> in the personal library; its PDF attachment is <attachment key>, an OCR copy). Physical pages 2 to 10. DRY RUN: do everything up to the gate, write nothing to Zotero, and show the summary, the plan table and the check table.",
+      "expected_output": "Working files and a gate report: the argument as points, a numbered plan in text order, a summary written from the comments with its word count against the suggested cap, the check table.",
+      "files": [],
+      "expectations": [
+        "Shows the argument: the summary gives the text's main claim (where the text never states one, the argument through its stated points) and the steps it takes to reach it, in the text's order, and its sentences show how each point is used in the argument rather than only restating a passage (length or coverage is never a fail)",
+        "Easy to follow: every summary sentence is coherent, with no clipped label or colon list, and any term the text defines is explained from that definition (a term is only a word the text defines)",
+        "Adds nothing: no summary sentence says something no highlighted passage says or changes what the text says (no dropped 'not' or hedge, no claim moved to the wrong person, no 'because', 'so' or 'therefore' the text does not make)",
+        "Traceable: every claim of the summary has a highlight behind it, every highlight's comment appears word for word in the summary, and the words that carry a claim are the text's own, not swapped",
+        "Lets the reader judge it: where the text gives a reason or evidence for a highlight's claim, that highlight or a highlight the summary joins to it carries it",
+        "Points into the text: each comment is a short phrase (at most five words, fewer is better) that does not re-word or replace its passage and keeps what the passage carries (a comment may carry the text's own 'not'); each highlight covers what its point needs (it may start mid-sentence when the words from there are all that is needed to make the point), is not a wall (several points lumped together; there is no sentence limit), and includes a back-reference that is itself the reason",
+        "Follows the walkthrough order: the argument is stated as points before any summary is written, and the summary is written from the plan's phrases and terms in the order of their highlights (checked from the working files and the transcript)",
+        "Every quote in the plan exists on its stated page of the PDF text and the plan is numbered in text order",
+        "Both word counts are reported against the suggested cap; a summary over it is not a fail, and no highlight or evidence is cut only to fit it",
+        "Nothing is written to Zotero, no offers or follow-up lists are made, and no subagents are dispatched"
+      ]
+    },
+    {
+      "id": 1,
+      "prompt": "Signpost Waïl Hassan, 'Gender (and) imperialism' (Men and Masculinities 2003): the test copy in the personal library, item <item key>, PDF attachment <attachment key> (copied from the group library's module reading). It is a Week 2 reading of a taught module. DRY RUN: do everything except writes; list the planned summary, note and highlights and write nothing to Zotero.",
+      "expected_output": "Either a stop at the module AI-rules gate with the reason, or a gate report as in eval 0.",
+      "files": [],
+      "expectations": [
+        "Checks the module AI rules in the profile's AI-rules file first, and either goes on for a reading not tied to one assessed piece where the module level allows it, or cites a recorded okay for this exact module, assessment and stage and goes on, or stops and asks for the user's typed okay naming the module, assessment and stage",
+        "If it stops at the gate, it writes nothing and says why; if it goes past the gate, every check below applies",
+        "Shows the argument: the summary gives the text's main claim (where the text never states one, the argument through its stated points) and the steps it takes to reach it, in the text's order, and its sentences show how each point is used in the argument rather than only restating a passage (length or coverage is never a fail)",
+        "Easy to follow: every summary sentence is coherent, with no clipped label or colon list, and any term the text defines is explained from that definition (a term is only a word the text defines)",
+        "Adds nothing: no summary sentence says something no highlighted passage says or changes what the text says (no dropped 'not' or hedge, no claim moved to the wrong person, no 'because', 'so' or 'therefore' the text does not make)",
+        "Traceable: every claim of the summary has a highlight behind it, every highlight's comment appears word for word in the summary, and the words that carry a claim are the text's own, not swapped",
+        "Lets the reader judge it: where the text gives a reason or evidence for a highlight's claim, that highlight or a highlight the summary joins to it carries it",
+        "Points into the text: each comment is a short phrase (at most five words, fewer is better) that does not re-word or replace its passage and keeps what the passage carries (a comment may carry the text's own 'not'); each highlight covers what its point needs (it may start mid-sentence when the words from there are all that is needed to make the point), is not a wall (several points lumped together; there is no sentence limit), and includes a back-reference that is itself the reason",
+        "Follows the walkthrough order: the argument is stated as points before any summary is written, and the summary is written from the plan's phrases and terms in the order of their highlights (checked from the working files and the transcript)",
+        "Every quote in the plan exists on its stated page of the PDF text and the plan is numbered in text order",
+        "Both word counts are reported against the suggested cap; a summary over it is not a fail, and no highlight or evidence is cut only to fit it",
+        "Nothing is written to Zotero, no offers or follow-up lists are made, and no subagents are dispatched"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Signpost 'ChatGPT's interpretation of contested memoryscapes favours the voice of current governments, capitalism and the far-right' (Gonzalez-Cantera and Bonacchi 2025): the test copy in the personal library, item <item key>, PDF attachment <attachment key> (copied from the group library's module reading). It is a Week 2 reading of a taught module. DRY RUN: do everything except writes; list the planned summary, note and highlights and write nothing to Zotero. The user's typed okay for this one paper is recorded in the AI-rules record the user's profile names.",
+      "expected_output": "A gate report as in eval 0, after citing the recorded okay.",
+      "files": [],
+      "expectations": [
+        "Checks the project's AI-rules record first and relies on the recorded okay for this paper's module, assessment and stage, and signposts only this paper",
+        "Shows the argument: the summary gives the text's main claim (where the text never states one, the argument through its stated points) and the steps it takes to reach it, in the text's order, and its sentences show how each point is used in the argument rather than only restating a passage (length or coverage is never a fail)",
+        "Easy to follow: every summary sentence is coherent, with no clipped label or colon list, and any term the text defines is explained from that definition (a term is only a word the text defines)",
+        "Adds nothing: no summary sentence says something no highlighted passage says or changes what the text says (no dropped 'not' or hedge, no claim moved to the wrong person, no 'because', 'so' or 'therefore' the text does not make)",
+        "Traceable: every claim of the summary has a highlight behind it, every highlight's comment appears word for word in the summary, and the words that carry a claim are the text's own, not swapped",
+        "Lets the reader judge it: where the text gives a reason or evidence for a highlight's claim, that highlight or a highlight the summary joins to it carries it",
+        "Points into the text: each comment is a short phrase (at most five words, fewer is better) that does not re-word or replace its passage and keeps what the passage carries (a comment may carry the text's own 'not'); each highlight covers what its point needs (it may start mid-sentence when the words from there are all that is needed to make the point), is not a wall (several points lumped together; there is no sentence limit), and includes a back-reference that is itself the reason",
+        "Follows the walkthrough order: the argument is stated as points before any summary is written, and the summary is written from the plan's phrases and terms in the order of their highlights (checked from the working files and the transcript)",
+        "Every quote in the plan exists on its stated page of the PDF text and the plan is numbered in text order",
+        "Both word counts are reported against the suggested cap; a summary over it is not a fail, and no highlight or evidence is cut only to fit it",
+        "Nothing is written to Zotero, no offers or follow-up lists are made, and no subagents are dispatched"
+      ]
+    }
+  ]
+}
