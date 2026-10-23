@@ -1,7 +1,7 @@
 ---
-version: "1.3.0"
+version: "2.0.0"
 category: D
-parent-version: "1.2.4"
+parent-version: "1.3.0"
 author:
   primary: "Vaikri-costume"
   history:
@@ -18,6 +18,33 @@ inspirations: []
 # History — markdown-graph-manager
 
 ## Changelog
+
+### 2.0.0 — 2026-10-23 (shipped)
+Traced through 48 skill-tracer rounds, then tested in two rounds on copies of a real graph; round 2 passed every check and the 70 unit tests pass.
+#### Added
+- Graph rules (`references/graph-rules.md`, SKILL.md Graph rules section): concept, topic and fleeting stub with promotion criteria, codebook vocabulary pages, relation-carrying links, duplicate check across filename, `title::` and `alias::`, the user's existing Reading Notes and Reading Report templates only, page-kind test, journal graduation and maps on request.
+- Read-only audit script `scripts/graph_audit.py` (properties, format, links, mentions, relations, placeholders, stale) run as audit step 4 alongside the other scripts; `references/audit-checks.md`; `assets/relation-vocabulary.json` with eight starting verbs.
+- `references/rules.md` holding each shared rule once (Drafts, Unattended run, Pre-fix report, Safe fixes, Bracket rule, Read-back, Exit codes, Pages-folder-only scripts, Templates and the blank writer, Writer attribution, Equivalent codes, Roles fixed in the format contract).
+- Zotero boundary: the skill points to `.claude/shared/zotero-mcp/rules.md` and stays out of library work.
+- Read-back after every write, create and edit; the Drafts question before an audit or write; Expected-output lines at Step -1, audit step 2, the fix commands and write step 5.
+- 70 unit tests (`scripts/tests`), shared `scripts/_common.py`, test registry and schema, a two-page eval fixture graph; glossary section for graph rules and audit terms.
+- The dangling-bracket fix now reaches non-link property values and single elements of multi-link values; attachment names, `[[Page|alias]]` and `[[Page#Heading]]` count as existing targets.
+#### Changed
+- Tier is now claude-users (was model-agnostic): the compatibility line names Claude Code 2.0 or newer, and a README Tested-on note replaces the agentskills.io wording.
+- Description shortened from 1,026 to about 500 characters and anchored to a registered property-block graph.
+- Audit step 3 (no-schema route) reduced to one plain sequence; fix reuses a single fresh audit; `rules.md` and the layer doc are opened once for a write.
+- Step -1 runs after Step 0 resolves the graph, treats a missing state file as never checked and reads `app_watchlist` from the registry; Step 0 documents exit 3 and the exit 1 and 2 cases.
+- `graph-link-audit.py --apply-safe-fixes` now writes five categories (unbolds before unbracketing; keeps a blank `writer::` and blank properties on template pages; deletes blank `title::` lines elsewhere).
+- `type::` canonicalization (`schema-pass.py`, `property-normalize.py`): comma-separated values handled part by part; unmapped values kept if in `type_vocab`, else Title-Cased; fenced code skipped; retired `block-type::` and `item-type::` renamed without merging.
+- `schema-lint.py` and `graph-link-audit.py` exit 255 with a stderr line when no file was scanned; all writers skip the same app folders.
+- `graph-heading-extract.py` supports space indentation and a colon separator, and checks only the parent bullet.
+- `graph-colon-label-fix.py`, `graph-discovery.py` and `graph-heading-extract.py` docs now match their real arguments and exit codes.
+- Eval harness: fixture files and a reset step on every eval; prompts and expectations updated for `graph_audit.py`.
+#### Fixed
+- `assets-audit.py` stops on a file-name clash instead of overwriting.
+- `graph-link-audit.py` no longer scans a flat vault's journals twice and no longer strips bold in `--links-only` mode.
+- `schema-lint.py` keeps real line numbers across fenced blocks and no longer splits type values on commas inside `[[...]]`.
+- README feature names lost version tags and build-history wording; the Zotero boundary no longer pins another file's step numbers; dated confirmation notes, a version tag and an anecdote removed from reference docs; the Output contract states why no session-log step markers are written.
 
 ### 1.3.0 — 2026-10-04 (shipped)
 #### Changed
@@ -62,7 +89,7 @@ inspirations: []
 
 ### 1.0.1 — 2026-08-11
 - Tuned frontmatter `description` via skill-creator-ccvw's real trigger-eval loop (`run_loop.py`, 16-query eval set, 3 runs/query, 2 iterations, model claude-sonnet-5): train pass rate 13/16 → 14/16. Fixed a real false negative ("add a new Entity or Person page to my graph" 0.33→1.0 trigger rate) by leading with concrete action verbs (add/create/edit) instead of a subcommand-name list, and by explicitly naming property:: block format up front.
-- Two known remaining weaknesses, not yet fixed (candidates for a further tuning pass): (1) false negative on project-named phrasing that doesn't use generic "my graph" language (e.g. "does my dupatta research graph have any missing required properties" — 0.33 trigger rate); (2) false positive on the explicit "Do NOT use" exclusion case (a plain YAML-frontmatter Obsidian vault query still triggers ~0.67 of the time despite being explicitly excluded).
+- Two known remaining weaknesses, not yet fixed (candidates for a further tuning pass): (1) false negative on project-named phrasing that doesn't use generic "my graph" language (e.g. "does my research graph have any missing required properties" — 0.33 trigger rate); (2) false positive on the explicit "Do NOT use" exclusion case (a plain YAML-frontmatter Obsidian vault query still triggers ~0.67 of the time despite being explicitly excluded).
 
 ### 1.0.0 — 2026-08-11
 - Initial scaffold: standalone skill for dual-format Logseq/Obsidian graph audit, safe fixes, and schema-validated write/edit, with a pluggable layer architecture (Logseq/Obsidian, Tine, Apple Notes native markdown import, Finalist).

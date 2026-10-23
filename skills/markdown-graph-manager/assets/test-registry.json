@@ -1,0 +1,13 @@
+{
+  "_comment": "Registry for the eval fixture graph. Copy evals/fixture to /tmp/mgm-eval-fixture before running the evals.",
+  "live": [
+    {
+      "id": "eval-fixture",
+      "name": "Eval fixture",
+      "root": "/tmp/mgm-eval-fixture",
+      "pages_dir": "pages",
+      "schema_config": "test-schema.json"
+    }
+  ],
+  "dead": []
+}

@@ -2,8 +2,11 @@
 """
 Occasional property-value cleanup for a property-block markdown graph.
 - Property NAMES stay lowercase (type::, writer::, status::).
-- Property VALUES are Title Case (values include name-like categories).
-- Folds retired block-type:: and item-type:: values into a single type::.
+- type:: VALUES are mapped through SCHEMA_CONFIG's canonicalization.type; an unmapped value
+  is Title-Cased unless it is already in the schema's type vocabulary (values include name-like categories); other properties are untouched.
+- A comma-separated type:: value is canonicalized part by part.
+- Renames each retired block-type:: and item-type:: line to a type:: line (it does not merge
+  two lines into one; a page left with two type:: lines is for the user to merge).
 - Leaves Zotero's item-type:: values (journalArticle/book...) untouched.
 Dry-run by default; --apply to write. Pure stdlib.
 
@@ -11,6 +14,8 @@ Usage: property-normalize.py GRAPH_ROOT SCHEMA_CONFIG [--apply]
 Canonical type map + Zotero item types come from SCHEMA_CONFIG (JSON).
 """
 import argparse, difflib, json, os, re, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # also runs under python3 -I, which leaves the script folder off the path
+from _common import FENCE_OPEN_RE
 
 ap = argparse.ArgumentParser()
 ap.add_argument("graph_root")
@@ -24,20 +29,31 @@ if not os.path.isdir(PAGES):
     sys.exit(f"error: {G}/pages not found — is this a valid graph root?")
 SCHEMA = json.load(open(args.schema_config, encoding="utf-8"))
 
-VAR2CANON = SCHEMA["canonicalization"]["type"]
-ZOTERO_ITEMTYPES = set(SCHEMA["zotero_itemtypes"])
-SKIP_DIRS = (".obsidian", "assets", "copilot")
+TYPE_VOCAB = set(SCHEMA.get("type_vocab", []))   # an unmapped value that is already in the vocabulary is kept as it is
+VAR2CANON = SCHEMA.get("canonicalization", {}).get("type", {})
+ZOTERO_ITEMTYPES = {t.lower() for t in SCHEMA.get("zotero_itemtypes", [])}   # compared with a lowercased page value
+SKIP_DIRS = (".obsidian", "assets", "copilot", "logseq", ".recycle", "bak", ".trash")   # same list as graph-link-audit.py
 
 def canon_value(val):
-    key = re.sub(r'\s+', ' ', val.strip()).lower()
-    if key in VAR2CANON:
-        return VAR2CANON[key]
-    # unknown value: Title-Case it (keeps a name-like value tidy) but don't invent merges
-    return re.sub(r'\s+', ' ', val.strip()).title()
+    # type:: is array-capable (comma-separated): canonicalize each part on its own
+    out = []
+    for part in val.split(","):
+        if not part.strip():
+            continue
+        clean = re.sub(r'\s+', ' ', part.strip())
+        # unknown value: Title-Case it (keeps a name-like value tidy) but don't invent merges
+        out.append(VAR2CANON.get(clean.lower(), clean if clean in TYPE_VOCAB else clean.title()))
+    return ", ".join(out)
 
 def normalize(text):
     out = []
+    in_fence = False
     for line in text.splitlines(keepends=True):
+        if FENCE_OPEN_RE.match(line):   # fenced code holds examples: never rewritten
+            in_fence = not in_fence
+            out.append(line); continue
+        if in_fence:
+            out.append(line); continue
         m = re.match(r'^(\s*-?\s*)(block-type|item-type|type):: (.+?)\s*$', line)
         if not m:
             out.append(line); continue

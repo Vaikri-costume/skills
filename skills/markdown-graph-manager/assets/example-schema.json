@@ -1,5 +1,5 @@
 {
-  "_comment": "Example schema config for one dual-format Logseq/Obsidian graph. Personal vocabulary lives only in a file like this; the scripts carry no hardcoded schema. Copy and edit it for your graph.",
+  "_comment": "Example schema config for one dual-format Logseq/Obsidian graph. Personal vocabulary lives only in a file like this; the scripts hardcode no vocabulary lists (only the few names with a fixed role in the format contract, listed in references/rules.md, section Roles fixed in the format contract). Copy and edit it for your graph.",
   "type_vocab": [
     "Note",
     "Utility",
@@ -9,6 +9,7 @@
     "Guidance",
     "Rule",
     "Funding",
+    "Concept",
     "Vocabulary",
     "Lens",
     "Thread",
@@ -128,7 +129,7 @@
     ]
   },
   "global_replacements": {
-    "[[Dupatta-Research]]": "[[Dupatta Research]]"
+    "[[Old-Page-Name]]": "[[Old Page Name]]"
   },
   "required_properties": {
     "Period": [

@@ -12,7 +12,7 @@ Verified against Tine v0.6.92 (2026-08-11) via its own repo (`martinkoutecky/tin
 ## Verified risk zones
 
 - **Property-block edits**: historically the risky zone — closed issue #163 had page-property edits corrupting the header by merging blocks. Fixed, but treat property-block edits made *inside Tine* with extra attention after upgrades.
-- **Tine writes its own properties** when its features are used: `tine.view::`, `tine.header::`, `tine.fields::`, `tine.formula.*::`, `tine.filter::`, `tine.group-by::`, `collapsed::`, `icon::`. These are expected file content, exempted via the schema config's tolerance list — do not "clean them up."
+- **Tine writes its own properties** when its features are used: `tine.view::`, `tine.header::`, `tine.fields::`, `tine.formula.*::`, `tine.filter::`, `tine.group-by::`, `collapsed::`, `icon::`. These are expected file content: no script flags them, and the schema config's tolerance lists exempt any that is also Zotero-reserved from `schema-lint.py`'s finding (not from `graph_audit.py`'s info-level one) — do not "clean them up."
 
 ## Unverified — hand-test on a scratch copy before trusting
 
