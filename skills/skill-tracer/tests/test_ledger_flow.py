@@ -54,6 +54,14 @@ class LedgerFlow(unittest.TestCase):
         self.assertEqual((len(fixer), len(paused)), (0, 1))
         self.assertEqual(lc.auto_pause_report(paused)[0]["resolutions"], 1)
 
+    def test_write_pause_rows_returns_only_rows_it_wrote(self):
+        hdr = "| Runtime | Round | Phase | Cluster | Root cause | Address | Flags |\n|---|---|---|---|---|---|---|\n"
+        led = Path(self._tmp.name) / "p.md"
+        led.write_text(hdr + "| 2026-10-06T10:00 | 1 | Prepass | C1 | sig-a | ORCHESTRATOR-PAUSE (stuck) | G1 |\n")
+        paused = [{"cluster": "C9", "flags": ["P5"], "repeat_count": 2}]
+        written = lc.write_pause_rows(led, "T1", 1, "Prepass", paused, lambda rc: rc or None, lambda c: "sig-a")
+        self.assertEqual(written, [])  # the open pause keeps its own flag G1; P5 would not resolve it
+
     def test_begin_round_refuses_other_target_and_adopts_on_legacy_ledger(self):
         other = Path(self._tmp.name) / "elsewhere" / "t"
         other.mkdir(parents=True)
@@ -95,6 +103,38 @@ class LedgerFlow(unittest.TestCase):
         rows = lc.round_rows(Path(self.led).read_text(), 1)
         self.assertTrue(rows[0]["address"].startswith("FIX ("))
         self.assertEqual(run("append_ledger.py", "close-round", self.led, "--round", "1").returncode, 0)
+
+    def test_fill_address_marks_orch_fixes_for_an_open_auto_pause_row(self):
+        # An auto-pause row written in the same pass carries no fixer decision; the marker still
+        # becomes orch-fixes so a resume resolves it before re-running prepass_run.py.
+        run("append_ledger.py", "begin-round", self.led, "--round", "1", "--runtime", "T1", "--target", self.tgt)
+        (Path(self.tgt) / "a.md").write_text("x\n")
+        args = ("--runtime", "T1", "--round", "1", "--mode", "cluster", "--phase", "Prepass")
+        run("ledger_cascade.py", self.led, *args,
+            stdin=json.dumps({"clusters": [{"cluster": "C1", "flags": ["P1"], "root_cause": "x"}]}))
+        r = run("ledger_cascade.py", self.led, *args, "--address", "ORCHESTRATOR-PAUSE (auto-pause)",
+                stdin=json.dumps({"clusters": [{"cluster": "C2", "flags": ["P2"], "root_cause": "y"}]}))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        blast = Path(self._tmp.name) / "blast.json"
+        blast.write_text(json.dumps({"blast_radius": [{"cluster": "C1", "fix_class": "LOCAL", "tokens": []}]}))
+        dec = json.dumps({"decisions": [{"cluster": "C1", "decision": "FIX", "address": "FIX (a.md: edit)",
+                                         "touched_files": ["a.md"]}]})
+        r = run("ledger_cascade.py", self.led, "--runtime", "T1", "--round", "1", "--mode", "fill-address",
+                "--phase", "Prepass", "--reenter", "--skill-root", self.tgt, "--blast-json", str(blast), stdin=dec)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("in-flight:: T1 prepass orch-fixes round-1", Path(self.led).read_text())
+
+    def test_fill_address_rejects_skill_root_that_is_not_a_directory(self):
+        run("append_ledger.py", "begin-round", self.led, "--round", "1", "--runtime", "T1", "--target", self.tgt)
+        blast = Path(self._tmp.name) / "blast.json"
+        blast.write_text(json.dumps({"blast_radius": []}))
+        dec = json.dumps({"decisions": [{"cluster": "C1", "decision": "FIX", "address": "FIX (a.md: edit)",
+                                         "touched_files": ["a.md"]}]})
+        r = run("ledger_cascade.py", self.led, "--runtime", "T1", "--round", "1", "--mode", "fill-address",
+                "--phase", "Prepass", "--skill-root", str(Path(self._tmp.name) / "no-such-dir"),
+                "--blast-json", str(blast), stdin=dec)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("not a directory", r.stderr)
 
     def test_verify_only_flag_is_gone(self):
         r = run("ledger_cascade.py", self.led, "--runtime", "T1", "--round", "1", "--mode", "fill-address",
@@ -179,6 +219,20 @@ class InterfaceFreeze(unittest.TestCase):
         self.assertIn("deepest root fix that does not widen the interface", tpl)
         self.assertIn("[OUTPUT_CHECK]", tpl)
         self.assertLess(tpl.index("[OUTPUT_CHECK]"), tpl.index("## First instruction"))
+
+    def test_cleanup_minute_slug_spares_a_seconds_form_run(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        d = Path(tmp.name)
+        mine = ["blast-round-1-2026-10-24T15-51-44.json", "code-review-ALLLENS-2026-10-24T15-51-44.txt"]
+        other = ["blast-round-1-2026-10-24T15-51-59.json", "code-review-ALLLENS-G2-2026-10-24T15-51-59.txt"]
+        for n in mine + other:
+            (d / n).write_text("x")
+        run("cleanup_tmp_prompts.py", "--run-timestamp", "2026-10-24T15:51", "--dir", str(d))
+        self.assertEqual(sorted(p.name for p in d.iterdir()), sorted(mine + other))
+        out = json.loads(run("cleanup_tmp_prompts.py", "--run-timestamp", "2026-10-24T15:51:44", "--dir", str(d)).stdout)
+        self.assertEqual(out["deleted"], sorted(mine))
+        self.assertEqual(sorted(p.name for p in d.iterdir()), sorted(other))
 
 
 if __name__ == "__main__":

@@ -156,6 +156,8 @@ def cmd_append(args) -> int:
 
 def _tally(rows: list[dict]) -> dict:
     raw_flags = sum(len(r["flags"]) for r in rows)
+    # The `clusters` number is the round's ledger-row count (cluster rows plus resolving, USER-PAUSE,
+    # doc-lint and waiver rows); the summary label keeps the word `clusters` (see references/glossary.md "cluster").
     clusters = len(rows)
     # Count by the canonical base kind (folds would- forms, uses the same token-boundary rule as the writer).
     bases = [lc.address_base_kind(r["address"]) for r in rows]

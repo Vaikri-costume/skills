@@ -14,10 +14,9 @@ Runs the full Prepass scripted pipeline for one round:
      b. fix_blast (reads tokens from cluster JSON; auto-touches def files)
      c. ledger_cascade --mode cluster  (--phase Prepass; writes the PENDING rows, sets the
         "prepass addressing" marker)
-     d. assemble_fix_prompt  (stage one considered-fix prompt per fixer batch, lc.stage_fixer_batches:
-        one batch for 12 clusters or fewer, else batches of at most 12)
-     Print {"status":"needs-fix","staged_prompt":"<batch 1 path>","batches":[{batch, model,
-            clusters, staged_prompt}],"clusters":[...inline...],"blast":[...inline...]}, exit 0.
+     d. assemble_fix_prompt  (stage the pass's one considered-fix prompt, lc.stage_fixer)
+     Print {"status":"needs-fix","staged_prompt":"<path>","fixer":{model, clusters,
+            staged_prompt},"clusters":[...inline...],"blast":[...inline...]}, exit 0.
      A cluster whose signature (check, file, handler shape) was already addressed
      ledger_common.AUTO_PAUSE_REPEATS times (2) this round is written as an ORCHESTRATOR-PAUSE row (listed under "auto_pause") instead of being
      sent to the fixer again.
@@ -39,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -86,10 +86,10 @@ def _run(cmd: list[str], *, stdin_text: str | None = None,
 _PAUSE_THEN = lc.auto_pause_then("re-run prepass_run.py with the same round.")
 
 
-def _write_pause_rows(ledger: Path, runtime: str, rnd: int, paused: list[dict]) -> None:
+def _write_pause_rows(ledger: Path, runtime: str, rnd: int, paused: list[dict]) -> list[dict]:
     """Write each auto-paused cluster as an open ORCHESTRATOR-PAUSE Prepass row (shared writer:
-    ledger_common.write_pause_rows, idempotent on resume)."""
-    lc.write_pause_rows(ledger, runtime, rnd, "Prepass", paused, cp.row_signature, cp.cluster_signature)
+    ledger_common.write_pause_rows, idempotent on resume); returns the clusters a row was written for."""
+    return lc.write_pause_rows(ledger, runtime, rnd, "Prepass", paused, cp.row_signature, cp.cluster_signature)
 
 
 def main() -> int:
@@ -161,7 +161,11 @@ def main() -> int:
         # Pending-rows guard: if ANY Prepass row for this round still has
         # Address == PENDING, the audit trail is desynced (fixes landed but rows
         # were never filled by ledger_cascade fill-address).  Do NOT advance; tell
-        # the orchestrator to run ledger_cascade fill-address first.
+        # the orchestrator to run ledger_cascade fill-address first.  This guard is only a backstop
+        # on the zero-findings path: the script cannot tell a fixer that ran from a pass staged but
+        # never dispatched, so the fixer manifest decides ("A fixer already ran",
+        # references/recovery.md) before a tier is re-run, and the findings path below supersedes
+        # stale PENDING rows by design.
         if ledger_path.is_file():
             ledger_text_chk = ledger_path.read_text(encoding="utf-8")
             pending_cluster_ids = [
@@ -235,7 +239,7 @@ def main() -> int:
     # and emit the result with only auto_pause populated.
     if not fixer_clusters:
         try:
-            _write_pause_rows(ledger, runtime, rnd, auto_pause_clusters)
+            written_pauses = _write_pause_rows(ledger, runtime, rnd, auto_pause_clusters)
         except RuntimeError as exc:
             print(json.dumps({"error": str(exc)}), file=sys.stderr)
             return 1
@@ -245,7 +249,7 @@ def main() -> int:
 
         result = {
             "status":     "needs-fix",
-            "auto_pause": lc.auto_pause_report(auto_pause_clusters),
+            "auto_pause": lc.auto_pause_report(written_pauses),
             "in_flight_marker": f"in-flight:: {new_marker}",
             "then": [_PAUSE_THEN],
         }
@@ -270,7 +274,7 @@ def main() -> int:
 
     # ------------------------------------------------------------------
     # ledger_cascade cluster --phase Prepass
-    # Write PENDING rows (one per cluster, blast embedded in root_cause)
+    # Write PENDING rows (one per cluster, blast embedded in root_cause for TOKEN-BLAST clusters only)
     # BEFORE dispatching the fixer.  Marker → "prepass addressing round-N".
     # Payload: {"clusters": [...], "blast": [...]}
     # ------------------------------------------------------------------
@@ -303,14 +307,14 @@ def main() -> int:
             stdin_text=json.dumps(pending_payload),
             label="ledger_cascade cluster (PENDING rows)",
         )
-        _write_pause_rows(ledger, runtime, rnd, auto_pause_clusters)
+        written_pauses = _write_pause_rows(ledger, runtime, rnd, auto_pause_clusters)
     except RuntimeError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
 
     # ------------------------------------------------------------------
-    # Stage the fixer prompts: one per batch of at most lc.FIXER_BATCH_MAX_CLUSTERS clusters
-    # (lc.stage_fixer_batches runs assemble_fix_prompt.py per batch and deletes its temp inputs).
+    # Stage the pass's one fixer prompt (lc.stage_fixer runs assemble_fix_prompt.py and deletes its
+    # temp inputs).
     # ------------------------------------------------------------------
     clusters_inline = (
         fixer_cluster_json.get("clusters", fixer_cluster_json)
@@ -318,14 +322,14 @@ def main() -> int:
         else fixer_cluster_json
     )
     try:
-        batches = lc.stage_fixer_batches(
+        plan = lc.stage_fixer(
             clusters=clusters_inline, blast=blast_list, skill_root=target, rnd=rnd, runtime=runtime,
             out_dir=out_dir, label="prepass", run_rnd=lc.run_round(ledger, rnd))
     except RuntimeError as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
-    report = lc.batch_report(batches)
-    staged_prompt = report[0]["staged_prompt"]
+    report = lc.fixer_report(plan)
+    staged_prompt = report["staged_prompt"]
 
     # ------------------------------------------------------------------
     # Output: inline clusters + blast so the orchestrator can pipe them to
@@ -338,26 +342,24 @@ def main() -> int:
     result: dict = {
         "status":        "needs-fix",
         "staged_prompt": staged_prompt,
-        "batches":       report,
+        "fixer":         report,
         "clusters":      clusters_inline,
         "blast":         blast_inline,
         "then": [
-            f"Dispatch the {len(report)} fixer batch(es) in \"batches\" ONE AT A TIME, in order (never in parallel: they may edit the same files): "
-            f"before each batch k, run python3 .../scripts/post_fix_gate.py snapshot --target {target} --out {out_dir}/gate-{rnd}-b<k>-<RUN_TIMESTAMP>.json; "
-            f"then, for each, one fixer (the batch's \"model\", subagent_type general-purpose [edit-capable], edits ONLY files under <target>) pointed at the batch's staged_prompt with the "
+            f"Dispatch the pass's one fixer (\"fixer\": the \"model\", subagent_type general-purpose [edit-capable], edits ONLY files under <target>), after running python3 .../scripts/post_fix_gate.py snapshot --target {shlex.quote(str(target))} --out {shlex.quote(str(out_dir))}/gate-{rnd}-<RUN_TIMESTAMP>.json, pointed at the fixer's staged_prompt with the "
             f"Fixer provenance wording in references/dispatch.md (not a bare 'read this file' pointer); it returns the JSON decisions object. "
-            f"After each fixer returns, run scripts/check_decisions.py --fixer-transcript <its transcript> --expect <the batch's cluster ids>; on exit 1 SendMessage the same fixer to re-emit. "
-            f"Once it exits 0, run python3 .../scripts/post_fix_gate.py check --target {target} --snapshot <that batch's gate snapshot> --fixer-transcript <that batch's transcript>; on exit 1 follow references/dispatch.md \"Post-fix gate\" (inner passes, then ORCHESTRATOR-PAUSE). Dispatch the next batch once the decision check exits 0 and `check` has exited 0 or its problems are recorded as ORCHESTRATOR-PAUSE.",
+            f"After it returns, run scripts/check_decisions.py --fixer-transcript <its transcript> --expect <the fixer's cluster ids>; on exit 1 SendMessage the same fixer to re-emit. "
+            f"Once it exits 0, run python3 .../scripts/post_fix_gate.py check --target {shlex.quote(str(target))} --snapshot <that gate snapshot> --fixer-transcript <its transcript>; on exit 1 follow references/dispatch.md \"Post-fix gate\" (inner passes, then ORCHESTRATOR-PAUSE).",
             f"Write this response's \"blast\" array to a file (e.g. <out-dir>/blast-round-{rnd}-<RUN_TIMESTAMP>.json, as {{\"blast_radius\": <blast>}}) — fill-address needs it to re-verify fix-impact closure.",
-            f"Run: python3 .../scripts/ledger_cascade.py <ledger> --mode fill-address --phase Prepass --round {rnd} --runtime <RT> --reenter --fixer-transcript <every batch's fixer transcript, comma-separated> --skill-root {target} --blast-json <path to the blast file just written>",
+            f"Run: python3 .../scripts/ledger_cascade.py <ledger> --mode fill-address --phase Prepass --round {rnd} --runtime <RT> --reenter --fixer-transcript <the fixer's transcript> --skill-root {shlex.quote(str(target))} --blast-json <path to the blast file just written>",
             f"Re-run scripts/prepass_run.py (same --round {rnd}). Do NOT set the marker manually.",
         ],
     }
     # Report any auto-paused clusters separately (orchestrator owns them). The pause step goes before
-    # the final re-run step: the fixer batches are recorded first, the pauses resolved next, and only
+    # the final re-run step: the fixer's decisions are recorded first, the pauses resolved next, and only
     # then is prepass_run.py re-run (SKILL.md Prepass, `auto_pause`).
     if auto_pause_clusters:
-        result["auto_pause"] = lc.auto_pause_report(auto_pause_clusters)
+        result["auto_pause"] = lc.auto_pause_report(written_pauses)
         result["then"].insert(len(result["then"]) - 1, _PAUSE_THEN)
     print(json.dumps(result, indent=2))
     return 0

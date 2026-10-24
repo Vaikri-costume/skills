@@ -4,7 +4,7 @@ This is a cold read — do not request, reference, or remember any prior trace r
 
 ## Tool restriction and role separation
 
-You are **read-only** on every file in this trace. Do not run any Bash command that mutates state, Edit, Write, NotebookEdit, or any tool that modifies a file or external system. Do not execute any script in the file list. Reading (Read), grepping (Bash with `grep` / `rg`), listing directories (Bash with `ls`), and counting lines (Bash with `wc`) are the only permitted actions.
+You are **read-only** on every file in this trace. Do not run any Bash command that mutates state, Edit, Write, NotebookEdit, or any tool that modifies a file or external system. Do not execute any script in the file list. Reading (Read) and read-only Bash commands (`grep` / `rg`, `ls`, `wc`, and `sed -n` to print a line range) are the only permitted actions; a Bash command never writes a file or redirects output into one.
 
 **Fixing is the orchestrator's role — never yours.** The orchestrator (the one that dispatched you) reads your ISSUE blocks, decides whether each item is a real issue, and applies any fixes. The trace agent and the orchestrator are two distinct roles that never collapse:
 
@@ -131,7 +131,7 @@ Claim: [relfile]:[line] "[exact quote from the skill file or supporting file]"
 Target: [what the file/script/brief actually says, with exact quote + its [relfile]:[line]]
 ```
 
-Output a blank line and nothing else after each `ISSUE` block. Do not narrate, summarise, group, prioritise, or rate.
+Output a blank line and nothing else after each `ISSUE` block, except one plain `Considered:` line as described below. Do not narrate, summarise, group, prioritise, or rate.
 
 **Exact label form (load-bearing):** each of the four lines must begin with the bare keyword immediately followed by a colon — `ISSUE [`, `File:`, `Claim:`, `Target:` — with **nothing inserted between the keyword and its colon**. Do NOT annotate the label, e.g. `Claim (line 57, Templates preamble):` is INVALID — put the line number / location inside the quoted value instead. Emit exactly **one `File:` line** per block; if a finding spans two files (e.g. an `internal-contradiction`), name the primary file on the `File:` line and put the other path(s) and their quotes inside `Target:`. A block whose labels carry parentheticals or that has multiple `File:` lines is malformed.
 

@@ -1,7 +1,7 @@
 ---
-version: "3.6.0"
+version: "3.7.0"
 category: B
-parent-version: "2.2.0"
+parent-version: "3.6.0"
 published-to:
   repo: "https://github.com/Vaikri-costume/skills"
   path: "skills/skill-tracer"
@@ -25,6 +25,35 @@ inspirations:
 # History — skill-tracer
 
 ## Changelog
+
+### 3.7.0 — 2026-10-24
+Behaviour change: one fixer per tier pass (replaces the 12-cluster batch split), plus the fixes from an 8-round self-trace.
+**The self-trace did NOT verify this version clean.** It stopped at the round cap with raw flags per round 8, 12, 11, 13, 9, 7, 7, 9; every flag was fixed, but round 8 still found 9, so no clean full sweep exists for 3.7.0. 97 tests pass, `doc_lint` reports 0 findings, one known gap is open (below). A publish-time polish pass and CCVW audit followed; the audit's structural gaps (root-level scripts and prompt/template folders, proactive trigger absent from the description, provenance narrative in `references/how-to-fix.md`, SKILL.md at about 5,260 words, self-contained glossary, date-only `metadata.created`) were recorded as pauses and not changed, as in 3.6.0.
+#### Fixed
+- Self-trace rounds 1 to 8 (flags 8, 12, 11, 13, 9, 7, 7, 9): a `render_ledger.py` f-string crash; the fresh-run versus resume rule and its gap; cleanup of staged prompts after `close-round` and its slug match; the post-fix edit check now catches deletes and renames; the detector skill-root walk; auto-pause and USER-PAUSE row handling (only written rows are reported, an orch-fixes marker); coverage banner anchoring; shell-quoted printed commands; exit-2 and TOKEN-BLAST wording; and doc, docstring, template and glossary alignment across SKILL.md, `references/` and the scripts.
+- Publish polish: seven wording-only trims in SKILL.md; README now states the resume and fresh-run rule, the "validate skill X scripts" trigger and the not-verified-clean result.
+#### Changed
+One fixer per tier pass, as the author designed it. The 12-cluster batch split was not requested by the
+author: it came from the "Proposed third variant (trim-plus)" item 3 in
+the round-2 self-run analysis and entered in 3.2.0-trimplus,
+and 3.3.0-trimplus-v2 only raised the size at which it applies. The author's own rule is the model rule: Opus
+when a pass has more than 15 clusters, else Sonnet; the orchestrator may also pick Opus for a smaller pass that needs more context, with the reason in the fixer manifest.
+#### Changed
+- **One fixer per tier pass.** `ledger_common.fixer_batches`, `stage_fixer_batches`, `batch_report`,
+  `FIXER_BATCH_MAX_CLUSTERS` and the code-first ordering are replaced by `fixer_plan`, `stage_fixer` and
+  `fixer_report`. `prepass_run.py` and `cluster_enforce.py` print `fixer` ({model, clusters, staged_prompt})
+  where they printed `batches`. Staged prompts are `prepass-<RUN_TIMESTAMP>.txt` and
+  `code-review-<RUN_TIMESTAMP>.txt` (no `-b<k>`), and the gate snapshot is
+  `gate-<N>-<RUN_TIMESTAMP>.json`. `fill-address --fixer-transcript` still accepts a comma list or a repeated
+  option. SKILL.md, `references/dispatch.md`, `recovery.md`, `glossary.md` (the "fixer batch" term is gone),
+  `script-contract.md`, README, the post-fix-gate exit-2 table (regenerated), the eval, the script docstrings and
+  `tests/test_fixer_batches.py` (now `test_fixer_dispatch.py`) follow.
+
+**Known gap (open, not fixed)**
+- A prepass finding that returns after a resolved pause has `repeat_count` 0, so `assemble_fix_prompt.py` shows
+  its fixer neither the "re-appeared" warning nor the escalation-ladder push, although `resolutions` is already
+  computed (`ledger_common.split_repeat_clusters`). Showing the warning when `resolutions >= 1` is a behaviour
+  change, held for review rather than made in the last round of the 2026-10-24 self-trace.
 
 ### 3.6.0 — 2026-10-06
 Major upgrade from the published 2.2.0: the 3.x line replaces the three-agent loop with a 2-tier cascade (prepass detectors, then two cold reviewers over five lenses), a post-fix gate and closure blocks. Intermediate 3.0 to 3.5 builds were never published; their entries below are kept for provenance.

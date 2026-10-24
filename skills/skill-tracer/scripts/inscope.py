@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """inscope.py — Single canonical source of truth for in-scope skill file enumeration.
 
-Used by code_review_run.py (to build [SKILL_FILES]) and coverage_check.py (to
-verify Read coverage against exactly the same file set).
+Used by code_review_run.py (to build [SKILL_FILES]), coverage_check.py (to
+verify Read coverage against exactly the same file set) and other scripts and
+detectors; grep `inscope_files` for the full consumer list before changing a skip rule.
 
 Skip rules:
   - dotfiles and files inside dotdirectories

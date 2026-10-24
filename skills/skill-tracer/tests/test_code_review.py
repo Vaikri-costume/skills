@@ -247,5 +247,37 @@ class DocLint(unittest.TestCase):
         self.assertEqual(run("doc_lint.py", "--target", "/nonexistent/x").returncode, 2)
 
 
+class ReadBannerAnchoring(unittest.TestCase):
+    """coverage_check scores a Read from the tool's own leading banner, never from the file's text."""
+
+    def cov(self, body, is_error=False):
+        import coverage_check as cc
+        with tempfile.TemporaryDirectory() as d:
+            tgt = Path(d).resolve() / "t"
+            tgt.mkdir()
+            (tgt / "SKILL.md").write_text("".join(f"line {i}\n" for i in range(1, 41)))
+            tp = Path(d) / "tr.jsonl"
+            tp.write_text("\n".join(json.dumps(o) for o in [
+                {"type": "assistant", "message": {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "r0", "name": "Read",
+                     "input": {"file_path": str(tgt / "SKILL.md")}}]}},
+                {"type": "user", "message": {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "r0", "content": body,
+                     **({"is_error": True} if is_error else {})}]}}]) + "\n")
+            return cc.read_coverage(tp, tgt)["covered"]
+
+    def test_file_quoting_banner_phrases_gets_full_credit(self):
+        self.assertTrue(self.cov("     1\u2192showing lines 3-9 of 40 total\n     2\u2192x\n"))
+        self.assertTrue(self.cov("    59\u2192a\n    60\u2192<tool_use_error> and Error: exceeds maximum allowed tokens\n"))
+
+    def test_real_partial_banner_limits_credit(self):
+        self.assertFalse(self.cov("<system-reminder>\n[Truncated: PARTIAL view \u2014 SKILL.md: showing lines 1-10 of 40 total "
+                                  "(5 tokens, cap 2). Call Read with offset=11]\n</system-reminder>\n     1\u2192line 1\n"))
+
+    def test_real_refusal_gives_no_credit(self):
+        self.assertFalse(self.cov("Error: result (57,704 characters) exceeds maximum allowed tokens. Output saved"))
+        self.assertFalse(self.cov("<tool_use_error>File does not exist.</tool_use_error>"))
+
+
 if __name__ == "__main__":
     unittest.main()
