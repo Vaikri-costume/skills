@@ -29,7 +29,8 @@ Usage:
                        --runtime <RT> --out-dir <dir> [--scope auto|full|changed]
 
 Prints JSON {"status":"needs-adjudication","scope":{...},"dispatch":[...],"staged_prompts":[...],"then":[...]}.
-Exit: 0 staged; 2 invocation error (bad --target, missing template or lens body).
+Exit: 0 staged; 2 invocation error (bad --target, missing template or lens body); 1 missing ledger at
+the in-flight marker write (uncaught FileNotFoundError, references/script-contract.md).
 
 Pure stdlib. Python 3.9+. Haiku-runnable (no LLM calls).
 """
@@ -246,9 +247,9 @@ def main() -> int:
         "references/dispatch.md (not a bare 'read this file' pointer); instruct full sequential reads + exact ISSUE [tag] "
         "four-line block form. CAPTURE each agentId in the review manifest; transcript at "
         "<projects-dir>/subagents/agent-<agentId>.jsonl.",
-        "After the agents return and BEFORE collecting: find <target> -type f -newer "
-        "<out-dir>/dispatch-baseline-<RUN_TIMESTAMP>; any file listed means a reviewer edited it — revert it, "
-        "discard that agent's result and re-dispatch it fresh (references/dispatch.md \"A reviewer that edits a file\").",
+        "After the agents return and BEFORE collecting: run the edit check written in references/dispatch.md "
+        "\"A reviewer that edits a file\"; any file it names means a reviewer edited it — revert it, "
+        "discard that agent's result and re-dispatch it fresh (same section).",
         f"Run: python3 .../scripts/code_review_collect.py --agent-transcripts <G1,G2 paths in manifest order> "
         f"--agent-flags {flags} --target <target> --ledger <ledger> --round {rnd} --runtime <RT> --out-dir <out-dir> "
         f"> <out-dir>/cr-verified-{rnd}-<RUN_TIMESTAMP>.json",

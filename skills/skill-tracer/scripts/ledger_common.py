@@ -2,9 +2,9 @@
 """Shared helpers for the cascade scripts, imported as `import ledger_common as lc` by every script
 that mutates or reads the ledger (append_ledger.py, ledger_cascade.py, cluster_enforce.py,
 prepass_run.py, code_review_run.py, code_review_collect.py), by check_decisions.py (reading a fixer's
-decisions), by post_fix_gate.py, and by cluster_prepass.py,
-assemble_fix_prompt.py, stage_cold_prompts.py and cleanup_tmp_prompts.py for the run-identity
-helpers. It holds two layers:
+decisions), by post_fix_gate.py, by cluster_prepass.py (max_flag_in_round, max_cluster_in_round),
+by assemble_fix_prompt.py (BANNED_PHRASES, interface_rule, run_tmp_path) and by stage_cold_prompts.py
+and cleanup_tmp_prompts.py (runtime_slug). It holds two layers:
 
   - Ledger format: the row/marker/run-options grammar and its parsers and writers (vocabulary,
     regexes, parse_row, parse_in_flight, format_row, ledger_header, write_marker, run options and
@@ -13,7 +13,7 @@ helpers. It holds two layers:
   - Tier-script steps the tier scripts share and that act on the ledger: the repeat-count
     auto-pause (split_repeat_clusters, write_pause_rows, which runs `ledger_cascade.py --mode
     cluster` as a subprocess, never an import), fixer-prompt staging (stage_fixer_prompt, which runs
-    assemble_fix_prompt.py), fixer batching (fixer_batches, fixer_model, stage_fixer_batches), reading
+    assemble_fix_prompt.py), fixer planning (fixer_plan, fixer_model, stage_fixer), reading
     a fixer's decisions (fixer_decisions) and the advisory blast groups. They import nothing beyond
     the stdlib, and their paths to templates/ and references/ are computed only when called.
 
@@ -462,19 +462,25 @@ def auto_pause_then(rerun: str) -> str:
         "written as an open "
         "ORCHESTRATOR-PAUSE row. Resolve each by deciding a DIFFERENT intent-preserving fix from the "
         "target's README `## Intent` (a fix that is not sticking needs a different approach), apply it, "
-        "and append a row whose Address says 'resolves ORCHESTRATOR-PAUSE <flag>' (append_ledger.py "
+        "and append a row with the pause row's root cause unchanged (the repeat count restarts only for a "
+        "row whose root cause parses to the same signature) whose Address says 'resolves ORCHESTRATOR-PAUSE <flag>' (append_ledger.py "
         "check-pauses must exit 0 before the round closes). Exception: an entry whose `resolutions` is 1 "
-        "or more came back after a resolved pause and is a USER-PAUSE: stop and ask the user. No fixer is dispatched for these clusters: "
+        "or more came back after a resolved pause and is a USER-PAUSE: promote it by the USER-PAUSE rule of SKILL.md's check-pauses step, then stop and ask the user. "
+        "A signature whose pause row was already open from an earlier run is not listed (it was not written again): "
+        "append_ledger.py check-pauses lists every open pause with its own flag ids, and a resolving row names those. "
+        "No fixer is dispatched for these clusters: "
         f"once the pauses are resolved, {rerun}"
     )
 
 
 def write_pause_rows(ledger_path: "Path | str", runtime: str, rnd: int, phase: str, paused: list,
-                     row_sig, cluster_sig) -> None:
+                     row_sig, cluster_sig) -> list:
     """Write each paused cluster as an open ORCHESTRATOR-PAUSE row of *phase* (via ledger_cascade.py
     cluster mode), so the pause is a real ledger decision append_ledger.py check-pauses sees (the
     No-orphan-flag invariant). Idempotent on resume: a signature that already has an unresolved pause
-    row of *phase* this round is not paused a second time. Raises RuntimeError on a writer failure."""
+    row of *phase* this round is not paused a second time. Returns the clusters it wrote a row for, so
+    a report lists only flag ids that a row holds (an already-open pause keeps its own, different ids).
+    Raises RuntimeError on a writer failure."""
     from pathlib import Path as _Path
     p = _Path(ledger_path).expanduser()
     already_open: set = set()
@@ -487,6 +493,7 @@ def write_pause_rows(ledger_path: "Path | str", runtime: str, rnd: int, phase: s
                 if sig is not None:
                     already_open.add(sig)
     cascade = _Path(__file__).resolve().parent / "ledger_cascade.py"
+    written: list = []
     for c in paused:
         if cluster_sig(c) in already_open:
             continue
@@ -504,6 +511,8 @@ def write_pause_rows(ledger_path: "Path | str", runtime: str, rnd: int, phase: s
                 f"ledger_cascade cluster (ORCHESTRATOR-PAUSE rows) exited {proc.returncode}\n"
                 f"stderr: {proc.stderr.strip()}\nstdout: {proc.stdout.strip()}"
             )
+        written.append(c)
+    return written
 
 
 # ---------------------------------------------------------------------------
@@ -577,59 +586,26 @@ def run_tmp_path(out_dir, stem: str, runtime: str, suffix: str = ".json"):
     return _Path(out_dir) / f"{stem}-{runtime_slug(runtime)}{suffix}"
 
 
-# Fixer batching (SKILL.md "Fixer dispatch"): a tier pass (one tier-script call) of at most
-# FIXER_BATCH_MAX_CLUSTERS clusters goes to one fixer; only a larger pass is split into sequential
-# fixers of at most that many clusters each.
-# Observed in the October 2026 trim comparison: one fixer given 17 to 22 clusters with the interface open
-# added helpers, fields and a row kind that the next round flagged; in the trim-plus comparison, splitting
-# a tier pass of 12 or fewer into a code and a doc fixer about doubled fixer tokens (both re-read the whole
-# skill) with no quality gain.
-FIXER_BATCH_MAX_CLUSTERS = 12
-
-
-def cluster_files(cluster: dict, blast_entry: "dict | None" = None) -> list:
-    """The file parts a cluster names: its `file` (Prepass), each member's `loc` (Code Review) and its
-    blast entry's `radius`, `doc_sites` and (TOKEN-BLAST) `uncovered` entries, each with any `:<line>`
-    suffix removed."""
-    locs = [cluster.get("file") or ""] + [m.get("loc") or "" for m in cluster.get("members") or []]
-    for key in ("radius", "doc_sites", "uncovered"):
-        locs += [x for x in (blast_entry or {}).get(key) or [] if isinstance(x, str)]
-    return [loc.split(":", 1)[0] for loc in locs if loc]
-
-
-def cluster_touches_code(cluster: dict, blast_entry: "dict | None" = None) -> bool:
-    """True when the cluster names a .py file (a script or detector), else it is doc-only."""
-    return any(f.endswith(".py") for f in cluster_files(cluster, blast_entry))
-
-
+# Fixer dispatch (SKILL.md "Fixer dispatch"): a tier pass (one tier-script call) goes to one fixer, which
+# fixes every cluster of the pass. The model follows the pass's cluster count (fixer_model).
+# Observed in the October 2026 trim comparison: splitting a tier pass into a code and a doc fixer about
+# doubled fixer tokens (both re-read the whole skill) with no quality gain.
 FIXER_OPUS_ABOVE = 15  # a tier pass with more clusters than this uses an opus fixer
 
 
 def fixer_model(pass_clusters: int) -> str:
-    """The model for every fixer batch of a tier pass: opus when the pass has more than
-    FIXER_OPUS_ABOVE clusters, else sonnet. Single source for the rule SKILL.md states."""
+    """The fixer's model for a tier pass: opus when the pass has more than FIXER_OPUS_ABOVE clusters,
+    else sonnet. Single source for the rule SKILL.md states."""
     return "opus" if pass_clusters > FIXER_OPUS_ABOVE else "sonnet"
 
 
-def fixer_batches(clusters: list, blast: "list | None" = None) -> list:
-    """Split a round's clusters into fixer batches.
-
-    Clusters that touch code come first and doc-only clusters after them, each group in its given
-    order. A round of at most FIXER_BATCH_MAX_CLUSTERS clusters is one batch. Only a larger round is
-    split, each group into batches of at most FIXER_BATCH_MAX_CLUSTERS, so code edits run first. Every
-    batch uses fixer_model(len(clusters)): opus when the round has more than FIXER_OPUS_ABOVE clusters.
-    Returns [{"batch": k, "clusters": [...], "blast": [...], "model": "opus"|"sonnet"}], k from 1."""
+def fixer_plan(clusters: list, blast: "list | None" = None) -> dict:
+    """The one fixer of a tier pass: every cluster in its given order, the blast entries of those clusters
+    and fixer_model(len(clusters)). Returns {"clusters": [...], "blast": [...], "model": "opus"|"sonnet"}."""
     by_id = {b.get("cluster"): b for b in blast or [] if isinstance(b, dict)}
-    code = [c for c in clusters if cluster_touches_code(c, by_id.get(c.get("cluster")))]
-    docs = [c for c in clusters if not cluster_touches_code(c, by_id.get(c.get("cluster")))]
-    out = []
-    for group in ((code + docs,) if len(clusters) <= FIXER_BATCH_MAX_CLUSTERS else (code, docs)):
-        for i in range(0, len(group), FIXER_BATCH_MAX_CLUSTERS):
-            part = group[i:i + FIXER_BATCH_MAX_CLUSTERS]
-            part_blast = [by_id[c.get("cluster")] for c in part if c.get("cluster") in by_id]
-            out.append({"batch": len(out) + 1, "clusters": part, "blast": part_blast,
-                        "model": fixer_model(len(clusters))})
-    return out
+    return {"clusters": list(clusters),
+            "blast": [by_id[c.get("cluster")] for c in clusters if c.get("cluster") in by_id],
+            "model": fixer_model(len(clusters))}
 
 
 # Stop-seeding rule (references/how-to-fix.md "Frozen interface"): from round 1 of a run a fix may not
@@ -663,8 +639,10 @@ def interface_rule(run_rnd: int) -> str:
             "fix exists. When the behaviour is already correct and only a comment or doc is wrong, fix "
             "the comment or doc, not the code. A fixer adds no new behaviour: a fix makes the doc match the "
             "code, or the code match its documented contract. Adding a retry, cap, branch or exit path, or "
-            "removing a fallback, is new behaviour: apply no edit for that cluster and emit "
-            "ORCHESTRATOR-PAUSE naming it.")
+            "removing a fallback, that the documented contract does not require is new behaviour: apply no "
+            "edit for that cluster and emit ORCHESTRATOR-PAUSE naming it. A fix that restores the "
+            "documented contract is not new behaviour even when it adds a node (the post-fix gate still "
+            "flags it).")
 
 
 def intent_source(skill_root: "Path | str") -> "Path":
@@ -922,21 +900,19 @@ def stage_fixer_prompt(
     return staged
 
 
-def stage_fixer_batches(*, clusters: list, blast: list, label: str, **kw) -> list:
-    """Split *clusters* with fixer_batches and stage one fixer prompt per batch (stage_fixer_prompt,
-    label `<label>-b<k>`). Returns the batches, each with its `staged_prompt` path; the other keyword
-    arguments are stage_fixer_prompt's."""
-    batches = fixer_batches(clusters, blast)
-    for b in batches:
-        b["staged_prompt"] = stage_fixer_prompt(clusters=b["clusters"], blast=b["blast"],
-                                                label=f"{label}-b{b['batch']}", **kw)
-    return batches
+def stage_fixer(*, clusters: list, blast: list, label: str, **kw) -> dict:
+    """Plan the pass's one fixer with fixer_plan and stage its prompt (stage_fixer_prompt, label
+    *label*). Returns the plan with its `staged_prompt` path; the other keyword arguments are
+    stage_fixer_prompt's."""
+    plan = fixer_plan(clusters, blast)
+    plan["staged_prompt"] = stage_fixer_prompt(clusters=plan["clusters"], blast=plan["blast"], label=label, **kw)
+    return plan
 
 
-def batch_report(batches: list) -> list:
-    """The per-batch summary a tier script prints: batch number, model, cluster ids, staged prompt."""
-    return [{"batch": b["batch"], "model": b["model"], "clusters": [c.get("cluster") for c in b["clusters"]],
-             "staged_prompt": b.get("staged_prompt")} for b in batches]
+def fixer_report(plan: dict) -> dict:
+    """The summary a tier script prints for the pass's fixer: model, cluster ids, staged prompt."""
+    return {"model": plan["model"], "clusters": [c.get("cluster") for c in plan["clusters"]],
+            "staged_prompt": plan.get("staged_prompt")}
 
 
 def fixer_decisions(transcript_path: "Path | str") -> list:
@@ -1072,6 +1048,8 @@ def round_gate(text: str, current_round: int) -> dict:
     if rounds_this_run >= cap:
         return {"continue": False, "stop": "round-cap",
                 "detail": f"{rounds_this_run} rounds this run reached the hard cap of {cap}"}
+    # Raw counts are not comparable across review scopes (full in rounds 1-2, changed files later); see
+    # references/glossary.md "stalled". Only the confirming full sweep decides convergence.
     counts = [c for r, c in closed_round_counts(text) if r >= start and r <= current_round]
     if len(counts) > STALL_WINDOW and min(counts[-STALL_WINDOW:]) >= min(counts[:-STALL_WINDOW]):
         return {"continue": False, "stop": "stalled",

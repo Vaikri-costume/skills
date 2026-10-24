@@ -84,7 +84,7 @@ def main() -> int:
     ap.add_argument("--fixer-transcript", action="append", required=True, metavar="PATH[,PATH...]",
                     help="Fixer transcript(s); repeat or give a comma list.")
     ap.add_argument("--expect", default=None, metavar="C1,C2",
-                    help="The cluster ids these fixers were given (a batch's \"clusters\").")
+                    help="The cluster ids these fixers were given (the staged fixer's \"clusters\").")
     args = ap.parse_args()
     paths = [x.strip() for v in args.fixer_transcript for x in v.split(",") if x.strip()]
     decisions, problems = [], []

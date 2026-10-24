@@ -5,7 +5,8 @@ Dispatch staging writes /tmp/skill-tracer-prompts/<name>-<RUN_TIMESTAMP>.* files
 manifests, blast / cluster json). RUN_TIMESTAMP is the `<Runtime>` with ':' replaced by '-'
 (ledger_common.runtime_slug); every file the scripts name for a run carries it. Over many rounds
 and many traces these accumulate without bound. Must be
-deleted when a round closes (convergence or a round-gate stop; SKILL.md "Present result") -- not just at convergence -- but
+deleted once `close-round` has exited 0 (SKILL.md "Close the round" and "Convergence"), whether or not the round converged -- but
+never before that (an exit 1 leaves the round open and the fix-recording step still reads the blast file) and
 never after a stop that leaves an open round (a USER-PAUSE or hard-error stop): the resume of that
 round reads the staged prompts, the fixer manifest and, for a `dispatched` state, the review manifest
 and scope record (references/recovery.md "Resume" and "Stale-tmp cleanup").
@@ -15,15 +16,19 @@ Usage:
         (either spelling selects the same files: the argument is normalised with runtime_slug)
     cleanup_tmp_prompts.py --all [--dir /tmp/skill-tracer-prompts]   # every run, any timestamp
 
-Deletes matching files, never anything else in --dir. Missing directory is not
+Deletes matching files, never anything else in --dir. A file matches when its name holds the slug not
+followed by a digit or '-<digit>', so a minute-form slug (2026-10-24T15-51) never selects another run's
+seconds-form files (2026-10-24T15-51-44) and a seconds-form slug selects only its own. Missing directory is not
 an error (nothing to clean). Prints JSON {"deleted": [...], "dir": "..."}.
-Exit: 0 (best-effort cleanup, not a gate: a failed delete is a warning, never a failure); 2 only when
-neither --run-timestamp nor --all was given.
+Exit: 0 (best-effort cleanup, not a gate: a failed delete is a warning, never a failure); 2 when
+neither --run-timestamp nor --all was given, or on a command-line usage error (a missing option value or
+an unknown option).
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -54,7 +59,7 @@ def main() -> int:
     for f in target.iterdir():
         if not f.is_file():
             continue
-        if args.all or (run_slug and run_slug in f.name):
+        if args.all or (run_slug and re.search(re.escape(run_slug) + r"(?![0-9]|-[0-9])", f.name)):
             try:
                 f.unlink()
                 deleted.append(f.name)

@@ -7,8 +7,9 @@ Modes, selected by --mode (cluster, fill-address):
     Consumes cluster_prepass.py JSON on stdin.  Each cluster MUST already carry a
     "flags" list (P<n> for Prepass, reviewer flags such as G1<n> for Code Review) assigned by the
     upstream stage (cluster_prepass or cluster_enforce).  Appends one ledger row
-    per cluster with PENDING (considered-fix) as the address placeholder (blast
-    recorded in root_cause cell), then advances the in-flight marker to
+    per cluster with PENDING (considered-fix) as the address placeholder (a
+    TOKEN-BLAST cluster's blast is recorded in the root_cause cell; a LOCAL cluster's row
+    carries no blast note), then advances the in-flight marker to
     "<phase> addressing round-<N>".  The ledger never assigns or renumbers flags.
 
     Accepts clusters WITH blast data embedded:
@@ -27,15 +28,17 @@ Modes, selected by --mode (cluster, fill-address):
     advances the in-flight marker:
       - The marker's phase is "prepass" when --reenter is passed (a Prepass fixer's edits are
         re-swept from prepass), else <phase>.
-      - If any decision is ORCHESTRATOR-PAUSE → "<marker phase> orch-fixes round-<N>"
+      - If any decision is ORCHESTRATOR-PAUSE, or any ORCHESTRATOR-PAUSE row of the round and
+        --phase is still open (e.g. a prepass_run.py auto-pause row)
+                                              → "<marker phase> orch-fixes round-<N>"
       - Else                                  → "<marker phase> running round-<N>"
     A PENDING row of the round+phase with no decision becomes an ORCHESTRATOR-PAUSE, so --phase must
     name the phase the rows were written under (Prepass / Code Review). When the --fixer-transcript
     values together yield no decision at all, nothing is written and the script exits 2.
 
-    Reads decisions JSON from stdin, or from the final message of each --fixer-transcript (one per
-    fixer batch of the round; repeat the option or give a comma list; a cluster decided twice is
-    refused, exit 1):
+    Reads decisions JSON from stdin, or from the final message of each --fixer-transcript (the pass's
+    fixer; repeat the option or give a comma list to record several transcripts together; a cluster
+    decided twice is refused, exit 1):
       {"decisions": [{"cluster": "C1", "address": "FIX ..."}, ...]}
     Required: --round, --phase. Optional: --allow (files that legitimately keep a TOKEN-BLAST token).
     Tolerates a cluster with no matching PENDING row (reports it).
@@ -64,7 +67,7 @@ Usage:
         | python ledger_cascade.py <ledger> --runtime <RT> --round <N> \\
             --mode fill-address --phase Prepass [--reenter] [--allow FILES]
 
-    # or from the fixer transcripts (one per batch):
+    # or from the fixer's transcript:
     python ledger_cascade.py <ledger> --runtime <RT> --round <N> --mode fill-address \\
         --phase "Code Review" --fixer-transcript <t1> --fixer-transcript <t2> \\
         --skill-root <target> --blast-json <blast file>
@@ -250,7 +253,8 @@ def _closure_failure(args, fix_decisions: list) -> int:
     """Fix-impact closure for fill-address (how-to-fix.md "Mechanical enforcement — required"): for
     every FIX decision whose cluster is TOKEN-BLAST, re-run check_fix_radius.py against the decision's
     touched_files instead of trusting the fixer's say-so; without --skill-root/--blast-json no row is
-    filled. Prints the error JSON and returns the exit code (2 for unusable inputs; 1 for a missing
+    filled. Prints the error JSON and returns the exit code (2 for unusable inputs, including a
+    --skill-root that is not a directory; 1 for a missing
     blast entry, a token-less TOKEN-BLAST entry, empty touched_files or uncovered sites), else 0."""
     if not args.skill_root or not args.blast_json:
         print(json.dumps({
@@ -267,6 +271,15 @@ def _closure_failure(args, fix_decisions: list) -> int:
                 "(the 'blast' array this round's cluster-stage script "
                 "printed — write it to a file first)>."
             ),
+        }), file=sys.stderr)
+        return 2
+
+    # check_fix_radius.py exits 2 for a --skill-root that is not a directory; reject it here, as
+    # fix_blast.main does, so that code is never reported as "uncovered sites" with an empty list.
+    skill_root = Path(args.skill_root).expanduser()
+    if not skill_root.is_dir():
+        print(json.dumps({
+            "error": f"--skill-root is not a directory: {skill_root}. No rows written.",
         }), file=sys.stderr)
         return 2
 
@@ -387,8 +400,8 @@ def _fill_address(args, ledger: Path) -> int:
 
     if args.fixer_transcript:
         # Read decisions from the fixer agents' transcripts (preferred path — no on-disk decisions
-        # file needed). A round split into fixer batches has one transcript per batch; their
-        # decisions are recorded together, so one call (and one marker write) covers the round.
+        # file needed). Several transcripts, if given, are recorded together, so one call (and
+        # one marker write) covers them.
         paths = [x.strip() for v in args.fixer_transcript for x in v.split(",") if x.strip()]
         decisions = []
         for tp in paths:
@@ -414,8 +427,8 @@ def _fill_address(args, ledger: Path) -> int:
             print(json.dumps({
                 "error": "a cluster has decisions in more than one place; no rows written.",
                 "duplicated": dup_ids,
-                "recovery": "Each batch's fixer decides only its own clusters: SendMessage the "
-                            "fixer that decided a cluster outside its batch to re-emit, then re-run.",
+                "recovery": "A cluster is decided once: SendMessage the "
+                            "fixer that decided it twice to re-emit, then re-run.",
             }), file=sys.stderr)
             return 1
     else:
@@ -547,6 +560,14 @@ def _fill_address(args, ledger: Path) -> int:
     # ORCHESTRATOR-PAUSE: a pause leaves the fixer's other edits applied, and those still need
     # the prepass re-sweep before this tier resumes.
     phase_lc = "prepass" if args.reenter else args.phase.lower().replace(" ", "-")
+    # orch-fixes means an ORCHESTRATOR-PAUSE row of this round and phase is open after the fill,
+    # including an auto-pause row prepass_run.py wrote in the same pass, which carries no decision.
+    text_after = ledger.read_text(encoding="utf-8")
+    phase_clusters = {r["cluster"] for r in lc.round_rows(text_after, args.round)
+                      if r["phase"] == args.phase.strip().upper()}
+    has_orch_pause = has_orch_pause or any(
+        q["round"] == args.round and q["cluster"] in phase_clusters and q["kind"] == "ORCHESTRATOR-PAUSE"
+        for q in lc.unresolved_pauses(text_after))
     state = "orch-fixes" if has_orch_pause else "running"
     marker = f"{args.runtime} {phase_lc} {state} round-{args.round}"
 
@@ -651,9 +672,9 @@ def _cluster(args, ledger: Path) -> int:
         c_id = cluster["cluster"]
         root_cause = cluster.get("root_cause", "")
 
-        # Embed blast radius into the root_cause cell so the pre-fixer row
-        # shows the full scope (the blast is determined before the row is
-        # written and appended with it).
+        # Embed the blast of a TOKEN-BLAST cluster into the root_cause cell so the
+        # pre-fixer row shows the full scope (the blast is determined before the row is
+        # written and appended with it); a LOCAL cluster gets no note (_blast_note_for_cluster).
         blast_note = _blast_note_for_cluster(blast_data, c_id)
         if blast_note:
             root_cause_cell = (root_cause + blast_note).replace("|", "/")
@@ -716,7 +737,7 @@ def main() -> int:
         choices=["cluster", "fill-address"],
         help=(
             "cluster (default): consume cluster JSON (+blast) from stdin, append PENDING rows "
-            "with blast recorded, advance marker to '<phase> addressing round-<N>'. "
+            "(TOKEN-BLAST blast recorded in the root cause), advance marker to '<phase> addressing round-<N>'. "
             "fill-address: fill real addresses into EXISTING PENDING rows matched by "
             "round+cluster; advance marker after filling."
         ),
@@ -736,8 +757,8 @@ def main() -> int:
         default=False,
         help=(
             "fill-address only: the marker written after filling names the prepass phase "
-            "('prepass running round-<N>', or 'prepass orch-fixes round-<N>' when a decision is "
-            "ORCHESTRATOR-PAUSE) instead of <phase>, so the fixer's edits are re-swept from prepass."
+            "('prepass running round-<N>', or 'prepass orch-fixes round-<N>' when an "
+            "ORCHESTRATOR-PAUSE row of the round and phase is open after the fill) instead of <phase>, so the fixer's edits are re-swept from prepass."
         ),
     )
     ap.add_argument(
@@ -749,8 +770,8 @@ def main() -> int:
             "fill-address only: path to a fixer agent's JSONL transcript. "
             "When given, extract the final assistant message and parse the "
             "{\"decisions\":[...]} JSON from it — no stdin required. "
-            "Repeat the option or give a comma list for a round split into several fixer batches; "
-            "the decisions are recorded together. Falls back to stdin when absent."
+            "Repeat the option or give a comma list to record several transcripts together. "
+            "Falls back to stdin when absent."
         ),
     )
     ap.add_argument(
