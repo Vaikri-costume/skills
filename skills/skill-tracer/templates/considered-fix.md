@@ -11,7 +11,7 @@ Read **[HOW_TO_FIX]** then **[README]** before making any fix and before reading
 - `[HOW_TO_FIX]` is the complete doctrine: how to choose FIX vs STRENGTHEN, the ORCHESTRATOR-PAUSE criteria, blast-closure, and the No-orphan-flag invariant.
 - `[README]` — the target's intent source. Normally its README.md, whose `## Intent` section governs every decision below; when the target has no README.md this path is its SKILL.md and the frontmatter `description:` is the documented intent (how-to-fix.md "The considered-fix constraint").
 
-If either file is unreadable, or `[README]` is readable but has neither a `## Intent` section nor a frontmatter `description:` (the intent is null; how-to-fix.md "The considered-fix constraint"), emit ORCHESTRATOR-PAUSE for every cluster with the question naming the unreadable path, or saying the intent is null.
+If either file is unreadable, or the intent is null (`[README]` is a README.md with no `## Intent` section, or the target has no README.md and `[README]` has no frontmatter `description:`; how-to-fix.md "The considered-fix constraint"), emit ORCHESTRATOR-PAUSE for every cluster with the question naming the unreadable path, or saying the intent is null.
 
 ---
 
@@ -62,7 +62,7 @@ Emit a single JSON object with a `decisions` array — one decision block per cl
       "decision": "FIX | STRENGTHEN | ORCHESTRATOR-PAUSE",
       "address": "<one line — see address formats in [HOW_TO_FIX] \"Address column formats (required for the ledger row)\"; for ORCHESTRATOR-PAUSE: the precise question>",
       "touched_files": ["<absolute path>", "..."],
-      "closure": ["Siblings: <file:line updated|unchanged, ...>", "Bound: <limit, edge case, existing remedy | none added>", "Claims: <sentence -> file:line, ...>", "Blocks: <file:start-end of each block you rewrote, re-read whole | none rewritten>"]
+      "closure": ["Siblings: <file:line updated|unchanged, ...>", "Bound: <limit, edge case, existing remedy | none added>", "Claims: <sentence -> file:line, ...>", "Blocks: <target-relative file:start-end of each block you rewrote, re-read whole | none rewritten>"]
     }
   ]
 }

@@ -569,8 +569,8 @@ def main() -> int:
     total_findings = sum(len(blocks) for _, blocks in agent_blocks)
 
     if total_findings == 0:
-        cleanup_step = (f"Remove this run's tmp artifacts: python3 .../scripts/cleanup_tmp_prompts.py --run-timestamp \"<RT>\" --dir <out-dir>  "
-                        "(scoped to this run's <RUN_TIMESTAMP>; never --all).")
+        cleanup_step = (f"Once close-round exits 0, remove this run's tmp artifacts: python3 .../scripts/cleanup_tmp_prompts.py --run-timestamp \"<RT>\" --dir <out-dir>  "
+                        "(scoped to this run's <RUN_TIMESTAMP>; never --all). Do not clean while close-round refuses: the round stays open.")
         if scope_name == "changed":
             print(json.dumps({
                 "status": "changed-scope-clean",
@@ -585,9 +585,9 @@ def main() -> int:
             "status": "code-review-clean",
             "next":   "converged-if-no-flags-this-sweep",
             "then": [
-                "Run: python3 .../scripts/append_ledger.py check-pauses <ledger>; resolve any open pause first (orchestrator decides; promote to USER-PAUSE only if true user attention needed; append 'resolves ORCHESTRATOR-PAUSE <flag>').",
+                "Run: python3 .../scripts/append_ledger.py check-pauses <ledger>; it should already exit 0. A pause still open means this sweep did not cover its fix: do not converge, resolve it and close the round normally (SKILL.md Convergence step 1).",
+                f"Converge: python3 .../scripts/append_ledger.py close-round <ledger> --round {rnd} --converged. A clean full-sweep code-review is convergence: it is reachable only after a clean prepass in this same round (any prepass fix re-enters at prepass). The script writes the converged marker; never hand-edit it.",
                 cleanup_step,
-                f"Then converge: python3 .../scripts/append_ledger.py close-round <ledger> --round {rnd} --converged. A clean full-sweep code-review is convergence: it is reachable only after a clean prepass in this same round (any prepass fix re-enters at prepass). The script writes the converged marker; never hand-edit it.",
             ],
         }))
         return 0

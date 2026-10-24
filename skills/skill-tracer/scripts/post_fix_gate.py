@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""post_fix_gate.py — blocking check run after each fixer batch, before close-round.
+"""post_fix_gate.py — blocking check run after the pass's fixer, before close-round.
 
-A round cannot close while a fix left a stale or new defect. The gate compares the target with a
-snapshot taken before the batch and fails on what the batch introduced, never on unrelated findings
+A round cannot close while a fixer's edit left a stale or new defect. The gate covers the pass's
+fixer only: the orchestrator's own edits (doc-lint fixes, check-pauses resolutions) are not gated. The gate compares the target with a
+snapshot taken before the fixer and fails on what the fixer introduced, never on unrelated findings
 that were already there.
 
 Five subcommands:
@@ -14,7 +15,7 @@ Five subcommands:
                     or a bare script name that is not a file, a --flag no argparse in the named
                     script registers (a line inside a script that registers flags names that script;
                     otherwise any script's flags count), an exit code the named script never
-                    returns, a backticked identifier no .py file mentions. Step numbers, list and
+                    returns, a backticked identifier that no .py, .json, .yaml, .yml or .sh file names. Step numbers, list and
                     docstring counts, section names and script-contract exit codes are checked by
                     the lints in (a). A name that was already unresolved in the snapshot is skipped;
                 (c) a touched non-test .py file has more raise / return / exit / if / for / while /
@@ -22,7 +23,7 @@ Five subcommands:
                     them sits on a touched line; the problem reads "new-behaviour: needs
                     ORCHESTRATOR-PAUSE: <kind> count N -> M"; a touched non-test .py file that no
                     longer parses is a problem of kind "syntax" at line 0 (the whole file);
-                (d) a file, --flag or defined identifier the batch removed is still named elsewhere.
+                (d) a file, --flag or defined identifier the fixer removed is still named elsewhere.
                 (e) a rewritten doc block (BLOCK_MIN_LINES or more lines, at least BLOCK_MIN_TOUCHED and
                     BLOCK_SHARE of them changed; a .md paragraph, table or fenced run, or a run of .py
                     comment and docstring lines) is checked as a whole: lint findings and unresolved
@@ -72,7 +73,7 @@ Output is JSON on stdout. check prints {"ok": true, ...} or {"ok": false, "probl
 kind, problem}]}, both with "siblings": [{term, touched, others, total}]; merge-check prints {"ok": .., "differences": [{file, status, hunks}]}.
 Exit 0 = pass, 1 = blocking problems (or trees differ, or `causes` listed a problem on stderr: a
 --write or --check file it cannot read, a --write file with no marker block, or a --check table that
-is missing or differs; `causes` never exits 2), 2 = unreadable input (snapshot, check, merge-check,
+is missing or differs; `causes` exits 2 only for a command-line usage error), 2 = unreadable input (snapshot, check, merge-check,
 survival); stderr then holds {"ok": false, "error", "cause", "remedy"} with the cause an EXIT2 id
 (the table `causes` prints is the one list of causes and remedies).
 Pure stdlib. Python 3.9+.
@@ -115,16 +116,16 @@ EXIT2 = (
     ("snapshot-unusable", "`unreadable snapshot <path>: ...` (the `--snapshot` path names no file, or the file is not a snapshot), "
      "or `lint data is not a JSON object` / `<source> lint data is not a JSON object` when the stderr JSON "
      "`cause` is this one (printed by `check`; the snapshot's stored `lint` field is malformed)",
-     "the batch's baseline is lost: take no new snapshot after the batch has edited the target, report the batch "
-     "as unchecked and `SendMessage` the fixer to re-emit the decision of each of its clusters as "
+     "the fixer's baseline is lost: take no new snapshot after the fixer has edited the target, report the fixer's "
+     "edits as unchecked and `SendMessage` the fixer to re-emit the decision of each of its clusters as "
      "`ORCHESTRATOR-PAUSE (post-fix gate: snapshot missing or unreadable)`"),
     ("lint-run-failed", "`<script> printed no JSON ...`, `<script> exited <N>: ...` (`doc_lint.py` or `cascade_sweep.py` failed) or "
      "`lint data is not a JSON object` / `<source> lint data is not a JSON object` when the stderr JSON `cause` "
      "is this one (printed by `check` on a lint it just ran)",
-     "report the batch as unchecked and `SendMessage` the fixer to re-emit the decision of each of its clusters as "
+     "report the fixer's edits as unchecked and `SendMessage` the fixer to re-emit the decision of each of its clusters as "
      "`ORCHESTRATOR-PAUSE (post-fix gate: lint run failed)`"),
-    ("snapshot-lint-failed", "the same texts, with this stderr JSON `cause`, printed by `snapshot` (before the batch is dispatched)",
-     "do not dispatch the batch: leave its transcript out of the fix-recording step so fill-address records its "
+    ("snapshot-lint-failed", "the same texts, with this stderr JSON `cause`, printed by `snapshot` (before the fixer is dispatched)",
+     "do not dispatch the fixer: leave its transcript out of the fix-recording step so fill-address records its "
      "clusters as ORCHESTRATOR-PAUSE"),
     ("baseline-unusable", "`unreadable --baseline-lint <path>: ...` or `<source> lint data is not a JSON object` when the stderr JSON "
      "`cause` is this one (including a dict holding only one of `doc_lint` / `cascade`)",
@@ -384,7 +385,7 @@ def unresolved(rel: str, line: str, tree: Tree) -> list:
     for ident in dict.fromkeys(_TICK_TOK.findall(line)):
         if ("_" in ident.strip("_") or ident[1:] != ident[1:].lower()) and len(ident) >= 3 \
                 and ident not in tree.py_words:
-            out.append(("identifier", ident, f"`{ident}` is not named in any .py file"))
+            out.append(("identifier", ident, f"`{ident}` is not named in any .py, .json, .yaml, .yml or .sh file"))
     return out
 
 
@@ -763,19 +764,19 @@ def cmd_causes(args) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Blocking post-fix gate for skill-tracer fixer batches.")
+    ap = argparse.ArgumentParser(description="Blocking post-fix gate for skill-tracer fixers.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("snapshot", help="record the pre-fix tree and its lint findings")
     s.add_argument("--target", required=True)
     s.add_argument("--out", required=True)
-    c = sub.add_parser("check", help="fail on what the fixer batch introduced")
+    c = sub.add_parser("check", help="fail on what the fixer introduced")
     c.add_argument("--target", required=True)
     c.add_argument("--snapshot", required=True)
     c.add_argument("--baseline-lint", default=None)
     c.add_argument("--accept-new-behaviour", action="append", default=[], metavar="FILE:KIND",
                    help="orchestrator waiver for a behaviour-preserving refactor; record it in the ledger")
     c.add_argument("--fixer-transcript", action="append", default=[], metavar="PATH[,PATH...]",
-                   help="the batch's fixer transcript(s): their closure `Blocks:` lines clear block-reread problems")
+                   help="the fixer's transcript(s): their closure `Blocks:` lines clear block-reread problems")
     m = sub.add_parser("merge-check", help="fail when the audited copy differs from the source")
     m.add_argument("--source", required=True)
     m.add_argument("--audited", required=True)

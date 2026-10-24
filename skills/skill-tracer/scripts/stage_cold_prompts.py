@@ -7,9 +7,11 @@ file themselves via their own Read tool, pointed at it by a provenance-carrying 
 prompt — a bare "read this /tmp file and follow verbatim" pointer with no provenance
 triggers a cold Explore agent's prompt-injection refusal (see references/dispatch.md
 "Why a provenance pointer"). Dispatches stay same-turn / pre-committed either way — the
-cold-parallel anti-bias property. That staging is identical mechanics across both skills;
-this script owns it once so neither hand-rolls the substitution + the
-RUN_TIMESTAMP derivation + the all-files-present / no-unsubstituted-slot checks.
+cold-parallel anti-bias property. In skill-tracer only assemble_fix_prompt.py stages through
+this script (the fixer prompt), so the substitution, the RUN_TIMESTAMP derivation and the
+all-files-present / no-unsubstituted-slot checks below cover that prompt; code_review_run.py
+fills and writes the reviewer prompts itself, with its own single-pass substitution and neither
+check.
 
 Pure-stdlib.
 

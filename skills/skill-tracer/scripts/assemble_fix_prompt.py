@@ -42,7 +42,7 @@ Usage:
         [--label        <filename label, default "considered-fix">]
 
     # Either ONE of the two JSONs may be read from stdin by passing '-' (for a manual run; the
-    # in-skill caller, lc.stage_fixer_batches, passes both as temp files); stdin is a single
+    # in-skill caller, lc.stage_fixer, passes both as temp files); stdin is a single
     # stream, so passing '-' for both exits 2:
     assemble_fix_prompt.py --cluster-json /tmp/clusters.json --blast-json - ...
 
@@ -101,7 +101,7 @@ def output_check(cluster_ids: list) -> str:
         "code's or error's remedy, every cause of it in the script, disjoint, each with one remedy>` and "
         "`Claims: <each factual sentence you wrote -> its proving file:line; for each artefact or step a new "
         "sentence tells the executor to use, the step that creates it on every path the sentence covers>` and "
-        "`Blocks: <file:start-end of each paragraph, table or comment run you rewrote, re-read whole against the "
+        "`Blocks: <target-relative file:start-end of each paragraph, table or comment run you rewrote, re-read whole against the "
         "code and its sibling sites after your last edit, or none rewritten>` "
         "(how-to-fix.md \"Closure block\"). Add no recovery, restore, fallback or retake procedure the doc did "
         "not already define: remove or narrow the advice, or ORCHESTRATOR-PAUSE. No `|` and no newline in any value.\n\n"
@@ -199,7 +199,7 @@ def main() -> int:
                     f"diagnose WHY the prior address was too weak, then move UP a "
                     f"rung (comment-only -> local patch -> structural extraction). Do NOT "
                     f"repeat the same rung or the same edit. ORCHESTRATOR-PAUSE stays "
-                    f"decision-based (its three criteria in that file), never a fallback "
+                    f"decision-based (the pause conditions listed there), never a fallback "
                     f"because a prior fix failed."
                 )
 

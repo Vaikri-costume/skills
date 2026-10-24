@@ -428,7 +428,7 @@ def main():
 
     ledger_path = Path(args.ledger_path).expanduser()
     if not ledger_path.is_file():
-        print(f"Error: ledger not found at {ledger_path}\nLedgers are written to ${XDG_DATA_HOME:-$HOME/.local/share}/skill-tracer-audit-ledger/<skill-name>.md (tracer) or the equivalent skill-publisher-ledger path (publisher) by a run.\nCheck the skill name and ensure at least one round has completed.", file=sys.stderr)
+        print(f"Error: ledger not found at {ledger_path}\nLedgers are written to ${{XDG_DATA_HOME:-$HOME/.local/share}}/skill-tracer-audit-ledger/<skill-name>.md (tracer) or the equivalent skill-publisher-ledger path (publisher) by a run.\nCheck the skill name and ensure at least one round has completed.", file=sys.stderr)
         sys.exit(1)
 
     try:
