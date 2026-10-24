@@ -12,7 +12,10 @@ across sites, and its cluster carries that token as the first backtick-quoted na
 detector's detail):
     refs / steps / dead-script /   → TOKEN-BLAST (the cited path, `Step N` pointer, script name or
       dup-regex                        duplicated regex literal is the shared token; every other
-                                       site naming it must be fixed in the same pass)
+                                       site naming it must be fixed in the same pass; the check_fix_radius
+                                       substring match is deliberately over-inclusive, so a file that
+                                       legitimately keeps the token, such as a reference file resolving
+                                       `Step N` against its own headers, is the --allow case)
     substep-label-mismatch /       → LOCAL  (the edit is one reference or one label in one file)
       argparse-flag-undocumented
   Code Review clusters are not classified here: cluster_enforce.py builds their blast (member locs

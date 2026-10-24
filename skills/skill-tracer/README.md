@@ -65,7 +65,7 @@ bug-finding signal and was deliberately removed in design.
   re-verifying from the front is the only way to guarantee the cascade invariant holds at convergence.
 
 - The FORBIDDEN-PAUSE rule prohibits offering to stop early for "diminishing returns", "tail issues",
-  or token cost. The cascade either converges, exhausts its budget, or hits a genuine USER-PAUSE —
+  or token cost. The cascade either converges, hits a round-gate stop (budget, round cap or stall), hits a genuine USER-PAUSE or a hard unrecoverable error —
   no other stop is legitimate.
 
 - Code-review always dispatches two generalist Sonnet agents (findings unioned before clustering),
@@ -82,11 +82,10 @@ bug-finding signal and was deliberately removed in design.
   fixed in the comment, not the code. In the October 2026 runs, machinery added by earlier fixes
   drew a large share of the later flags.
 
-- A tier pass of 12 clusters or fewer goes to one fixer; only a larger pass is split into batches of
-  at most 12, one fixer per batch, run one after another (never in parallel: batches may edit the
-  same files). A pass of more than 15 clusters uses Opus fixers; a smaller one uses Sonnet.
-  Splitting a small round into a code and a doc fixer about doubled fixer tokens with no quality gain. Sonnet showed regressions on 17+ mixed clusters, so a change that enlarges batches
-  or puts code clusters on Sonnet to save cost accepts that risk.
+- A tier pass goes to one fixer, whatever its size. A pass of more than 15 clusters uses an Opus
+  fixer; a smaller one uses Sonnet. Splitting a pass into a code and a doc fixer about doubled fixer
+  tokens with no quality gain. Sonnet showed regressions on 17+ mixed clusters, so a change that
+  puts a larger pass on Sonnet to save cost accepts that risk.
 - A fixer adds no new behaviour (no new retry, cap, branch or exit path, no removed fallback): it
   makes the doc match the code or the code match its documented contract, or pauses.
 
@@ -125,10 +124,10 @@ Copy the `skill-tracer/` folder to `~/.claude/skills/skill-tracer/` and confirm
 
 - Slash command: `/skill-tracer <skill-name-or-absolute-path>`
 - Natural language: "trace skill X", "audit X for bugs", "check X for issues", "verify skill X",
-  "run the cascade on X", "is skill X clean?"
+  "validate skill X scripts", "run the cascade on X", "is skill X clean?"
 - Flags: `--rounds N` (run at most N rounds; stops earlier at convergence)
 - Round cap: without `--rounds` a run stops after 8 rounds; `--rounds` above 8 raises the cap
-- Resume: invoke it again on the same target to finish an open round after an interruption
+- Resume: invoke it again on the same target to finish an open round after an interruption, a pause or a hard error; options asked for on the re-invocation are merged into the saved run options. After a clean finish or a round-gate stop, a new invocation starts a fresh run
 - A bare name resolves to `~/.claude/skills/<name>/`; an absolute path can be any directory
 - It may also start on its own after a skill is created or significantly edited
 - Run it from the top-level Claude session (it dispatches agents)
@@ -140,7 +139,7 @@ Example:
 → Round 1:
     Tier 1 (prepass): sweeps for broken refs, dead code, lint — clusters and blast-fixes until clean.
     Tier 2 (code-review): dispatches 2 cold Sonnet generalists on the all-lens prompt →
-      unions findings → orchestrator clusters → fixers (batching and model: SKILL.md "Fixer dispatch"),
+      unions findings → orchestrator clusters → the pass's fixer (model: SKILL.md "Fixer dispatch"),
       each checked by check_decisions.py.
 → If code-review has flags: fixes applied, round closes, re-enters at prepass for round 2.
 → Later rounds re-review changed files; a clean one is confirmed by a full sweep.
@@ -160,7 +159,7 @@ Example:
 - **Narrowed review, then a full sweep.** From round 3 the review reads only files the previous fixes touched. A clean result there is never counted as done: a full sweep always follows, and only a clean full sweep is convergence.
 - **Considered fixes.** Every finding ends as FIX (change the target), STRENGTHEN (add the missing reason for an intentional design) or ORCHESTRATOR-PAUSE (the coordinating agent decides from the target's own docs). A fix may not add new behaviour or interface elements (flags, modes, files, ledger fields); those become pauses.
 - **Questions only when needed.** It asks you one question (a USER-PAUSE) only when the right fix cannot be worked out from the target's files.
-- **Post-fix safety gate.** After each batch of fixes, checks confirm no path, flag or identifier broke, no new behaviour slipped in and no doc block was rewritten without being re-read.
+- **Post-fix safety gate.** After the fixer, checks confirm no path, flag or identifier broke, no new behaviour slipped in and no doc block was rewritten without being re-read.
 - **Audit ledger.** Each round's findings, root causes, fixes and pauses go to a ledger file (path under Structure).
 - **Resume.** Invoking it again on the same target after an interruption, a compaction, a pause or an error finishes the open round from the saved run options. A new invocation after a clean finish or a gate stop starts a fresh run.
 - **Merge-check.** When a run ends, it looks for another copy of the target (the installed `~/.claude/skills/<name>/` or a same-named folder in the same git checkout) and lists files that differ, so fixes made in an audited copy are not lost.
@@ -187,13 +186,15 @@ Example:
 - `detectors/`: one small check per mechanical defect type, plus a shared `_common.py`.
 - `prompts/`: the reviewer lens instructions (design, executor, fidelity, integrity, logic).
 - `templates/`: the cold code-review prompt and the fixer prompt the scripts fill in.
-- `tests/`: automated tests for code review, fixer batching, the ledger flow, the post-fix gate and the round gate.
+- `tests/`: automated tests for code review, one fixer per pass, the ledger flow, the post-fix gate and the round gate.
 - `evals/`: `evals.json` (behaviour checks) and `triggering.json` (when the skill should and should not start).
 - Outputs: the audit ledger at `${XDG_DATA_HOME:-$HOME/.local/share}/skill-tracer-audit-ledger/<target-name>.md` (one per target; a ledger recording another target is refused), staged prompt files under `/tmp/skill-tracer-prompts/` (removed at the end of a run), and a one-line progress note per round in the day's `~/.claude/session-logs/` file. Fixes are made in the target directory itself.
 
 ## Known limits
 
 v3.6 did not converge in its own self-run (it stalled after round 4 and a final sweep still found 2 flags). Its two cold reviewers vary between runs, so a clean round is weaker evidence than it looks, and the block-reread gate trusts the fixer's `Blocks:` line rather than verifying the re-read. Treat a converged run as strong but not conclusive. A later 8-round re-trace by skill-creator-ccvw (raw flags 17, 10, 13, 3, 2, 2, 5, 4, all fixed) also hit the round cap without a clean full sweep. Details: the 3.6.0 entry in HISTORY.md.
+
+3.7.0 was traced on itself for 8 rounds (flags per round 8, 12, 11, 13, 9, 7, 7, 9) and stopped at the round cap: **it was not verified clean**. 97 tests pass. One known gap is open: a prepass finding that returns after a resolved pause gets no "re-appeared" warning for its fixer (HISTORY.md, 3.7.0).
 
 Also not verified:
 - The 11 fixes from the final full review were not reviewed again.

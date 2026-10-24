@@ -4,8 +4,10 @@ Reads *.md files to find `<name>.py ... --flag` / `<name>.py ... -f` invocations
 explicit `python[3] [<dir>/]<name>.py` invocation on any line (a directory prefix such as `scripts/` or
 `.../scripts/` is allowed), and a shell-style command start inside a fenced block. Other mentions of a
 flag (prose without `python`, inline code without the script name) are not checked.
-For the referenced script (looked up by basename under <skill_root>/scripts/), AST-walks every
-`add_argument(...)` call to collect the declared flags.
+For the referenced script (looked up by basename under <skill_root>/scripts/, the skill root being
+the nearest ancestor with a scripts/ dir or a SKILL.md / README.md / skill.yaml, then in the .md
+file's own directory; `_find_script`), AST-walks every `add_argument(...)` call to collect the
+declared flags.
 
 ABSTAIN (per spec) on any script that has NO ArgumentParser / add_argument at all —
 it may hand-parse sys.argv, so static analysis cannot be authoritative.
@@ -168,25 +170,30 @@ def _extract_cited_flags(md_src: str) -> list[tuple[int, str, list[str]]]:
 # Script lookup — find the script file relative to the md file
 # ---------------------------------------------------------------------------
 
+_SKILL_ROOT_MARKERS = ("SKILL.md", "README.md", "skill.yaml")
+
+
 def _find_script(md_path: Path, script_name: str) -> Path | None:
-    """Search for script_name in the skill tree rooted above md_path.
+    """Search for script_name in the skill that holds md_path.
+
+    The "skill root" is the nearest ancestor of md_path (its own directory first) that has a
+    scripts/ subdir OR a SKILL.md / README.md / skill.yaml (common skill markers).
 
     Strategy (in order):
     1. <skill_root>/scripts/<script_name>   (canonical location)
-    2. Any ancestor directory that contains a scripts/ subdir
-    3. A sibling scripts/ dir next to the .md file
-    4. The same directory as the .md file
+    2. The same directory as the .md file
 
-    We define "skill root" as the nearest ancestor that has a scripts/ subdir
-    OR a SKILL.md / README.md / skill.yaml (common skill markers).
+    The walk stops at the skill root, so the scripts/ dir of an enclosing repository is never
+    consulted: a script of the same name there is not this skill's, and checking a doc against its
+    argparse would break Prepass's zero-false-positive bar.
     """
-    # Walk up to find skill root
     for parent in [md_path.parent] + list(md_path.parents):
         scripts_dir = parent / "scripts"
-        if scripts_dir.is_dir():
+        if scripts_dir.is_dir() or any((parent / m).is_file() for m in _SKILL_ROOT_MARKERS):
             candidate = scripts_dir / script_name
             if candidate.exists():
                 return candidate
+            break
 
     # Fallback: same directory as the .md
     same_dir = md_path.parent / script_name

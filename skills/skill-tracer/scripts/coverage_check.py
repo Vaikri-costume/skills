@@ -58,10 +58,18 @@ from inscope import inscope_files  # noqa: E402 — shared enumeration (one-home
 
 _DEFAULT_READ_LIMIT = 2000  # lines per Read call when no limit is specified
 # The Read tool's own refusals (no file content returned), for transcripts whose tool_result lacks is_error.
-_READ_REFUSAL_RE = re.compile(r"exceeds maximum allowed (?:tokens|size)|<tool_use_error>|^Error\b", re.IGNORECASE)
+# Matched at the START of the result body (re.match): the tool's refusal text leads the body, while file
+# content is line-numbered ("    61→..."), so a file that quotes these phrases must not earn a refusal.
+_READ_REFUSAL_RE = re.compile(
+    r"\s*(?!\d+\s*[\u2192\t])(?:<tool_use_error>|Error\b|[^\n]{0,120}?exceeds maximum allowed (?:tokens|size))",
+    re.IGNORECASE)
 # A Read the tool truncated: it returned content, but only the stated line range ("showing lines 1-697
 # of 1293 total ..."), so credit is limited to that range, not the requested offset/limit window.
-_READ_PARTIAL_RE = re.compile(r"showing lines (\d+)-(\d+) of \d+ total", re.IGNORECASE)
+# The banner leads the body (optionally inside a <system-reminder>), so it is matched at the start
+# (re.match); a file whose own text says "showing lines 3-9 of 40 total" does not limit its credit.
+_READ_PARTIAL_RE = re.compile(
+    r"\s*(?:<system-reminder>\s*)?\[Truncated: PARTIAL view[^\n]*?showing lines (\d+)-(\d+) of \d+ total",
+    re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +170,7 @@ def _partial_read_ranges(objs: list[dict]) -> dict[str, tuple[int, int]]:
             body = block.get("content", "")
             if isinstance(body, list):
                 body = " ".join(b.get("text", "") for b in body if isinstance(b, dict))
-            m = _READ_PARTIAL_RE.search(body if isinstance(body, str) else "")
+            m = _READ_PARTIAL_RE.match(body if isinstance(body, str) else "")
             if m:
                 partial[block.get("tool_use_id", "")] = (int(m.group(1)), int(m.group(2)))
     return partial
@@ -184,7 +192,7 @@ def _tool_result_error_ids(objs: list[dict]) -> set[str]:
             if isinstance(body, list):
                 body = " ".join(b.get("text", "") for b in body if isinstance(b, dict))
             text = body if isinstance(body, str) else ""
-            if block.get("is_error") is True or _READ_REFUSAL_RE.search(text[:400]):
+            if block.get("is_error") is True or _READ_REFUSAL_RE.match(text[:400]):
                 errored.add(block.get("tool_use_id", ""))
     return errored
 
