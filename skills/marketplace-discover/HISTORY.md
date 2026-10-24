@@ -40,8 +40,7 @@ author:
 - `allowed-tools` adds WebSearch and WebFetch for tier C.
 - Steps 3, 4 and 6 state their expected output; the vetting reference is read once and remote fetches are batched; Step 7 says why no checkpoint or log is kept.
 - Glossary sorted by term; the catalogue-format reference and the README are rewritten.
-#### Removed
-- The fixed 24-hour freshness step, the Prerequisites section and the two-source scan.
+- The fixed 24-hour freshness step, the Prerequisites section and the two-source scan are replaced by the per-marketplace search; no command or output users relied on is removed.
 
 ### 1.0.0 — 2026-10-04 (first public release)
 #### Added
