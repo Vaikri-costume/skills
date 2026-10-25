@@ -1,6 +1,6 @@
 # HISTORY.md Template
 
-Every CCVW skill ships a `HISTORY.md` at its root. It holds provenance, lineage, and changelog — everything about WHERE the skill came from and HOW it evolved. This data used to live in SKILL.md frontmatter (`metadata.author`, `metadata.inspirations`, `metadata.version`, `metadata.parent-version`); it moved out so SKILL.md frontmatter stays a lean runtime contract, and so the skill-publisher has one authoritative place to read lineage from when shipping or generating a PR.
+Every CCVW skill ships a `HISTORY.md` at its root. It holds provenance, lineage, and changelog — everything about WHERE the skill came from and HOW it evolved. This data used to live in SKILL.md frontmatter (`metadata.author`, `metadata.inspirations`, `metadata.version`); it moved out so SKILL.md frontmatter stays a lean runtime contract (only an at-a-glance copy of `parent-version` stays in SKILL.md `metadata`; the HISTORY.md value is authoritative), and so the skill-publisher has one authoritative place to read lineage from when shipping or generating a PR.
 
 **Format: hybrid.** A YAML frontmatter block (machine-readable — `attribution_lint.py` and skill-publisher parse it) followed by a markdown changelog body (human-readable — the changelog and lineage notes).
 
@@ -26,7 +26,7 @@ author:
       name: "<author-identity>"
       date: "<ISO-date>"
       changes-summary: "<one-line summary of what the fork changed>"
-inspirations:                            # ONLY for Category B (derivatives); empty list otherwise
+inspirations:                            # Category B (derivatives), or a Category A fork that also borrows named patterns (combined shape in attribution-spec.md); empty list otherwise
   - skill: "<source-skill>"
     by: "<source-author>"
     pattern: "<one-line description of the borrowed pattern>"
@@ -64,20 +64,20 @@ notes that don't belong in the changelog. For Category C (inspiration) skills, n
 
 **`parent-version`** (required, may be `null`) — for evolved skills, the version this one descended from. `null` for fresh builds.
 
-**`author.primary`** (required) — the current author's identity. GitHub username preferred. Never the literal word `"user"` (that's a doc placeholder).
+**`author.primary`** (required) — the current author's identity. GitHub username preferred. Never the literal word `"user"`, the phrase "the user" or the marker `AUTHOR-NOT-SET` in a shipped HISTORY.md: these are doc placeholders (the marker is what an eval worker writes, and the orchestrator replaces it in eval runs) (SKILL.md "Write the three root files").
 
-**`author.history[]`** (Category A only) — the fork chain, oldest → newest. Each entry: `role` (original / fork-adapter / heavy-revision), `name`, and for `original`: `skill` + `version` + `license` + `source`; for adapters: `date` + `changes-summary`.
+**`author.history[]`** (Category A only) — the fork chain, oldest → newest. Each entry: `role` (exactly one of original / fork-adapter / heavy-revision; the set is closed, per `references/attribution-spec.md` "Author and history (used for Category A skills)"), `name`, and for `original`: `skill` + `version` + `license` + `source`; for adapters: `date` + `changes-summary`.
 
-**`inspirations[]`** (Category B only) — borrowed named patterns. Each: `skill` + `by` + `pattern`.
+**`inspirations[]`** (Category B, or a Category A fork that also borrows named patterns, as in the combined shape in `attribution-spec.md`) — borrowed named patterns. Each: `skill` + `by` + `pattern`.
 
 **Changelog body** — newest entry first. Each entry: version + date + bulleted changes. skill-publisher appends a new entry at each ship.
 
-**Lineage notes** — free-form provenance prose. Optional but recommended for forks/derivatives.
+**Lineage notes** — free-form provenance prose. Optional but recommended for forks/derivatives. Required for a skill built on the adapt path (SKILL.md "Path 3, adapt") in Category B or C, which have no YAML field for the source URL and licence: write one line per source, after the `checked-marketplace:` line and a blank line, in the shape `Adapted from: <source-skill>, <licence>, <source-url>; took: <idea or pattern>; changed: <what differs>`. A Category A fork carries the source and licence in `author.history[]` and the changes in `changes-summary`, so it needs no such line.
 
 ---
 
 ## Why this lives outside SKILL.md frontmatter
 
-1. **SKILL.md frontmatter stays a runtime contract.** The executor agent loads frontmatter at startup; it only needs `name`, `description`, `license`, `compatibility`, `allowed-tools`, `metadata.tier`, `metadata.intended-audience`, `metadata.created`, `metadata.created-by`. Lineage/version/attribution aren't runtime concerns.
+1. **SKILL.md frontmatter stays a runtime contract.** The executor agent loads frontmatter at startup; it only needs `name`, `description`, `license`, `compatibility`, `allowed-tools`, `metadata.tier`, `metadata.intended-audience`, `metadata.created`, `metadata.created-by`, and the at-a-glance copy `metadata.parent-version` (HISTORY.md holds the authoritative one). Lineage/version/attribution aren't runtime concerns.
 2. **skill-publisher has one authoritative source.** When generating a GitHub PR or version-bumping, the publisher reads HISTORY.md — not scattered frontmatter fields.
 3. **Changelog has room to grow.** A markdown changelog body can hold many entries without bloating the frontmatter the executor parses every invocation.

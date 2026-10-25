@@ -4,21 +4,46 @@
 Pure-stdlib (json + re only — uses bespoke minimal YAML frontmatter parser so
 it runs on machines without PyYAML installed).
 
-Reads <skill>/SKILL.md, checks:
-1. CCVW-mandatory frontmatter fields (license, compatibility, metadata, allowed-tools)
-2. CCVW-mandatory directories (scripts/, references/, assets/)
-3. Tier-specific violations (Claude extensions blocked at model-agnostic;
-   personal paths blocked at claude-users+)
-4. Advisory: a /tmp/ path referenced with no cleanup instruction anywhere in the
+Reads <skill>/SKILL.md (frontmatter and body) and, when present, the
+frontmatter of <skill>/HISTORY.md (for author.primary). Checks:
+1. CCVW-mandatory frontmatter fields (license, compatibility, metadata with its
+   required keys, allowed-tools) and CCVW-mandatory files and directories
+   (scripts/, references/, assets/, references/glossary.md, README.md,
+   HISTORY.md). Anything absent is listed in ccvw_mandatory_missing.
+2. Structure, at every tier: name is kebab-case, matches the folder name and is
+   not a reserved claude/anthropic name; the main file is spelled exactly
+   SKILL.md.
+3. Frontmatter content, at every tier: no XML-tag-shaped <...> text in any
+   frontmatter value, description of at most 1024 characters, compatibility of
+   1 to 500 characters.
+4. Tier-specific violations (Claude extensions blocked at model-agnostic and
+   warned at claude-users; user-data paths blocked at claude-users+;
+   Claude-Code-system paths blocked at model-agnostic; model-agnostic also
+   needs compatibility agentskills.io@<version>). An unrecognised tier gets an
+   advisory unknown-tier finding.
+5. Personalization: plan-document references at every tier; first-person
+   phrasings and the author's own name (from --author, else HISTORY.md
+   author.primary) at claude-users+.
+6. Advisory: a /tmp/ path referenced with no cleanup instruction anywhere in the
    file (see lint_tmp_cleanup) — never blocks a tier, review-only.
 
-Emits structured JSON to stdout.
+Frontmatter is read by a small parser that handles one-line values, one level
+of nesting and a trailing " # comment"; a folded or literal block value (a
+description written with > or |) is read as a single character, so write the
+description on one line.
+
+Emits structured JSON to stdout with keys skill_path, declared_tier,
+ccvw_mandatory_missing, tier_violations and would_fail_at_tiers (when SKILL.md
+is missing it prints only an error key).
 
 Usage:
-    python3 portability_lint.py <skill-path> [--tier personal|claude-users|model-agnostic]
+    python3 portability_lint.py <skill-path> [--tier personal|claude-users|model-agnostic] [--author NAME]
 
 If --tier is omitted, reads from SKILL.md's metadata.tier field; defaults to
 "personal" if absent.
+
+Exit code: 1 when SKILL.md is missing, or when ccvw_mandatory_missing or
+tier_violations is non-empty (an advisory-only result included); 0 otherwise.
 """
 
 import argparse
@@ -59,7 +84,7 @@ CLAUDE_BODY_PATTERNS = [
 # other users don't have YOUR audit history at YOUR exact path.
 USER_DATA_PATHS = [
     (r"~/\.claude/skill-tracer-audit-ledger/", "Use $XDG_DATA_HOME/skill-tracer-audit-ledger/ or runtime storage API"),
-    (r"~/\.claude/skill-creator-evals-ledger/", "Use $XDG_DATA_HOME/skill-creator-evals-ledger/ or runtime storage API"),
+    (r"~/\.claude/skill-creator-evals-ledger/", "Use the configurable eval_workspace setting (scripts/skill_config.py) plus the skill name, or the runtime's per-skill storage API"),
     (r"~/\.claude/CLAUDE\.md", "Use $XDG_CONFIG_HOME/claude/CLAUDE.md or runtime user-memory API"),
     (r"~/\.claude/memory/", "Use $XDG_DATA_HOME/claude/memory/ or runtime memory API"),
 ]
@@ -138,12 +163,15 @@ def parse_frontmatter(text):
 
     raw = text[4:end]
     body = text[end + 5:]
-    fm_lines = raw.count("\n") + 2  # opening ---, closing ---
+    fm_lines = raw.count("\n") + 3  # n content lines hold n-1 newlines; the block is n+2 lines (opening ---, closing ---)
 
     fm = {}
     current_key = None
     nested = None
-    for line in raw.split("\n"):
+    # A trailing " # comment" (a '#' after whitespace, outside single or double
+    # quotes) is dropped as YAML does, so a commented value such as
+    # primary: "name"   # note  reads as name and not as the whole tail.
+    for line in (re.sub(r"^((?:[^#\"']|\"[^\"]*\"|'[^']*')*?)\s+#.*$", r"\1", ln) for ln in raw.split("\n")):
         if not line.strip():
             continue
         # Top-level key: value
@@ -157,7 +185,7 @@ def parse_frontmatter(text):
                 fm[key] = nested
             else:
                 # Strip surrounding quotes
-                if val.startswith('"') and val.endswith('"'):
+                if len(val) >= 2 and val[0] in "\"'" and val[-1] == val[0]:
                     val = val[1:-1]
                 # Try parse as inline object/array
                 if val.startswith("{") and val.endswith("}"):
@@ -175,10 +203,10 @@ def parse_frontmatter(text):
                 current_key = None
                 nested = None
         elif line.startswith("  ") and nested is not None:
-            # Nested key
+            # Nested key; matching surrounding double or single quotes are stripped as for top-level values
             m2 = re.match(r"^\s+([a-zA-Z][a-zA-Z0-9_-]*)\s*:\s*(.*)$", line)
             if m2:
-                nested[m2.group(1)] = m2.group(2).strip()
+                nested[m2.group(1)] = re.sub(r'^(["\'])(.*)\1$', r"\2", m2.group(2).strip())
     return fm, body, fm_lines
 
 
@@ -259,7 +287,7 @@ def lint_structure(fm, skill_path):
     name = fm.get("name")
     if isinstance(name, str) and name.strip():
         name = name.strip()
-        # Reserved-name guard: 'claude'/'anthropic' prefixes are reserved.
+        # Reserved-name guard: the name itself, or the name up to a first - or _, may not be 'claude'/'anthropic'.
         if re.match(r"^(claude|anthropic)([-_]|$)", name, re.IGNORECASE):
             violations.append({
                 "line": 1,
@@ -344,6 +372,8 @@ def lint_frontmatter_content(fm):
 
     # compatibility length bound (1..500)
     compat = fm.get("compatibility")
+    if compat == {}:  # a bare `compatibility:` line parses as an empty dict
+        compat = ""
     if isinstance(compat, str) and not (1 <= len(compat) <= 500):
         violations.append({
             "line": 1,
@@ -359,6 +389,16 @@ def lint_frontmatter_content(fm):
 def lint_tier_violations(fm, body, body_start_line, tier):
     """Return list of tier-specific violations."""
     violations = []
+
+    # An unrecognised tier skips every tier-conditional check below, so say so as a warning.
+    if tier not in ("personal", "claude-users", "model-agnostic"):
+        violations.append({
+            "line": 1,
+            "type": "unknown-tier",
+            "message": f"metadata.tier `{tier}` is not a valid tier, so no tier-conditional check ran",
+            "suggested_fix": "Set metadata.tier to one of personal, claude-users, model-agnostic",
+            "blocks_tier": "none (advisory — review recommended, never blocks a tier)",
+        })
 
     # Frontmatter-level Claude extensions (model-agnostic blocks all; claude-users/personal allow)
     if tier == "model-agnostic":
@@ -397,7 +437,7 @@ def lint_tier_violations(fm, body, body_start_line, tier):
                         "type": "user-data-path",
                         "message": f"User-data path pattern `{path_pattern}` in skill body",
                         "suggested_fix": suggested,
-                        "blocks_tier": "claude-users",
+                        "blocks_tier": "claude-users and model-agnostic",
                     })
 
     # Claude-Code-system paths (block at model-agnostic only — other Claude Code
@@ -466,7 +506,7 @@ def lint_personalization(body, body_start_line, tier, author=None):
                         "type": "personalization-leakage",
                         "message": f"Personalization phrasing matching `{pattern}` in skill body (cat 15)",
                         "suggested_fix": suggested,
-                        "blocks_tier": "claude-users",
+                        "blocks_tier": "claude-users and model-agnostic",
                     })
             if author:
                 # Flag exact author-name occurrences (case-insensitive whole-word)
@@ -476,7 +516,7 @@ def lint_personalization(body, body_start_line, tier, author=None):
                         "type": "personalization-leakage",
                         "message": f"Author identity `{author}` appears in shippable skill body (cat 15)",
                         "suggested_fix": "Replace with 'the user' / 'you' or drop the personal reference — a new installer shouldn't need to know who built it",
-                        "blocks_tier": "claude-users",
+                        "blocks_tier": "claude-users and model-agnostic",
                     })
 
     return violations
@@ -493,7 +533,9 @@ def lint_tmp_cleanup(body, body_start_line):
     write they clean up after.
 
     Advisory only — some /tmp/ uses are genuinely one-shot and need no cleanup,
-    so this never sets blocks_tier to a real tier and never fails the lint.
+    so this never sets blocks_tier to a real tier. The finding still lands in
+    the violations list, so an advisory-only result exits 1 with an empty
+    would_fail_at_tiers.
     """
     body_lines = body.split("\n")
     first_tmp_line = None
@@ -552,11 +594,16 @@ def main():
         print(json.dumps({"error": f"SKILL.md not found at {skill_md}"}, indent=2))
         sys.exit(1)
 
-    text = skill_md.read_text(encoding="utf-8")
+    # utf-8-sig drops a leading BOM and the replace turns CRLF into LF, so the
+    # frontmatter parser sees the same text the eval scripts read.
+    text = skill_md.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
     fm, body, fm_lines = parse_frontmatter(text)
     body_start_line = fm_lines + 1
 
-    declared_tier = args.tier or fm.get("metadata", {}).get("tier", "personal")
+    # A non-mapping metadata value falls back to the default tier here; lint_frontmatter
+    # reports it as metadata.<unparseable> below.
+    md = fm.get("metadata")
+    declared_tier = args.tier or (md.get("tier", "personal") if isinstance(md, dict) else "personal")
     ccvw_missing = lint_frontmatter(fm) + lint_directories(skill_path)
     # Structural + frontmatter-content checks apply at every tier (registration
     # correctness + the frontmatter prompt-injection surface), so they run before
@@ -572,7 +619,7 @@ def main():
     if author is None:
         history_md = skill_path / "HISTORY.md"
         if history_md.is_file():
-            hfm, _, _ = parse_frontmatter(history_md.read_text(encoding="utf-8"))
+            hfm, _, _ = parse_frontmatter(history_md.read_text(encoding="utf-8-sig").replace("\r\n", "\n"))
             a = hfm.get("author")
             if isinstance(a, dict):
                 author = a.get("primary")

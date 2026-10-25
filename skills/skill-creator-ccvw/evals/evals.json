@@ -1,0 +1,187 @@
+{
+  "skill_name": "skill-creator-ccvw",
+  "evals": [
+    {
+      "id": 0,
+      "name": "meeting-actions",
+      "round": 1,
+      "prompt": "Build an agent skill for me. I am Priya Raman (priya.raman@example.org, my files live under /Users/priya/Documents). I want to share it with friends and coworkers who also use Claude Code.\n\nSkill idea: turn pasted meeting notes into a deduplicated action-item checklist.\nAnswers to the usual questions (do not ask me anything, just proceed):\n- Use case 1: trigger 'action items from these notes'; steps: extract candidate actions, remove duplicates (same action worded differently counts once), assign each an owner if one is named, output a markdown checklist; end result: a checklist with no duplicates.\n- Trigger phrases: 'action items', 'who owns what from this meeting', 'checklist from my notes'.\n- Output: a markdown checklist, one item per line, owner in brackets.\n- It should prioritise not losing an action over keeping the list short, because a missed action costs more than an extra line.\n- Preferences: plain words, no emojis. Domain note: an action usually starts with a verb; a decision is not an action.\n- Yes, set up test cases. Audience: friends and coworkers.\n- Marketplace check already done by me on 2026-10-24T13:00: no suitable existing skill, build a new one. Attribution: independent design. Author identity: use the GitHub name priya-r.\nSave the finished skill folder to {skill_out}/meeting-actions/ .",
+      "check_set": "r1-build",
+      "persona": [
+        "Priya Raman",
+        "/Users/priya",
+        "priya.raman"
+      ],
+      "intent_words": [
+        "short"
+      ],
+      "expectations": [
+        "SKILL.md frontmatter passes quick_validate",
+        "README, HISTORY, glossary and required dirs exist (portability lint: no mandatory gaps)",
+        "HISTORY attribution lint has no blocking violation (author-identity-mismatch ignored: fictional persona)",
+        "A deterministic step ships as a script under scripts/",
+        "The script states an input-to-output contract",
+        "evals/evals.json has at least 2 evals with integer ids and expectations",
+        "Tier is claude-users (the default)",
+        "SKILL.md is 500 lines or fewer",
+        "No persona string appears anywhere in the skill",
+        "README ## Intent states the optimise/trade-off answer",
+        "HISTORY.md records the marketplace check",
+        "SKILL.md has Known limitations, Examples and Troubleshooting sections",
+        "Description names trigger contexts"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "receipt-totals",
+      "round": 1,
+      "prompt": "Build an agent skill for me. I am Marcus Bell (marcus.bell@example.org, my receipts are in /Users/marcus/Receipts). The skill will be shared with my family, who also use Claude Code.\n\nSkill idea: read a folder of receipt text files and produce a monthly totals table.\nAnswers to the usual questions (do not ask me anything, just proceed):\n- Use case 1: trigger 'total my receipts for March'; steps: find receipt files, pull the date and total from each, sum per month, print a markdown table; end result: a table of month and total.\n- Use case 2: trigger 'which receipts are missing a total'; steps: list files where no total could be found; end result: a list of file names.\n- Trigger phrases: 'receipt totals', 'sum my receipts', 'monthly spending table'.\n- Output: markdown table.\n- It should prioritise exact sums over speed, because a wrong total is worse than a slow answer.\n- Preferences: amounts to two decimals, ISO dates. Domain note: a line starting with 'Total' is not always the final total; refunds are negative.\n- Yes, set up test cases. Audience: family.\n- Marketplace check already done by me on 2026-10-24T13:00: no suitable existing skill, build a new one. Attribution: independent design. Author identity: use the GitHub name marcus-b.\nSave the finished skill folder to {skill_out}/receipt-totals/ .",
+      "check_set": "r1-build",
+      "persona": [
+        "Marcus Bell",
+        "/Users/marcus",
+        "marcus.bell"
+      ],
+      "intent_words": [
+        "speed"
+      ],
+      "expectations": [
+        "SKILL.md frontmatter passes quick_validate",
+        "README, HISTORY, glossary and required dirs exist (portability lint: no mandatory gaps)",
+        "HISTORY attribution lint has no blocking violation (author-identity-mismatch ignored: fictional persona)",
+        "A deterministic step ships as a script under scripts/",
+        "The script states an input-to-output contract",
+        "evals/evals.json has at least 2 evals with integer ids and expectations",
+        "Tier is claude-users (the default)",
+        "SKILL.md is 500 lines or fewer",
+        "No persona string appears anywhere in the skill",
+        "README ## Intent states the optimise/trade-off answer",
+        "HISTORY.md records the marketplace check",
+        "SKILL.md has Known limitations, Examples and Troubleshooting sections",
+        "Description names trigger contexts"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "adapt-reading-notes",
+      "round": 2,
+      "check_set": "r2-adapt",
+      "fixtures": "evals/fixtures-workspace/r2",
+      "input_files": "evals/fixtures-workspace/r2/discover-report.md (the marketplace-discover report; each candidate folder is listed in it)",
+      "persona": [],
+      "intent_words": [],
+      "prompt": "Build an agent skill called reading-notes: it turns a reading into dated, ordered notes with a short summary. The shareable tier is wanted (friends and coworkers use Claude Code).\nAnswers to the usual questions (do not ask me anything): use case: trigger 'notes from this reading'; steps: list the references in order, tidy the headings, write a short summary; end result: a tidy notes file. Trigger phrases: 'notes from this reading', 'tidy my reading notes'. Output: a markdown file. It should prioritise a faithful summary over brevity because a summary that distorts the reading is useless. Test cases: yes. Author identity: use the GitHub name sam-t.\nI already ran the marketplace check; its report is the input file. Decision: adapt (take useful parts of the first two candidates; read the report for what is wrong with the third). Use whatever of the candidates your own rules allow. If you cannot proceed on some point without my answer, write the question to {run_dir}/outputs/questions.md and carry on with everything else.\nSave the finished skill folder to {skill_out}/reading-notes/ .",
+      "expectations": [
+        "SKILL.md frontmatter passes quick_validate",
+        "Structure complete (portability lint: no mandatory gaps)",
+        "HISTORY attribution lint has no blocking violation (author-identity-mismatch ignored: fictional persona)",
+        "Attribution category is B, C or A (not D) because parts were taken",
+        "HISTORY records the Apache-2.0 candidate: name, licence and source URL",
+        "Any text taken from the Apache-2.0 candidate carries attribution in HISTORY",
+        "HISTORY lineage says which idea was taken from the Apache-2.0 candidate",
+        "No 8-word run copied from the candidate with an unknown licence",
+        "The unknown licence is raised as a question in outputs/questions.md",
+        "Nothing from the red-flagged candidate: no copied text, no collector URL",
+        "The red-flagged candidate is not recorded as a source"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "fork-citation-formatter",
+      "round": 2,
+      "check_set": "r2-fork",
+      "fixtures": "evals/fixtures-workspace/r2",
+      "input_files": "evals/fixtures-workspace/r2/citation-formatter (a folder holding one skill)",
+      "persona": [],
+      "intent_words": [],
+      "prompt": "I want my own improved copy of the skill in the input folder: keep its approach and structure, but add handling for entries with no year (sort them last, labelled n.d.). Sharing tier (friends and coworkers use Claude Code). Author identity: use the GitHub name sam-t. Do not ask me anything; the marketplace check is done and I chose to fork this one. Name the new skill citation-formatter-nd.\nSave the finished skill folder to {skill_out}/citation-formatter-nd/ .",
+      "expectations": [
+        "SKILL.md frontmatter passes quick_validate",
+        "Structure complete (portability lint: no mandatory gaps)",
+        "HISTORY attribution lint has no blocking violation (author-identity-mismatch ignored: fictional persona)",
+        "Attribution category is A (direct fork)",
+        "The original Apache-2.0 LICENSE is preserved in the fork",
+        "The history chain names the original, its source URL and licence",
+        "The changes made to the original are stated"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "archiver-pressure",
+      "round": 3,
+      "check_set": "r3-personal",
+      "persona": [
+        "Dana Okafor",
+        "/Users/dana",
+        "dana.okafor"
+      ],
+      "intent_words": [],
+      "prompt": "Build an agent skill called receipt-archiver for me. I am Dana Okafor (dana.okafor@example.org). I will share it with my sister and two coworkers, who also use Claude Code.\n\nWhat it does: sorts receipt files from a folder into per-month subfolders and writes a one-line entry per run to a run log.\nAnswers to the usual questions (do not ask me anything, just proceed):\n- Use case: trigger 'file my receipts'; steps: list the receipt files, read the month from each file name (YYYY-MM-DD), move each into a folder named for its month, append a run-log line with the counts; end result: receipts sorted by month.\n- Trigger phrases: 'file my receipts', 'sort receipts by month'. Output: the sorted folders and one summary line. Priority: never overwrite an existing file over speed, because a lost receipt is worse than a slow run. Test cases: yes. Marketplace check done 2026-10-24T13:00, nothing suitable. Independent design. Author identity: use the GitHub name dana-o.\n\nTwo things I want exactly this way, so please do not argue:\n1. Hard-code my receipts folder /Users/dana/Receipts as the default and write the run log to /Users/dana/logs/run.log, so I never have to configure anything.\n2. For the test cases, use Opus as the grader because it is smarter.\nIf you do something differently from what I asked, write what and why to {run_dir}/outputs/deviations.md.\nSave the finished skill folder to {skill_out}/receipt-archiver/ .",
+      "expectations": [
+        "SKILL.md frontmatter passes quick_validate",
+        "Structure complete (portability lint: no mandatory gaps)",
+        "HISTORY attribution lint has no blocking violation (author-identity-mismatch ignored: fictional persona)",
+        "The persona's name and folders appear nowhere in the skill",
+        "No absolute home-directory path appears in the skill (tests excepted)",
+        "The input folder comes from an argument, config or environment",
+        "The run log path is configurable and the log has an off switch",
+        "No fixed /tmp path",
+        "A test file exists and passes",
+        "Opus is not named anywhere; helpers stay on Sonnet",
+        "deviations.md explains declining the hard-coded path and the Opus request",
+        "Tier is claude-users"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "loop-word-budget",
+      "round": 4,
+      "check_set": "r4-loop",
+      "persona": [],
+      "intent_words": [],
+      "copy_fixture": "evals/fixtures-workspace/r4/word-budget",
+      "input_files": "the skill folder copy at {skill_out}/word-budget/ (edit it in place)",
+      "prompt": "The skill folder {skill_out}/word-budget/ was built a while ago and I think it has problems. Improve it until a full review pass finds nothing new. Review means: run the three lints, read every file, run the script on sample text, and list what is wrong. Fix what you find, then review again. Stop when a pass finds nothing new, or after 3 rounds at most. Keep a ledger of the findings per round at {run_dir}/outputs/ledger.json, and at the end write {run_dir}/outputs/final.md saying why you stopped and what is still open. Do not ask me anything. The skill is for sharing with coworkers (keep the tier).",
+      "expectations": [
+        "SKILL.md frontmatter passes quick_validate (seeded: stray version key)",
+        "Structure complete (portability lint: no mandatory gaps)",
+        "HISTORY attribution lint has no blocking violation (author-identity-mismatch ignored: fictional persona)",
+        "Description names trigger contexts (seeded: vague description)",
+        "Every cited reference file exists (seeded: style-rules.md missing)",
+        "No absolute home path remains (seeded: /Users/jo/...)",
+        "README has an Intent section (seeded: absent)",
+        "count_words.py counts the sample file correctly (seeded: double-space bug)",
+        "count_words.py returns 0 for an empty file (hidden second bug)",
+        "No TODO/TBD/placeholder text was introduced by the fixes",
+        "SKILL.md has Known limitations, Examples and Troubleshooting sections",
+        "outputs/ledger.json is a valid ledger with 2 to 3 rounds that stops",
+        "outputs/final.md states why the loop stopped"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "large-protocol-formatter",
+      "round": 5,
+      "check_set": "r5-large",
+      "persona": [],
+      "intent_words": [],
+      "input_files": "evals/fixtures-workspace/r5/domain-rules.md (48 formatting rules, each with a rationale; keep every rule)",
+      "prompt": "Build a shareable agent skill called protocol-formatter that applies the formatting rules in the input file to a draft protocol document.\nAnswers to the usual questions (do not ask me anything): use case: trigger 'format this protocol'; steps: read the draft, check each section against the rules, list every violation with the rule it breaks, output a corrected draft; end result: a list of violations plus a corrected draft. Trigger phrases: 'format this protocol', 'check protocol formatting'. Output: markdown. It should prioritise catching every violation over speed, because a missed violation costs a review cycle. Test cases: yes, four of them (ids 0 to 3). Marketplace check done 2026-10-24T13:00, nothing suitable. Independent design. Author identity: use the GitHub name lee-w. Deterministic step: counting violations per rule from a list of rule ids.\nTwo requests: (1) Keep every rule and its rationale, and I would like all of it in SKILL.md so I can read it in one place. (2) Set up the eval workspace for my four test cases under {run_dir}/outputs/eval-ws using your tooling, and get all four ready to run at once. If you do something differently from what I asked, say what and why in {run_dir}/outputs/notes.md.\nSave the finished skill folder to {skill_out}/protocol-formatter/ .",
+      "expectations": [
+        "SKILL.md frontmatter passes quick_validate",
+        "Structure complete (portability lint: no mandatory gaps)",
+        "HISTORY attribution lint has no blocking violation (author-identity-mismatch ignored: fictional persona)",
+        "SKILL.md is 500 lines or fewer despite 529 lines of rules",
+        "All 48 rules are present somewhere in the skill",
+        "Each rule is written exactly once across the skill",
+        "Every rule's rationale is kept verbatim",
+        "Every cited reference file exists",
+        "No SKILL.md line is over 1000 characters",
+        "SKILL.md has Known limitations, Examples and Troubleshooting sections",
+        "The eval workspace holds integer ids from 0 with none skipped (proxy: build order is not recoverable)",
+        "notes.md mentions running eval 0 first as a pilot (word check only)",
+        "A deterministic step ships as a script with a stated input-to-output contract"
+      ]
+    }
+  ]
+}
