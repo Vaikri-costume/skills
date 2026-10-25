@@ -9,6 +9,15 @@ Usage:
     python generate_review.py <workspace-path> [--port PORT] [--skill-name NAME]
     python generate_review.py <workspace-path> --previous-workspace /path/to/previous/iteration
 
+Arguments (workspace-path is required, every flag is optional):
+    workspace-path               iteration folder to scan for runs (directories with outputs/)
+    --port, -p PORT              server port, default 3117; a busy port is freed, else a free one is used
+    --skill-name, -n NAME        skill name for the page header (default: workspace folder name)
+    --previous-workspace PATH    previous iteration folder; its outputs and feedback show as context
+    --benchmark PATH             benchmark.json to show in the Benchmark tab
+    --recommendations, -r PATH   recommendations.md payload, rendered as the sidebar
+    --static, -s PATH            write one standalone HTML file to PATH and exit, no server
+
 No dependencies beyond the Python stdlib are required.
 """
 
@@ -272,7 +281,8 @@ def inject_recommendations_sidebar(html: str, recs: dict | None) -> str:
     if not recs:
         return html
 
-    recs_json = json.dumps(recs)
+    # "<" is escaped so a literal </script> or </body> in the text cannot end the script block or match the </body> replace below.
+    recs_json = json.dumps(recs).replace("<", "\\u003c")
     sidebar_block = f"""
 <style id="recs-sidebar-style">
   #recs-sidebar {{
@@ -431,7 +441,8 @@ def generate_html(
     if benchmark:
         embedded["benchmark"] = benchmark
 
-    data_json = json.dumps(embedded)
+    # "<" is escaped so eval output containing </script> or </body> (e.g. an .html file) stays inside the JS string.
+    data_json = json.dumps(embedded).replace("<", "\\u003c")
 
     html = template.replace("/*__EMBEDDED_DATA__*/", f"const EMBEDDED_DATA = {data_json};")
     html = inject_recommendations_sidebar(html, recommendations)
@@ -626,7 +637,9 @@ def main() -> None:
     if recommendations_path:
         rec_count = sum(len(v) for v in (recommendations or {}).values())
         print(f"  Recs:      {recommendations_path} ({rec_count} bullets across well/failed/next)")
-    print(f"\n  Press Ctrl+C to stop.\n")
+    # flush: with stdout redirected to viewer.log (nohup launch) stdout is block-buffered,
+    # and the serve loop below never exits, so the URL lines above would never reach the log.
+    print(f"\n  Press Ctrl+C to stop.\n", flush=True)
 
     webbrowser.open(url)
 

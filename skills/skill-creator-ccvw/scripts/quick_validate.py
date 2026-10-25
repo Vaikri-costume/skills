@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """
-Quick validation script for skills - minimal version
+Quick validation script for skills - minimal version.
+
+Input: one argument, the path of a skill folder holding SKILL.md.
+Output: one plain-text line on stdout (not JSON): "Skill is valid!" or the
+validation error message.
+Exit codes: 0 when the frontmatter is valid, 1 when it is invalid or when the
+argument count is wrong (a usage line is printed).
+Accepts only these top-level frontmatter keys: name, description, license,
+allowed-tools, metadata, compatibility.
 """
 
 import sys
@@ -19,7 +27,9 @@ def validate_skill(skill_path):
         return False, "SKILL.md not found"
 
     # Read and validate frontmatter
-    content = skill_md.read_text(encoding="utf-8")
+    # utf-8-sig drops a leading BOM and the replace turns CRLF into LF, so the
+    # frontmatter match below reads the same text the eval scripts read.
+    content = skill_md.read_text(encoding="utf-8-sig").replace("\r\n", "\n")
     if not content.startswith('---'):
         return False, "No YAML frontmatter found"
 
@@ -60,6 +70,8 @@ def validate_skill(skill_path):
     if not isinstance(name, str):
         return False, f"Name must be a string, got {type(name).__name__}"
     name = name.strip()
+    if not name:
+        return False, "'name' in frontmatter is empty"
     if name:
         # Check naming convention (kebab-case: lowercase with hyphens)
         if not re.match(r'^[a-z0-9-]+$', name):
@@ -75,6 +87,8 @@ def validate_skill(skill_path):
     if not isinstance(description, str):
         return False, f"Description must be a string, got {type(description).__name__}"
     description = description.strip()
+    if not description:
+        return False, "'description' in frontmatter is empty"
     if description:
         # Check for angle brackets
         if '<' in description or '>' in description:

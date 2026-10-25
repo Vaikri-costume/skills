@@ -545,7 +545,7 @@
     <div class="header">
       <div>
         <h1>Eval Review: <span id="skill-name"></span></h1>
-        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, click Submit All Reviews, then tell Claude Code you are done reviewing.</div>
       </div>
       <div class="progress" id="progress"></div>
     </div>
@@ -655,21 +655,18 @@
 
     // ---- Init ----
     async function init() {
-      // Load saved feedback from server — but only if this isn't a fresh
-      // iteration (indicated by previous_feedback being present). When
-      // previous feedback exists, the feedback.json on disk is stale from
-      // the prior iteration and should not pre-fill the textareas.
-      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
-        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
-      if (!hasPrevious) {
-        try {
-          const resp = await fetch("/api/feedback");
-          const data = await resp.json();
-          if (data.reviews) {
-            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
-          }
-        } catch { /* first run, no feedback yet */ }
-      }
+      // Load saved feedback from the server. The server's feedback.json lives in
+      // the current iteration's workspace (the prior iteration's feedback is
+      // embedded separately as previous_feedback), so it always belongs to this
+      // iteration; reloading the page must restore it, otherwise the next
+      // auto-save would overwrite it with an empty map.
+      try {
+        const resp = await fetch("/api/feedback");
+        const data = await resp.json();
+        if (data.reviews) {
+          for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+        }
+      } catch { /* first run, no feedback yet */ }
 
       document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
       showRun(0);
@@ -761,6 +758,7 @@
     }
 
     // ---- Render outputs ----
+    // renderOutputs and renderPrevOutputs are intentionally parallel: a change to how a file type is rendered must be made in both.
     function renderOutputs(run) {
       const container = document.getElementById("outputs-body");
       container.innerHTML = "";
@@ -912,6 +910,7 @@
     }
 
     // ---- Previous outputs (collapsible) ----
+    // Intentionally parallel to renderOutputs: a change to how a file type is rendered must be made in both.
     function renderPrevOutputs(run) {
       const section = document.getElementById("prev-outputs-section");
       const content = document.getElementById("prev-outputs-content");
@@ -974,6 +973,11 @@
           a.download = file.name;
           a.textContent = "Download " + file.name;
           fc.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          fc.appendChild(pre);
         }
 
         fileDiv.appendChild(fc);
@@ -1013,8 +1017,9 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reviews, status: "in_progress" }),
-      }).then(() => {
-        document.getElementById("feedback-status").textContent = "Saved";
+      }).then((resp) => {
+        // The server answers 500 when the write to feedback.json fails
+        document.getElementById("feedback-status").textContent = resp.ok ? "Saved" : "Save failed (server could not write feedback.json)";
       }).catch(() => {
         // Static mode or server unavailable — no-op on auto-save,
         // feedback will be downloaded on final submit
@@ -1033,8 +1038,9 @@
         feedbackMap[run.id] = text;
       }
 
-      // POST once with status: complete — include ALL runs so the model
-      // can distinguish "no feedback" (looks good) from "not reviewed"
+      // POST once with status: complete — include ALL runs, with an empty
+      // feedback string for runs where nothing was typed (the viewer does not
+      // record which runs were opened, so blank means "no comment")
       const reviews = [];
       const ts = new Date().toISOString();
       for (const r of EMBEDDED_DATA.runs) {
@@ -1045,7 +1051,12 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: payload,
-      }).then(() => {
+      }).then((resp) => {
+        if (!resp.ok) {
+          // The server answers 500 when the write to feedback.json fails: do not show the saved overlay
+          showToast("Save failed (server could not write feedback.json). Click Submit again, or give your feedback in chat.");
+          return;
+        }
         document.getElementById("done-overlay").classList.add("visible");
       }).catch(() => {
         // Server not available (static mode) — download as file
@@ -1223,7 +1234,12 @@
             const configRuns = evalRuns.filter(r => r.configuration === config);
             if (configRuns.length === 0) continue;
 
-            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            // Same role rule as the Outputs-tab config badge; unrecognized config
+            // names fall back to sorted position (first = treatment colour).
+            const isBaselineCfg = /(without_skill|old_skill)/.test(config);
+            const isPrimaryCfg = /(with_skill|new_skill)/.test(config);
+            const rowClass = isBaselineCfg ? "benchmark-row-without"
+              : (isPrimaryCfg || ci === 0) ? "benchmark-row-with" : "benchmark-row-without";
             const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 
             for (const run of configRuns) {
@@ -1294,7 +1310,7 @@
                   if (exp) {
                     const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
                     const icon = exp.passed ? "\u2713" : "\u2717";
-                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "").replace(/"/g, "&quot;") + '">' + icon + "</span> ";
                   } else {
                     html += "— ";
                   }

@@ -1,0 +1,12 @@
+You are the worker, no subagents, cannot redelegate. Use the model {helper_model}.
+Do not put into files you write any name or personal detail that you invent or find in the environment; write "the user" instead. A persona that the task text supplies (name, folders, other details) is context for the task only: never write it into any file you create, and refer to that person as "the user". The one exception is an author identity the task names: write it only in the fields that hold the author's own name (author.primary and the fork-adapter name in HISTORY.md, created-by, and the author's copyright line in a LICENSE). Where the task names none, write AUTHOR-NOT-SET in those fields. The configured author identity is never passed in.
+Work only inside {run_dir}; use {scratch_dir} for any temporary file.
+
+Execute this task:
+- Task: {task}
+- Input files: {input_files}
+- Save outputs to: {run_dir}/outputs/
+- Outputs to save: {outputs_wanted}
+{baseline_source}
+Hard constraints (apart from {run_dir}, the input files listed above, and any snapshot exception named above): do not read, list, grep or otherwise access any file or directory whose path contains `/skills/`, contains the string `{skill_name}`, or is a `SKILL.md` that you did not create yourself inside your own output folder. Do not invoke the Skill tool for `{skill_name}` or any tool whose description mentions it. If you notice such a path while browsing for something else, do not open it; route around it.
+- Also write {run_dir}/transcript.md. Begin it with a `## Eval Prompt` section (that exact heading), a blank line, then the task verbatim. Then log the steps you took. End it with a `## Isolation Check` section listing every distinct file or directory path you read, globbed or grepped during this run (the actual paths, not a summary).

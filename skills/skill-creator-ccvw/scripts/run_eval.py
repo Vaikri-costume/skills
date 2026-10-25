@@ -3,6 +3,16 @@
 
 Tests whether a skill's description causes Claude to trigger (read the skill)
 for a set of queries. Outputs results as JSON.
+
+Input: --eval-set (a JSON list of {"query", "should_trigger"} items) and
+--skill-path (a skill folder holding SKILL.md); run it as a package module
+(python -m scripts.run_eval) from the skill root.
+Output: one JSON object on stdout with skill_name, description, results (per
+query: query, should_trigger, trigger_rate, triggers, runs, pass) and summary
+(total, passed, failed); --verbose progress goes to stderr.
+Exit codes: 0 on success; 1 when the claude CLI is missing, unresponsive or
+fails its credential pre-flight check, when SKILL.md is not found at
+--skill-path, or when a query fails with a claude CLI error (a traceback).
 """
 
 import argparse
@@ -94,10 +104,14 @@ def run_single_query(
     # synthetic variant out of any concurrent session's registry, while the
     # <skill_name> filename preserves name-based triggering. The unique_id only
     # names the tempdir (so a tempdir stranded by a SIGKILLed worker, where the
-    # finally-rmtree never runs, is attributable), not the command file.
+    # finally-rmtree never runs, is recognisable by its skill-eval- prefix), not
+    # the command file. The tempdir name leaves out the skill name: it is the
+    # subprocess cwd, and trigger detection counts any Read path containing the
+    # skill name, so a cwd named after the skill would score every Read inside
+    # it as a trigger.
     clean_name = skill_name
     unique_id = uuid.uuid4().hex[:8]
-    eval_root = Path(tempfile.mkdtemp(prefix=f"skill-eval-{skill_name}-{unique_id}-"))
+    eval_root = Path(tempfile.mkdtemp(prefix=f"skill-eval-{unique_id}-"))
     command_file = eval_root / ".claude" / "commands" / f"{clean_name}.md"
 
     try:
@@ -142,6 +156,11 @@ def run_single_query(
         accumulated_json = ""
 
         try:
+            # `exited` marks the final pass: the child has exited (or closed stdout), so
+            # the bytes read on this pass are the last. The event parser below still runs
+            # on them before the loop breaks — a Skill/Read tool_use event that arrives in
+            # the last read must be scored, not discarded as "did not trigger".
+            exited = False
             while time.time() - start_time < timeout:
                 if process.poll() is not None:
                     remaining = process.stdout.read()
@@ -150,27 +169,30 @@ def run_single_query(
                     err_remaining = process.stderr.read()
                     if err_remaining:
                         stderr_buf += err_remaining.decode("utf-8", errors="replace")
-                    break
+                    exited = True
+                else:
+                    # Drain BOTH stdout and stderr. stderr is a PIPE: leaving it unread
+                    # lets a chatty child fill the ~64KB pipe buffer and block on its
+                    # stderr write before emitting the triggering stdout event — which
+                    # would then time out and score a spurious "did not trigger".
+                    ready, _, _ = select.select([process.stdout, process.stderr], [], [], 1.0)
+                    if not ready:
+                        continue
+                    if process.stderr in ready:
+                        err_chunk = os.read(process.stderr.fileno(), 8192)
+                        if err_chunk:
+                            stderr_buf += err_chunk.decode("utf-8", errors="replace")
+                    if process.stdout not in ready:
+                        continue
 
-                # Drain BOTH stdout and stderr. stderr is a PIPE: leaving it unread
-                # lets a chatty child fill the ~64KB pipe buffer and block on its
-                # stderr write before emitting the triggering stdout event — which
-                # would then time out and score a spurious "did not trigger".
-                ready, _, _ = select.select([process.stdout, process.stderr], [], [], 1.0)
-                if not ready:
-                    continue
-                if process.stderr in ready:
-                    err_chunk = os.read(process.stderr.fileno(), 8192)
-                    if err_chunk:
-                        stderr_buf += err_chunk.decode("utf-8", errors="replace")
-                if process.stdout not in ready:
-                    continue
+                    chunk = os.read(process.stdout.fileno(), 8192)
+                    if not chunk:
+                        break
+                    buffer += chunk.decode("utf-8", errors="replace")
 
-                chunk = os.read(process.stdout.fileno(), 8192)
-                if not chunk:
-                    break
-                buffer += chunk.decode("utf-8", errors="replace")
-
+                if exited and buffer and not buffer.endswith("\n"):
+                    # The last event may lack its trailing newline; terminate it so the parser sees it.
+                    buffer += "\n"
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
                     line = line.strip()
@@ -240,6 +262,9 @@ def run_single_query(
                     elif event.get("type") == "result":
                         # Reached the run's end without a skill consult → not triggered.
                         return False
+
+                if exited:
+                    break
         finally:
             # Clean up process on any exit path (return, exception, timeout)
             if process.poll() is None:

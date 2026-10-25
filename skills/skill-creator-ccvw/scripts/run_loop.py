@@ -274,14 +274,14 @@ def main():
     parser.add_argument("--description", default=None, help="Override starting description")
     parser.add_argument("--num-workers", type=int, default=10, help="Number of parallel workers")
     parser.add_argument("--timeout", type=int, default=30, help="Timeout per query in seconds")
-    parser.add_argument("--max-iterations", type=int, default=5, help="Max improvement iterations")
+    parser.add_argument("--max-iterations", type=int, default=5, help="Max iterations: each iteration evaluates the description, and the last one stops before rewriting, so N iterations give N evaluations and at most N-1 description rewrites")
     parser.add_argument("--runs-per-query", type=int, default=3, help="Number of runs per query")
     parser.add_argument("--trigger-threshold", type=float, default=0.5, help="Trigger rate threshold")
     parser.add_argument("--holdout", type=float, default=0.4, help="Fraction of eval set to hold out for testing (0 to disable)")
     parser.add_argument("--model", required=True, help="Model for improvement")
     parser.add_argument("--verbose", action="store_true", help="Print progress to stderr")
-    parser.add_argument("--report", default="auto", help="Generate HTML report at this path (default: 'auto' for temp file, 'none' to disable)")
-    parser.add_argument("--results-dir", default=None, help="Save all outputs (results.json, report.html, log.txt) to a timestamped subdirectory here")
+    parser.add_argument("--report", default="auto", help="Generate HTML report at this path (default: 'auto' = report.html in the --results-dir subdirectory, or a temp file when no --results-dir is given; 'none' to disable)")
+    parser.add_argument("--results-dir", default=None, help="Save all outputs (results.json, report.html, and a logs folder of improve_iter_N.json files) to a timestamped subdirectory here")
     args = parser.parse_args()
 
     preflight_check(model=args.model)
@@ -295,9 +295,19 @@ def main():
 
     name, _, _ = parse_skill_md(skill_path)
 
+    # Determine the output directory first: with --results-dir the auto report is written inside it
+    if args.results_dir:
+        timestamp = time.strftime("%Y-%m-%d_%H%M%S")
+        results_dir = Path(args.results_dir) / timestamp
+        results_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        results_dir = None
+
     # Set up live report path
     if args.report != "none":
-        if args.report == "auto":
+        if args.report == "auto" and results_dir:
+            live_report_path = results_dir / "report.html"
+        elif args.report == "auto":
             timestamp = time.strftime("%Y%m%d_%H%M%S")
             live_report_path = Path(tempfile.gettempdir()) / f"skill_description_report_{skill_path.name}_{timestamp}.html"
         else:
@@ -307,14 +317,6 @@ def main():
         webbrowser.open(str(live_report_path))
     else:
         live_report_path = None
-
-    # Determine output directory (create before run_loop so logs can be written)
-    if args.results_dir:
-        timestamp = time.strftime("%Y-%m-%d_%H%M%S")
-        results_dir = Path(args.results_dir) / timestamp
-        results_dir.mkdir(parents=True, exist_ok=True)
-    else:
-        results_dir = None
 
     log_dir = results_dir / "logs" if results_dir else None
 
@@ -345,7 +347,7 @@ def main():
         live_report_path.write_text(generate_html(output, auto_refresh=False, skill_name=name), encoding="utf-8")
         print(f"\nReport: {live_report_path}", file=sys.stderr)
 
-    if results_dir and live_report_path:
+    if results_dir and live_report_path and live_report_path != results_dir / "report.html":
         (results_dir / "report.html").write_text(generate_html(output, auto_refresh=False, skill_name=name), encoding="utf-8")
 
     if results_dir:
