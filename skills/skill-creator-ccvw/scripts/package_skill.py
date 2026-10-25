@@ -10,9 +10,9 @@ when the `present_files` tool is available.
 NOT the shippable packager. Distribution/release packaging is skill-publisher's job:
 its `scripts/package_skill.py` is tier-aware (refuses `personal`, gates `model-agnostic`
 on agentskills.io conformance), emits a tarball or zip, and reports a JSON manifest.
-This copy is intentionally NOT routed to that one, for two reasons: (1) fresh builds
-default to `personal` tier, which the publisher's packager refuses by design, so routing
-would break the common build-time case; (2) the build skill stays independent of the
+This copy is intentionally NOT routed to that one, for two reasons: (1) a build is packaged
+mid-iteration, where the skill is at the `personal` tier when the user asked for that tier
+(new builds default to `claude-users`), which the publisher's packager refuses by design, so routing would break that build-time case; (2) the build skill stays independent of the
 ship skill — the ecosystem chains build→ship by suggestion, never by hard dependency.
 Same filename, deliberately different behavior; the two never share a namespace (each
 lives in its own skill's scripts/). See HISTORY.md for the divergence rationale.

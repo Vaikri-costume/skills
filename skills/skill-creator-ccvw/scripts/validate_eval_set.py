@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Validate a trigger-eval set's SHAPE before run_loop.py consumes it.
 
-The Description-Optimization flow hand-assembles a 20-item trigger-eval array
+The Description-Optimization flow hand-assembles a 16 to 20 item trigger-eval array
 ({query, should_trigger}), the user edits it in the HTML reviewer and exports
 eval_set.json, then it's fed to run_loop.py. run_loop does `e["should_trigger"]`
 / q["query"] with NO shape validation — a missing key or wrong type crashes
@@ -9,19 +9,24 @@ mid-loop, AFTER the background run has started and the user has spent time
 reviewing. This script fails FAST: validate the shape up front, surface every
 problem at once, exit non-zero so the loop never starts on a malformed set.
 
-Checks (shape + the SKILL.md "8-10 of each class" guidance):
+Checks (shape + the SKILL.md "Description optimisation" guidance of 8 to 10 queries per class):
   - top level is a non-empty JSON list
   - each item is an object with `query` (non-empty string) and `should_trigger` (bool)
+  - no two items have the same `query` text (an error: run_eval.py merges them into one result)
   - no unexpected keys (warns, doesn't fail)
   - class balance: count should_trigger true/false; warn if either is outside ~8-10
-    (advisory — the loop runs fine, but a lopsided set tests poorly)
+    (advisory for ratios — a lopsided set tests poorly; but a class with fewer than 2 queries
+    leaves run_loop no train query of it, so add queries before trusting an all_passed result)
 
 Pure-stdlib. Validates SHAPE only — the QUALITY of the queries (realistic? good
 near-misses?) is the model's + user's judgment, never scripted.
 
 Usage:  validate_eval_set.py <eval_set.json>   (or '-' for stdin)
 Output JSON: {valid, item_count, trigger_count, no_trigger_count, errors[], warnings[]}
-Exit: 0 valid (loop may start); 1 invalid (do NOT start the loop); 2 usage / unreadable / not JSON.
+Exit: 0 valid (loop may start); 1 invalid (do NOT start the loop); 2 usage, file not found or not a file, not valid JSON.
+Output shape per exit: 0 and 1 print the full JSON above; 2 for not valid JSON prints only {valid, errors};
+2 for file not found or not a file prints "ERROR: not found: <path>" on stderr and no JSON; 2 for usage is argparse's message on stderr.
+(A permission-denied file raises an uncaught error: exit 1 with a traceback.)
 """
 from __future__ import annotations
 
@@ -43,6 +48,7 @@ def validate(data) -> dict:
         errors.append("eval set is empty")
 
     trig = notrig = 0
+    seen = {}
     for i, item in enumerate(data):
         loc = f"item[{i}]"
         if not isinstance(item, dict):
@@ -54,6 +60,12 @@ def validate(data) -> dict:
             errors.append(f"{loc}: missing 'query'")
         elif not isinstance(q, str) or not q.strip():
             errors.append(f"{loc}: 'query' must be a non-empty string")
+        elif q in seen:
+            # run_eval.py keys results by query text: a repeated query is merged into one result
+            # scored against only one item's should_trigger, and the scored set differs from the reviewed one.
+            errors.append(f"{loc}: duplicate 'query' (same text as item[{seen[q]}]): {q[:80]!r}")
+        else:
+            seen[q] = i
         # should_trigger
         st = item.get("should_trigger")
         if "should_trigger" not in item:

@@ -1,4 +1,15 @@
-"""Shared utilities for skill-creator scripts."""
+"""Shared utilities for skill-creator scripts.
+
+A library module with no command line and no exit codes; import it as
+scripts.utils.
+- claude_subprocess_env(): no input; returns a copy of os.environ without the
+  CLAUDECODE key, for nested `claude -p` calls.
+- claude_binary(): no input; returns the resolved path of the claude
+  executable, or the bare name "claude" when none is found on PATH.
+- parse_skill_md(skill_path): input is a skill folder Path; returns
+  (name, description, full_content) read from its SKILL.md frontmatter, and
+  raises ValueError when the opening or closing --- line is missing.
+"""
 
 import os
 import shutil

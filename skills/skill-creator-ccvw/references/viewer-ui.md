@@ -10,7 +10,7 @@ The viewer has two tabs (Outputs, Benchmark) plus a Recommendations sidebar:
 
 One test case shown at a time:
 - **Prompt** — the task that was given
-- **Output** — the files the skill produced, rendered inline where possible
+- **Output** — the files the skill produced at the top level of the run's outputs folder, rendered inline where possible. Files inside subfolders are not listed, so a run whose only output is a folder (such as a built skill) shows "No output files"; for a folder output, give the user the folder's path in the workspace to open directly.
 - **Previous Output** (iteration 2+) — collapsed section showing last iteration's output
 - **Formal Grades** (if grading was run) — collapsed section showing assertion pass/fail
 - **Feedback** — a textbox that auto-saves as the user types

@@ -1,6 +1,6 @@
 # Post-hoc Analyzer Agent (Mode A: blind-comparison analysis)
 
-> **Mode router (read first):** If your dispatch prompt supplies `benchmark_data_path`, `skill_path`, and `output_path` — jump immediately to [Mode B: Analyzing Benchmark Results](#mode-b-analyzing-benchmark-results) and ignore Mode A entirely. Only continue below if your prompt supplies Mode A inputs (`winner`, `winner_skill_path`, etc.).
+> **Mode router (read first):** If your dispatch prompt supplies `benchmark_data_path` — jump immediately to [Mode B: Analyzing Benchmark Results](#mode-b-analyzing-benchmark-results) and ignore Mode A entirely. Only continue below if your prompt supplies `winner` (Mode A). These two discriminating inputs select the mode; each mode's full input list is in its own Inputs section. If the prompt carries both, `benchmark_data_path` takes precedence (Mode B); if it carries neither, stop and report the missing input to the orchestrator instead of guessing a mode.
 
 Analyze blind comparison results to understand WHY the winner won and generate improvement suggestions.
 
@@ -32,7 +32,8 @@ You receive these parameters in your prompt:
 
 1. Read the winner skill's SKILL.md and key referenced files
 2. Read the loser skill's SKILL.md and key referenced files
-3. Identify structural differences:
+3. If a skill path is missing (a without-skill side has no skill), analyse that side's transcript and outputs without comparing instructions
+4. Identify structural differences:
    - Instructions clarity and specificity
    - Script/tool usage patterns
    - Example coverage
@@ -192,7 +193,7 @@ Use these categories to organize improvement suggestions:
 
 # Mode B: Analyzing Benchmark Results
 
-**Mode selector:** if your dispatch prompt supplies `benchmark_data_path`, `skill_path`, and `output_path` — follow Mode B (this section) and ignore Mode A above. If your prompt supplies `winner`/`winner_skill_path`/`loser_skill_path`/`comparison_result_path` — follow Mode A above.
+**Mode selector:** see the Mode router at the top of this file, which states the discriminating inputs (`benchmark_data_path` selects this mode); the full input list of this mode is under Inputs below.
 
 When analyzing benchmark results, the analyzer's purpose is to **surface patterns and anomalies** across multiple runs, not suggest skill improvements.
 
@@ -248,10 +249,9 @@ Write freeform observations as a list of strings (the example categories below a
 
 Examples:
 - "Assertion 'Output is a PDF file' passes 100% in both configurations - may not differentiate skill value"
-- "Eval 3 shows high variance (50% ± 40%) - run 2 had an unusual failure that may be flaky"
+- "Eval 3 shows high variance (50% ± 40% pass rate across its with-skill runs; run 2 failed three assertions the other runs passed)"
 - "Without-skill runs consistently fail on table extraction expectations (0% pass rate)"
-- "Skill adds 13s average execution time but improves pass rate by 50%"
-- "Token usage is 80% higher with skill, primarily due to script output parsing"
+- "Time cost concentrates in eval 2: its with-skill runs take about 3x as long as its baseline runs while the other evals stay within 10%"
 - "All 3 without-skill runs for eval 1 produced empty output"
 
 ### Step 6: Write Notes
@@ -261,9 +261,9 @@ Save notes to `{output_path}` as a JSON array of strings:
 ```json
 [
   "Assertion 'Output is a PDF file' passes 100% in both configurations - may not differentiate skill value",
-  "Eval 3 shows high variance (50% ± 40%) - run 2 had an unusual failure",
+  "Eval 3 shows high variance (50% ± 40% pass rate across its with-skill runs; run 2 failed three assertions the other runs passed)",
   "Without-skill runs consistently fail on table extraction expectations",
-  "Skill adds 13s average execution time but improves pass rate by 50%"
+  "Time cost concentrates in eval 2: its with-skill runs take about 3x as long as its baseline runs while the other evals stay within 10%"
 ]
 ```
 

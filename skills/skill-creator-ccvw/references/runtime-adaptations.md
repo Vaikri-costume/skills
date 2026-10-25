@@ -11,16 +11,16 @@ These three (Claude Code, Claude.ai, Cowork) are the Claude-family runtimes skil
 | Running test cases | Parallel via subagents | Sequential, no subagents; you run the skill yourself | Parallel via subagents (drop to sequential if timeouts) |
 | Baseline runs | Run alongside with-skill | Skip (no meaningful baseline without independent execution) | Run normally |
 | Eval viewer | Browser, server-mode | Skip if no browser → present results inline in conversation | `--static <path>` for standalone HTML; user opens link |
-| Benchmarking | Quantitative | Skip (depends on baseline) | Quantitative |
+| Benchmarking | Quantitative | With-skill only: when Python can run, run `aggregate_benchmark` on the inline-graded runs for their pass rates and ignore its delta (there is no baseline, so the delta is not a comparison); when it cannot, skip | Quantitative |
 | Feedback capture | Auto-saved server-side | Inline in conversation | `feedback.json` downloaded; read from downloads |
 | Description optimization | `run_loop.py` / `run_eval.py` | Skip (requires `claude -p`) | Works (uses subprocess, not browser); save until skill is finished |
-| Analyst pass (Step 4 sub-step 3) | Run as subagent after aggregation | Skip — dispatch is not available; leave `benchmark.json` `notes` as empty array | Run as subagent after aggregation |
+| Analyst pass (sub-step "Do an analyst pass" of Step 4 (Grade, aggregate, and launch the viewer) in `references/eval-run-procedure.md`) | Run as subagent after aggregation | Skip — dispatch is not available; when the Benchmarking row runs `aggregate_benchmark`, leave `benchmark.json` `notes` as empty array | Run as subagent after aggregation |
 | Blind comparison | Available | Skip (needs subagents) | Available |
 | Packaging (`package_skill.py`) | Works | Works (user downloads `.skill`) | Works |
 
 ## Claude.ai specifics
 
-**Running test cases without subagents.** For each test case, read the skill's SKILL.md, then follow its instructions to accomplish the test prompt yourself. Do them one at a time. Less rigorous than independent subagents (you wrote the skill and you're also running it, so full context), but a useful sanity check — and the human review step compensates. Skip baseline runs; just use the skill to complete the task. When you grade inline (no grader subagent), still write the same `grading.json` field contract the grader would emit — `summary{pass_rate,passed,failed,total}`, `timing{total_duration_seconds}`, and a per-expectation results array using the exact field names `text`/`passed`/`evidence` — so `aggregate_benchmark.py` reads these inline runs identically to subagent runs (an expectation missing any of those three fields generates a `Warning:` line but is **included** in the output — it is not dropped; fix the malformed expectation and re-aggregate before trusting the numbers). See `references/schemas.md` for the full grading.json shape.
+**Running test cases without subagents.** For each test case, read the skill's SKILL.md, then follow its instructions to accomplish the test prompt yourself. Do them one at a time. Less rigorous than independent subagents (you wrote the skill and you're also running it, so full context), but a useful sanity check — and the human review step compensates. Skip baseline runs; just use the skill to complete the task. When you grade inline (no grader subagent), still write the same `grading.json` field contract the grader would emit — `summary{pass_rate,passed,failed,total}`, `timing{total_duration_seconds}`, and a per-expectation results array using the exact field names `text`/`passed`/`evidence` — so `aggregate_benchmark.py` reads these inline runs identically to subagent runs when it runs (whether it does: the Benchmarking row of the matrix above) (an expectation missing any of those three fields generates a `Warning:` line but is **included** in the output — it is not dropped; fix the malformed expectation and re-aggregate before trusting the numbers). See `references/schemas.md` for the full grading.json shape.
 
 **Reviewing results without a browser.** Present results directly in the conversation. For each test case, show the prompt and the output. If the output is a file the user needs to see (`.docx`, `.xlsx`, etc.), save to the filesystem and tell them where it is so they can download and inspect. Ask for feedback inline: *"How does this look? Anything you'd change?"*
 
@@ -29,6 +29,8 @@ These three (Claude Code, Claude.ai, Cowork) are the Claude-family runtimes skil
 ## Cowork specifics
 
 **Always generate the viewer.** Cowork's setup seems to disincline Claude from generating the eval viewer after running tests. Reiterate: whether you're in Cowork or Claude Code, after running tests, always generate the eval viewer for the human to look at before revising the skill yourself. Use `generate_review.py` — don't write custom HTML. **Generate the viewer BEFORE evaluating inputs yourself.** Get them in front of the human ASAP.
+
+**Timeouts.** If you hit severe timeouts in Cowork, running the test prompts in series rather than in parallel is acceptable (upstream skill-creator guidance, merged 2026-10-24). The same-turn dispatch rule then relaxes for that run only; note it in the benchmark notes as `references/eval-run-procedure.md` Step 4 (Grade, aggregate, and launch the viewer), sub-step "Do an analyst pass" describes (which also covers merging again after a re-aggregation).
 
 **Headless viewer.** No display → use `--static <output_path>` to write a standalone HTML file instead of starting a server. Proffer a link the user can click to open in their browser.
 
@@ -42,5 +44,5 @@ These three (Claude Code, Claude.ai, Cowork) are the Claude-family runtimes skil
 
 When the user is updating an existing skill (not creating new):
 - **Preserve the original name.** Use the skill's directory name and `name` frontmatter field unchanged. E.g., `research-helper` stays `research-helper.skill`, not `research-helper-v2`.
-- **Copy to a writeable location before editing.** Installed skill path may be read-only. Copy to `/tmp/skill-name/`, edit there, package from the copy.
-- **Stage in `/tmp/` first** if packaging manually, then copy to the output directory — direct writes may fail on permissions.
+- **Copy to a writeable location before editing.** Installed skill path may be read-only. Copy to a scratch directory, edit there, package from the copy.
+- **Stage in a scratch directory first** if packaging manually, then copy to the output directory — direct writes may fail on permissions.

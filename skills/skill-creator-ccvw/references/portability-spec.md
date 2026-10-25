@@ -10,8 +10,8 @@ CCVW skills declare their tier in `metadata.tier` in frontmatter. Three tiers in
 
 | Tier | Use case | Allowed | Disallowed | Default for |
 |---|---|---|---|---|
-| **`personal`** | User-specific iteration; OK to bake in personal paths, MCP servers, hardcoded CCVW conventions | All Claude extensions; CCVW conventions; hardcoded `~/.claude/...` paths; productivity:* MCP integrations; assumed local environment | Nothing additional | Skills during iteration (an explicit opt-in — new builds default to `claude-users`) |
-| **`claude-users`** | Skills shared with friends/family/coworkers on their own Claude Code installs | All Claude extensions; tier-portable paths (e.g. `$XDG_DATA_HOME/...`); CCVW conventions where they don't depend on personal MCP | Hardcoded `~/.claude/...` user-specific paths; productivity:* MCP without graceful-degradation fallback; assumed-installed personal skills | Skills marked ready-to-share |
+| **`personal`** | User-specific iteration; OK to bake in personal paths, MCP servers, hardcoded CCVW conventions | All Claude extensions (top-level frontmatter keys: see the note under the blocklist heading below); CCVW conventions; hardcoded `~/.claude/...` paths; productivity:* MCP integrations; assumed local environment | Nothing additional | Skills whose user asked for this tier (new builds default to `claude-users`) |
+| **`claude-users`** | Skills shared with friends/family/coworkers on their own Claude Code installs | All Claude extensions (top-level frontmatter keys: see the note under the blocklist heading below; the lint reports body-level uses as `claude-users (warning)` findings, which add `claude-users` to `would_fail_at_tiers` but are advisory at this tier per `references/lint-details.md`; only model-agnostic disallows them); tier-portable paths (e.g. `$XDG_DATA_HOME/...`); CCVW conventions where they don't depend on personal MCP | Hardcoded `~/.claude/...` user-specific paths; productivity:* MCP without graceful-degradation fallback; assumed-installed personal skills | Skills marked ready-to-share |
 | **`model-agnostic`** | Skills portable to Gemini CLI, Cursor, OpenCode, any agentskills.io-compatible runtime | Only agentskills.io base spec; pure-stdlib scripts; runtime-provided storage API | All Claude extensions (see blocklist below); claude-users-tier-allowed hardcoded paths; any Claude-Code-specific tool name | Skills explicitly tagged for model-agnostic publication |
 
 ---
@@ -37,7 +37,7 @@ Optional directories at the skill root (CCVW requires all three exist, empty `.g
 | `references/` | optional | **required** | Supporting documentation; per-skill `glossary.md` lives here (CCVW requires every skill to ship a glossary) |
 | `assets/` | optional | **required** | Templates, prompts, images, schema files |
 
-Progressive disclosure budgets (advisory at all tiers, enforced at model-agnostic):
+Progressive disclosure budgets (advisory at all tiers; `portability_lint.py` does not measure them at any tier, so check them by hand):
 - Metadata budget: ~100 tokens (`name` + `description` + frontmatter, what the agent loads at startup)
 - SKILL.md body: <5000 tokens recommended
 - Referenced files: loaded on-demand
@@ -50,8 +50,8 @@ CCVW elevates several agentskills.io-optional items to required for every CCVW s
 
 **Frontmatter fields (required for all CCVW skills):**
 - `license` — defaults to `MIT` when scaffolded; user can change.
-- `compatibility` — defaults to current detected Claude Code version; for model-agnostic tier, must be `agentskills.io@1.0` or higher.
-- `metadata` — required keys: `tier` (one of personal/claude-users/model-agnostic), `created` (Runtime when scaffolded), `created-by` (defaults `skill-creator-ccvw`), `parent-version` (null for fresh skills, prior version string for evolved skills), `intended-audience` (matches `tier` values: `personal` / `claude-users` / `model-agnostic`; default `claude-users` since the skill is intended to be shareable on Claude Code + Cowork by default; personal is the exception. `tier` and `intended-audience` are technically separate (tier is portability state; audience is intent) but the values map 1:1 and default the same).
+- `compatibility` — defaults to current detected Claude Code version; for model-agnostic tier, must start with `agentskills.io@` followed by a version (the lint checks the prefix only).
+- `metadata` — required keys: `tier` (one of personal/claude-users/model-agnostic; the lint reports any other value as an advisory `unknown-tier` finding, see `references/lint-details.md`), `created` (Runtime when scaffolded), `created-by` (the author identity, as `references/skill-structure-spec.md` describes), `parent-version` (null for fresh skills, prior version string for evolved skills), `intended-audience` (matches `tier` values: `personal` / `claude-users` / `model-agnostic`; default `claude-users` since the skill is intended to be shareable on Claude Code + Cowork by default; personal is the exception. `tier` and `intended-audience` are technically separate (tier is portability state; audience is intent) but the values map 1:1 and default the same).
 - `allowed-tools` — required, even if conservative; CCVW default is `["Read"]` for read-only skills, broadened per skill needs.
 
 **Directories (required to exist, empty allowed):**
@@ -59,11 +59,15 @@ CCVW elevates several agentskills.io-optional items to required for every CCVW s
 - `references/` (always at least `glossary.md` — the per-skill glossary is itself CCVW-mandatory)
 - `assets/` (with `.gitkeep` if no assets yet)
 
+Files (required to exist): `README.md` and `HISTORY.md` at the skill root, and `references/glossary.md`; the lint lists each one that is absent in `ccvw_mandatory_missing` alongside the fields and directories above.
+
 ---
 
 ## Claude-extension blocklist (model-agnostic tier disallows; claude-users tier warns; personal tier allows)
 
-The following Claude-specific features in SKILL.md will NOT work on non-Claude runtimes. `portability_lint.py --tier model-agnostic` flags every occurrence with a suggested-fix.
+The following Claude-specific features in SKILL.md will NOT work on non-Claude runtimes. `portability_lint.py --tier model-agnostic` flags every blocklisted frontmatter field and each of these body patterns, with a suggested-fix: the shell-injection bang syntax, the indexed argument form, the zero-index argument form, the session-id variable, the phrase "Agent tool", WebFetch, and the mcp tool-name pattern; at `claude-users` it flags the body patterns only, as `claude-users (warning)`. It does not inspect `allowed-tools` entries, so strip Claude-only tools there by hand.
+
+The blocklisted frontmatter fields (`disable-model-invocation`, `user-invocable`, `context`, `agent`, `paths`) are tier-conditional only in `portability_lint.py`; this skill's `quick_validate.py` gate accepts just six top-level keys and rejects these at every tier (`references/lint-details.md`, the `quick_validate.py` paragraph).
 
 | Feature | What to do under model-agnostic tier |
 |---|---|
@@ -78,11 +82,13 @@ The following Claude-specific features in SKILL.md will NOT work on non-Claude r
 | `allowed-tools` with Claude-Code-specific tool names (e.g. `Agent`, `WebFetch`, `mcp__*__*`) | Strip Claude-only tools; keep standard ones (Read, Bash, Edit, Write); document missing-tool fallback |
 | `Agent` tool dispatch in body | Major restructure required — agent dispatch is Claude-specific; design as single-actor skill or document the dispatch as "agent-internal" so it falls within the runtime's own subagent model |
 
+For the argument-substitution row, the lint detects the indexed and zero-index argument forms; the bare variable and named substitutions are not detected and are checked by hand.
+
 ---
 
 ## Path-mapping rules per tier
 
-CCVW skills today hardcode `~/.claude/...` paths. These are not portable. The lint script flags each and proposes a tier-appropriate rewrite.
+CCVW skills today hardcode `~/.claude/...` paths. These are not portable. The lint script flags each path in the two tables below, except the `/tmp` row noted there, and proposes a tier-appropriate rewrite.
 
 Two distinct path categories matter here:
 
@@ -91,10 +97,10 @@ Two distinct path categories matter here:
 | User-data path | Shipped tier rewrite | Cross-runtime tier rewrite |
 |---|---|---|
 | `~/.claude/skill-tracer-audit-ledger/<skill>.md` | `$XDG_DATA_HOME/skill-tracer-audit-ledger/<skill>.md` (with fallback `~/.local/share/skill-tracer-audit-ledger/<skill>.md` on systems without XDG) | Runtime-provided per-skill storage API (e.g., `runtime.storage("audit-ledger").get(skill)`) |
-| `~/.claude/skill-creator-evals-ledger/<skill>/` | `$XDG_DATA_HOME/skill-creator-evals-ledger/<skill>/` | Runtime-provided per-skill storage API |
+| `~/.claude/skill-creator-evals-ledger/<skill>/` | The configurable `eval_workspace` setting plus `/<skill>`, resolved by `scripts/skill_config.py` with the XDG-first default of SKILL.md "Personal settings", not a hard-coded path | Runtime-provided per-skill storage API |
 | `~/.claude/CLAUDE.md` (user memory) | `$XDG_CONFIG_HOME/claude/CLAUDE.md` with fallback | Runtime-provided user-memory API |
 | `~/.claude/memory/` | `$XDG_DATA_HOME/claude/memory/` | Runtime-provided memory API |
-| `/tmp/skill-tracer-prompts/*` (scratchpad) | OK at claude-users tier (POSIX standard) | use runtime-provided tempdir API or `tempfile.mkdtemp()` |
+| `/tmp/skill-tracer-prompts/*` (scratchpad) | Not OK in a claude-users skill: a fixed `/tmp` path is forbidden (SKILL.md "Personal settings"); use the configured scratch directory. The lint does not block this row: it reports a `/tmp/` path only as an advisory `tmp-cleanup-advisory` finding when no cleanup text appears anywhere in the body, and this skill's own eval grader plus SKILL.md "Personal settings" enforce the rule. skill-tracer's own prompt folder is that skill's design, not a pattern to copy | use runtime-provided tempdir API or `tempfile.mkdtemp()` |
 
 **Claude-Code-system paths** (block at model-agnostic only — every Claude Code user has these paths AND the same content at them, so a skill referencing them works across Claude Code installs; non-Claude runtimes don't have these paths at all):
 
@@ -159,4 +165,4 @@ Personal and claude-users tiers MAY include this; if absent, the runtime default
 }
 ```
 
-The orchestrator (skill-creator-ccvw during authoring, skill-publisher during Step 4 tier-transition checks) consumes this JSON to render user-facing warnings, propose fixes, or flag GAP entries.
+The orchestrator (skill-creator-ccvw during authoring, skill-publisher during Step 4 tier-transition checks) consumes this JSON to render user-facing warnings and propose fixes.

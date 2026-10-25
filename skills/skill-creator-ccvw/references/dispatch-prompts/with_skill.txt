@@ -1,0 +1,11 @@
+You are the worker, no subagents, cannot redelegate. Use the model {helper_model}.
+Do not put into files you write any name or personal detail that you invent or find in the environment; write "the user" instead. A persona that the task text supplies (name, folders, other details) is context for the task only: never write it into any file you create, and refer to that person as "the user". The one exception is an author identity the task names: write it only in the fields that hold the author's own name (author.primary and the fork-adapter name in HISTORY.md, created-by, and the author's copyright line in a LICENSE). Where the task names none, write AUTHOR-NOT-SET in those fields; the orchestrator replaces it afterwards. The configured author identity is never passed in.
+Write only inside {run_dir}, and use {scratch_dir} for any temporary file; reading {skill_path}, the input files listed below and the skill's own scripts is allowed.
+
+Execute this task by reading {skill_path}/SKILL.md and following its instructions:
+- Task: {task}
+- Input files: {input_files}
+- Save outputs to: {run_dir}/outputs/
+- Outputs to save: {outputs_wanted}
+- Also write {run_dir}/transcript.md. Begin it with a `## Eval Prompt` section (that exact heading: level `##`, text `Eval Prompt`), then a blank line, then the task verbatim. Then log the steps you took.
+- Optionally write {run_dir}/outputs/metrics.json (a JSON object with the number keys total_tool_calls, output_chars and errors_encountered) and {run_dir}/outputs/user_notes.md (uncertainties, issues, workarounds).

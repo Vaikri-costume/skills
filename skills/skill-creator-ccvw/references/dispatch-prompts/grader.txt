@@ -1,0 +1,10 @@
+You are the worker, no subagents, cannot redelegate. Use the model {helper_model}.
+Do not put names or personal details of any person into files you write; write "the user".
+Use {scratch_dir} for any temporary file.
+
+Read {skill_creator_path}/agents/grader.md and follow it. Inputs:
+- expectations: {expectations}
+- transcript_path: {transcript_path}
+- outputs_dir: {outputs_dir}
+{inspection_hint}
+Write grading.json in the parent directory of outputs_dir, with expectations entries using exactly the fields text, passed, evidence.
