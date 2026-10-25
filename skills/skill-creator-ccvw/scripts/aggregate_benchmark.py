@@ -7,7 +7,16 @@ Reads grading.json files from run directories and produces:
 - delta between with_skill and without_skill configurations
 
 Usage:
-    python aggregate_benchmark.py <benchmark_dir>
+    python aggregate_benchmark.py <benchmark_dir> [--skill-name NAME] [--skill-path PATH]
+        [--model MODEL_ID] [--output PATH]
+
+Arguments (benchmark_dir is required, every flag is optional):
+    benchmark_dir        iteration folder holding eval-*/ directories (or a runs/ subfolder)
+    --skill-name NAME    skill name written to metadata.skill_name (placeholder if omitted)
+    --skill-path PATH    skill folder written to metadata.skill_path (placeholder if omitted)
+    --model MODEL_ID     model id written to metadata.executor_model and analyzer_model (placeholder if omitted)
+    --output, -o PATH    where to write benchmark.json (default: benchmark.json inside the benchmark directory);
+                         benchmark.md is written beside it
 
 Example:
     python aggregate_benchmark.py benchmarks/2026-01-15T10-30-00/
@@ -218,8 +227,8 @@ def aggregate_results(results: dict) -> dict:
     # config name happens to sort first: "old_skill" < "with_skill" flips the
     # sign silently versus "new_skill" < "old_skill". Match by the documented
     # config-name vocabulary instead (with_skill/new_skill = primary,
-    # without_skill/old_skill = baseline — see SKILL.md's Step 1 dir-naming
-    # note); fall back to positional only when neither known pair is present,
+    # without_skill/old_skill = baseline — see eval-run-procedure.md Step 1's
+    # config-name note); fall back to positional only when neither known pair is present,
     # and say so loudly rather than silently guessing.
     PRIMARY_NAMES = {"with_skill", "new_skill"}
     BASELINE_NAMES = {"without_skill", "old_skill"}
@@ -264,14 +273,20 @@ def generate_benchmark(benchmark_dir: Path, skill_name: str = "", skill_path: st
     results = load_run_results(benchmark_dir)
     run_summary = aggregate_results(results)
 
-    # Nominal runs per configuration, computed from the data (not hardcoded).
-    # This is the MAX across configs: the expected-uniform run count (every
-    # config normally runs the same N). If a config contributed fewer valid
-    # grading.json files (a failed/killed run), this overstates that short
-    # config — the benchmark.md "N runs each" then reads as an upper bound, not
-    # a guarantee. Read per-config run counts from benchmark.json runs[] if the
-    # exact per-config count matters.
-    runs_per_config = max((len(r) for r in results.values()), default=0)
+    # Nominal runs per eval for each configuration, computed from the data (not
+    # hardcoded): the MAX number of runs any single (configuration, eval) pair
+    # has. results[config] holds every run of that config across all evals, so
+    # its length would be evals x runs, not runs per eval. If one pair
+    # contributed fewer valid grading.json files (a failed/killed run), this
+    # overstates that pair — the benchmark.md "N runs each" then reads as an
+    # upper bound, not a guarantee. Read per-config run counts from
+    # benchmark.json runs[] if the exact count matters.
+    runs_per_eval: dict = {}
+    for config, config_results in results.items():
+        for r in config_results:
+            pair = (config, r["eval_id"])
+            runs_per_eval[pair] = runs_per_eval.get(pair, 0) + 1
+    runs_per_config = max(runs_per_eval.values(), default=0)
 
     # Build runs array for benchmark.json
     runs = []

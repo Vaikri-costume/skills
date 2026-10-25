@@ -9,10 +9,14 @@ A skill can be portable but missing attribution, or correctly attributed but
 tier-violating. These are independent.
 
 Reads <skill>/HISTORY.md YAML frontmatter (where attribution lives as of the
-three-skill ecosystem refactor — it used to be in SKILL.md's `metadata`). Checks
-the four attribution categories (A: fork, B: derivative, C: inspiration, D:
-independent) for the category-specific required fields. The see-also advisory
-check reads SKILL.md's body (the References section lives there).
+three-skill ecosystem refactor — it used to be in SKILL.md's `metadata`). Reports
+the attribution category (A: fork, B: derivative, C: inspiration, D: independent)
+and checks that the `author`, `author.history[]` and `inspirations[]` entries that are
+present are well-formed and that a LICENSE file exists when a history chain is
+present. It does not check that the declared category's own fields exist: an
+explicit `category: A` with no history chain, or `category: B` with no
+inspirations, gets no violation. The see-also advisory check reads SKILL.md's body
+(the References section lives there).
 
 In HISTORY.md frontmatter the attribution fields are TOP-LEVEL (not nested under
 `metadata`): `version`, `category`, `parent-version`, `author` (with `.primary`
@@ -94,14 +98,29 @@ def _indent_of(line):
     return len(line) - len(line.lstrip(" "))
 
 
+def _strip_comment(ln):
+    """Drop a trailing ' # comment' (a '#' after whitespace, outside quotes), as
+    YAML does, so the fallback parser sees the same values PyYAML does."""
+    quote = None
+    for i, ch in enumerate(ln):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "#" and i > 0 and ln[i - 1] in " \t":
+            return ln[:i].rstrip()
+    return ln
+
+
 def _bespoke_parse(raw):
     """Indent-aware YAML-subset parser. Handles arbitrary nesting of dicts and
     arrays-of-dicts, scalar lists (single-line `- value`), and standard scalars.
     Sufficient for CCVW skill frontmatter."""
 
-    lines = [ln for ln in raw.split("\n") if ln.strip()]
+    lines = [ln for ln in (_strip_comment(x) for x in raw.split("\n")) if ln.strip()]
 
-    def parse_block(idx, base_indent):
+    def parse_block(idx):
         """Parse a block starting at lines[idx]; returns (value, next_idx)."""
         if idx >= len(lines):
             return None, idx
@@ -129,7 +148,7 @@ def _bespoke_parse(raw):
                     entry = {}
                     if val.strip() == "":
                         # Nested dict for this list-entry-key
-                        sub, idx2 = parse_block(idx + 1, first_indent + 4)
+                        sub, idx2 = parse_block(idx + 1)
                         entry[key] = sub
                         idx = idx2
                     else:
@@ -146,7 +165,7 @@ def _bespoke_parse(raw):
                             break
                         ck, cv = m2.group(1), m2.group(2)
                         if cv.strip() == "":
-                            sub, idx2 = parse_block(idx + 1, cont_indent + 2)
+                            sub, idx2 = parse_block(idx + 1)
                             entry[ck] = sub
                             idx = idx2
                         else:
@@ -177,7 +196,7 @@ def _bespoke_parse(raw):
             if val.strip() == "":
                 # Lookahead: next non-empty line is either deeper (nested dict/list) or same/less (empty value)
                 if idx + 1 < len(lines) and _indent_of(lines[idx + 1]) > ln_indent:
-                    sub, idx2 = parse_block(idx + 1, _indent_of(lines[idx + 1]))
+                    sub, idx2 = parse_block(idx + 1)
                     result[key] = sub
                     idx = idx2
                 else:
@@ -188,7 +207,7 @@ def _bespoke_parse(raw):
                 idx += 1
         return result, idx
 
-    parsed, _ = parse_block(0, _indent_of(lines[0]) if lines else 0)
+    parsed, _ = parse_block(0)
     return parsed if isinstance(parsed, dict) else {}
 
 
@@ -319,7 +338,7 @@ def lint_author_identity(primary_author):
         return violations
 
     gh_login = proc.stdout.strip()
-    if primary_author != gh_login:
+    if str(primary_author).lower() != gh_login.lower():
         violations.append({
             "type": "author-identity-mismatch",
             "message": f"HISTORY.md author.primary ('{primary_author}') does not match "
@@ -341,6 +360,10 @@ def lint_history(fm):
         return violations, []
 
     history = author.get("history", [])
+    # An emptied `history:` key (as history-template.md ships it) parses to None;
+    # treat it like an empty list, the same as lint_inspirations does.
+    if history is None:
+        return violations, []
     if not isinstance(history, list):
         violations.append({
             "type": "history-not-list",
@@ -476,7 +499,7 @@ def lint_see_also_advisory(skill_path, body, category):
     # Determine the current skill's own name from its directory; exclude
     # self-references from the see-also check (a skill mentioning itself is
     # not pattern-borrowing).
-    own_skill_name = Path(skill_path).name.lower()
+    own_skill_name = Path(skill_path).resolve().name.lower()
 
     for skill_name in recognizable_skill_names:
         if skill_name == own_skill_name:
@@ -507,13 +530,13 @@ def main():
         }, indent=2))
         sys.exit(1)
 
-    hist_fm, _ = parse_frontmatter(history_md.read_text(encoding="utf-8"))
+    hist_fm, _ = parse_frontmatter(history_md.read_text(encoding="utf-8-sig").replace("\r\n", "\n"))
 
     # The see-also advisory check reads SKILL.md's body (References section is there).
     skill_md = skill_path / "SKILL.md"
     skill_body = ""
     if skill_md.is_file():
-        _, skill_body = parse_frontmatter(skill_md.read_text(encoding="utf-8"))
+        _, skill_body = parse_frontmatter(skill_md.read_text(encoding="utf-8-sig").replace("\r\n", "\n"))
 
     category = infer_category(hist_fm)
     author_violations, primary_author = lint_author(hist_fm)

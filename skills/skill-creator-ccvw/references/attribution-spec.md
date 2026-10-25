@@ -1,6 +1,6 @@
 # CCVW Attribution Specification
 
-Defines the four attribution categories, the structural thresholds that decide which category a skill falls into, the schema for recording attribution, and the courtesy bar for pattern citation. This is the source of truth for `attribution_lint.py`.
+Defines the four attribution categories, the structural thresholds that decide which category a skill falls into, the schema for recording attribution, and the courtesy bar for pattern citation. This is the source of truth for `attribution_lint.py`, which checks only part of it (what it checks and leaves to you: `references/lint-details.md`).
 
 **Where attribution lives:** as of the three-skill ecosystem refactor, machine-readable attribution lives in **`HISTORY.md`'s YAML frontmatter** (top-level `category`, `author`, `inspirations` fields) — NOT in SKILL.md's `metadata`. **The YAML examples below are HISTORY.md frontmatter** — `author:`, `inspirations:`, and `category:` are top-level keys with **no `metadata:` wrapper**; copy them into HISTORY.md as-is. See `history-template.md` for the full HISTORY.md format. Category C "see also" references still live in SKILL.md's References section (prose, human-facing). `attribution_lint.py` reads HISTORY.md for the machine-readable fields and SKILL.md's body for the see-also advisory check.
 
@@ -16,7 +16,7 @@ Every CCVW skill falls into exactly one category. The category drives what attri
 |---|---|---|---|
 | **A. Direct fork** | The new skill's SKILL.md retains ≥50% of the original's structure (sections, headings, step numbers, flow), OR ≥25% of script lines are unchanged from the original, OR the original's references/templates are kept largely intact. | **Original author + original license preserved + change-log of YOUR contributions.** | `author.history[]` chain in HISTORY.md frontmatter + preserved `LICENSE` file at skill root |
 | **B. Derivative work** | You took a recognizable, named design pattern from another skill and rewrote the implementation substantially. SKILL.md prose and code are yours; the pattern (e.g., cold-parallel three-agent dispatch, ralph-loop while-true convergence) is borrowed. | **Inspirations cited with pattern name + source skill + author.** You are the primary author. | `inspirations[]` array in HISTORY.md frontmatter |
-| **C. Idea inspiration** | You read someone's skill and a general idea stuck (e.g., "scan → quality-report → targeted-update pattern"). No structural overlap; no named-pattern adoption. | **"See also" reference in the References section at the end of SKILL.md.** No frontmatter metadata addition required. | Prose-level pointer in the References section |
+| **C. Idea inspiration** | You read someone's skill and a general idea stuck (e.g., "scan → quality-report → targeted-update pattern"). No structural overlap; no named-pattern adoption. | **"See also" reference in the References section at the end of SKILL.md.** No SKILL.md frontmatter addition is needed, but HISTORY.md frontmatter must state category C, because the lint cannot infer it (`references/lint-details.md`). | Prose-level pointer in the References section, plus category C in HISTORY.md frontmatter |
 | **D. Independent design** | Built from scratch; no recognizable lift. | No external attribution needed. | HISTORY.md `author.primary = "<your-author-identity>"` |
 
 ---
@@ -76,7 +76,7 @@ author:
         name: "Anthropic"                      # author name of the original
         skill: "skill-creator"                 # source skill name
         version: "1.0.0"                       # source version at fork time
-        license: "MIT"                         # source license (SPDX identifier)
+        license: "Apache-2.0"                  # source license (SPDX identifier)
         source: "https://github.com/anthropics/skills"  # source URL if available
       - role: "fork-adapter"
         name: "<your-author-identity>"
@@ -84,19 +84,19 @@ author:
         changes-summary: "Centralized eval output location to ~/.claude/skill-creator-evals-ledger/<skill>/ instead of beside the target skill."
 ```
 
-Multiple `fork-adapter` or `heavy-revision` entries can chain if the skill has been evolved multiple times. The newest entry is the current adapter's edit; the oldest is always `role: original`.
+Multiple `fork-adapter` or `heavy-revision` entries can chain if the skill has been evolved multiple times. The newest entry is the current adapter's edit; the oldest is always `role: original`. The `role` set is closed: exactly `original`, `fork-adapter` and `heavy-revision`; `attribution_lint.py` rejects any other value as a blocking `history-entry-invalid-role` violation.
 
 ### Author identity values
 
 HISTORY.md `author.primary` and the `name` field in any `history` or `inspirations` entry must be the **actual identity** of the author — typically a GitHub username (preferred for OSS-style attribution), or another stable identifier the author uses for credit. Do **not** write the literal word `"user"` — that's a placeholder used in spec documentation only, never a real value.
 
-**`author.primary` is checked, not just preferred (confirmed 2026-08-17).** `attribution_lint.py`'s `lint_author_identity` compares `author.primary` against `gh api user -q .login` (the CLI's own authenticated identity) whenever `gh` is installed and authenticated — a mismatch is a **blocking** violation, not a documentation nicety. This exists because a shape check alone can't catch a bare first name (e.g. `"Alex"`): it's syntactically a valid-looking identifier, so only a real identity comparison catches it. When `gh` is unavailable or unauthenticated there's nothing to verify against, so the check degrades to advisory (never blocks on an environment gap) — but whenever `gh` IS available, set `author.primary` to the real GitHub username, not a name of convenience.
+**`author.primary` is checked, not just preferred (confirmed 2026-08-17).** `attribution_lint.py`'s `lint_author_identity` compares `author.primary` against `gh api user -q .login` (the CLI's own authenticated identity) whenever `gh` is installed and authenticated — a mismatch is a **blocking** violation, not a documentation nicety. The comparison ignores letter case, because GitHub usernames are case-insensitive. This exists because a shape check alone can't catch a bare first name (e.g. `"Alex"`): it's syntactically a valid-looking identifier, so only a real identity comparison catches it. When `gh` is unavailable or unauthenticated there's nothing to verify against, so the check degrades to advisory (never blocks on an environment gap) — but whenever `gh` IS available, set `author.primary` to the real GitHub username, not a name of convenience.
 
-- For skills the current author is building or evolving: their actual GitHub username (e.g., `"Vaikri-costume"`).
+- For skills the current author is building or evolving: their actual GitHub username (the login that `gh api user -q .login` prints).
 - For the `original` entry in a fork's history chain: the original author's published identity (e.g., `"Anthropic"`, or a GitHub handle if the original was a community skill).
-- If someone else later uses skill-creator-ccvw to build their own skills, they set HISTORY.md `author.primary` to THEIR identity (not the identity of whoever built skill-creator-ccvw). Skill-creator-ccvw itself can be cited as a tool dependency in `inspirations[]` if the user wants to credit the builder, but that's optional — a tool you used isn't required attribution the way a forked or pattern-borrowed skill is.
+- If someone else later uses skill-creator-ccvw to build their own skills, they set HISTORY.md `author.primary` to THEIR identity (not the identity of whoever built skill-creator-ccvw). Crediting skill-creator-ccvw as the builder is optional — a tool you used isn't required attribution the way a forked or pattern-borrowed skill is. A Category D skill carries no `inspirations[]`, so write a tool credit as a prose line in the HISTORY.md Lineage notes instead: an `inspirations[]` entry would also claim that the skill draws on that pattern, and it needs `skill`, `by` and `pattern` fields.
 
-skill-creator-ccvw's "Step 3 — Author identity" in the SKILL.md asks the user once for their identity and persists it via `productivity:memory-management` so subsequent scaffolds don't re-ask.
+skill-creator-ccvw's "Step 3 — Author identity" in the SKILL.md asks the user once for their identity and reads it from the profile key `author_identity` (or holds it in the session) so subsequent scaffolds don't re-ask.
 
 ### Inspirations (used for Category B skills)
 
@@ -127,7 +127,7 @@ inspirations: [...]   # additional patterns borrowed from non-ancestor skills
 
 ### Category C (see-also references)
 
-No frontmatter addition required. The reference lives at the END of SKILL.md in a `## References` (or `## See also`) section:
+No SKILL.md frontmatter or metadata addition; HISTORY.md frontmatter must state `category: C` (reason: the Category C row of the table above). The reference lives at the END of SKILL.md in a `## References` (or `## See also`) section:
 
 ```markdown
 ## References
@@ -151,13 +151,15 @@ No `history` field, no `inspirations` field, no extra prose pointers.
 
 ## License preservation (required for Category A)
 
+**Licence classes** (used by SKILL.md "Path 3, adapt" step 1). The names below are examples, not a closed list; the deciding rule covers any licence not named. Reusable with notice (a licence whose only terms are attribution or a notice, treated like MIT): MIT, Apache 2.0, BSD, ISC, public domain / CC0, CC-BY, Unlicense; proceed per its bullet below. Restrictive or unknown (copyleft of any strength, share-alike, non-commercial, no-derivatives, no licence file, or a custom licence): GPL / AGPL / LGPL, MPL, CC-BY-SA, CC-BY-NC, CC-BY-ND and the like; stop and ask the user before taking anything.
+
 When the original was licensed (MIT, Apache, BSD, GPL, etc.), the original LICENSE file must be preserved verbatim at the new skill's root. Add your own copyright notice to the LICENSE file if you've made substantial contributions; don't replace the original.
 
 - **MIT**: preserve the original copyright line; add yours: `Copyright (c) <year> <your-author-identity>` (your actual GitHub username / attribution name — never the literal word `user`, per the author-identity rule above).
 - **Apache 2.0**: preserve LICENSE; if the original had a NOTICE file, preserve and extend it.
 - **BSD**: preserve the original copyright; add yours.
 - **GPL / AGPL**: your derivative inherits the same license; preserve LICENSE; you cannot relicense.
-- **Public domain / CC0**: no preservation required but courtesy attribution in HISTORY.md `author.history` is still expected.
+- **Public domain / CC0**: no licence terms must be preserved, but courtesy attribution in HISTORY.md `author.history` is still expected, and `attribution_lint.py` still blocks (missing-license-file) a recorded history chain with no LICENSE file, so put the original's public-domain dedication text in LICENSE.
 
 When unsure of the original's license, check the source repo's LICENSE file or fall back to the original author's stated terms in the SKILL.md frontmatter.
 
@@ -183,16 +185,16 @@ The user reviews the auto-populated chain and confirms before scaffolding procee
 
 ```yaml
 author:
-    primary: "Vaikri-costume"
+    primary: "<your-author-identity>"
     history:
       - role: "original"
         name: "Anthropic"
         skill: "skill-creator"
         version: "1.0.0"
-        license: "MIT"
+        license: "Apache-2.0"
         source: "https://github.com/anthropics/skills/tree/main/plugins/skill-creator"
       - role: "fork-adapter"
-        name: "Vaikri-costume"
+        name: "<your-author-identity>"
         date: "2026-05-27"
         changes-summary: "Centralized eval output location to ~/.claude/skill-creator-evals-ledger/<skill>/; added portable-mode tier system; added attribution framework; added marketplace-discover pre-check."
 ```
@@ -206,7 +208,7 @@ author:
     primary: "<your-author-identity>"
 inspirations:
     - skill: "skill-tracer"
-      by: "Vaikri-costume"
+      by: "<source-author>"
       pattern: "Cold-parallel three-agent dispatch — three independent agents reading the same target from different directions, prompts staged before dispatch, all dispatches issued same-turn to preserve independence."
 ```
 
@@ -219,7 +221,7 @@ inspirations:
 - See also: `claude-md-improver` (in claude-md-management plugin) — same scan → quality-report → targeted-update workflow, applied to CLAUDE.md files instead.
 ```
 
-No metadata addition. The reference at the end of SKILL.md is sufficient.
+No SKILL.md metadata addition; the HISTORY.md frontmatter states category C, as the Category C row of the table above says.
 
 ### Category D example — a skill built from scratch
 
@@ -253,4 +255,4 @@ No `history`, no `inspirations`, no pattern attribution. The skill is independen
 }
 ```
 
-The orchestrator (skill-creator-ccvw during scaffolding, skill-publisher during its tier-transition checks) consumes this JSON to render user-facing warnings, propose fixes, or flag GAP entries. A `declared_category` of `unknown` means HISTORY.md's `author` field exists but is **not a mapping** (e.g. a bare string), so no category could be inferred — the consumer treats it as a blocking attribution error (populate a well-formed `author` block plus an explicit A/B/C/D category), not a fifth valid category to accept. (A wholly *missing* `author` key instead infers category **D** and emits a `missing-primary-author` blocking violation — also fix-before-handoff. `infer_category` does `author = fm.get("author", {})`, so a missing key becomes `{}`, a dict, and falls through to shape inference → `D`; only a present-but-non-dict `author` yields `unknown`.)
+The orchestrator (skill-creator-ccvw during scaffolding, skill-publisher during its tier-transition checks) consumes this JSON to render user-facing warnings and propose fixes. A `declared_category` of `unknown` (when it arises: `references/lint-details.md`) is a blocking attribution error for the consumer (populate a well-formed `author` block plus an explicit A/B/C/D category), not a fifth valid category to accept. A wholly *missing* `author` key is a blocking `missing-primary-author` violation — also fix-before-handoff; how the lint infers the category in that case is in `references/lint-details.md`.

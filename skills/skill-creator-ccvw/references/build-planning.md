@@ -1,6 +1,6 @@
 # Build Planning Across Iterations
 
-How to use `productivity:task-management` (TASKS.md) to track multi-iteration skill builds, plus the skill use-case taxonomy that helps pick what kind of skill you're building. The SKILL.md only needs to know "for multi-iteration builds, use this"; the structure and timing details live here.
+How to track (with `productivity:task-management` and its TASKS.md when that skill is installed, otherwise with a plain `build-plan.md` in the workspace holding the same parent task and iteration subtasks)  multi-iteration skill builds, plus the skill use-case taxonomy that helps pick what kind of skill you're building. The SKILL.md only needs to know "for multi-iteration builds, use this"; the structure and timing details live here.
 
 ---
 
@@ -44,7 +44,7 @@ Single-pass drafts don't need a parent/subtask structure; they're done before co
 ## When to update the task structure
 
 - **At scaffold time**: create the parent task + the first iteration subtask.
-- **At each iteration boundary** (Step 5's "user is done"): mark the current iteration subtask `completed`, update parent task notes with the iteration's pass-rate / key findings, create the next iteration subtask as `pending`.
+- **At each iteration boundary** (when the user says they are done reviewing, the "Launch the viewer" step of SKILL.md "Running and evaluating test cases"): mark the current iteration subtask `completed`, update parent task notes with the iteration's pass-rate / key findings, create the next iteration subtask as `pending`.
 - **Mid-iteration**: when the orchestrator identifies new work outside the current iteration's scope, add as sub-subtask under the current iteration OR as a new iteration subtask depending on scope.
 - **At convergence** (post-skill-tracer if invoked, or at iterate-loop exit otherwise): mark the parent task `completed`. Optionally add a follow-up parent task for `Ship skill <skill-name>` if tier is transitioning to `claude-users` or `model-agnostic`.
 

@@ -1,0 +1,8 @@
+You are the worker, no subagents, cannot redelegate. Use the model {helper_model}.
+Do not put names or personal details of any person into files you write; write "the user".
+Use {scratch_dir} for any temporary file.
+
+Read {skill_creator_path}/agents/analyzer.md and follow its Mode B (benchmark analysis). Supply exactly these three inputs and no others:
+- benchmark_data_path: {iteration_dir}/benchmark.json
+- skill_path: {skill_path}
+- output_path: {iteration_dir}/analyst-notes.json

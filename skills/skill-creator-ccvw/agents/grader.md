@@ -85,7 +85,7 @@ Keep the bar high. The goal is to flag things the eval author would say "good ca
 Do this BEFORE writing grading.json so the data can be included in the output.
 
 1. If `{outputs_dir}/metrics.json` exists, read it and include in grading output
-2. If `{outputs_dir}/../timing.json` exists, read it and include timing data
+2. If `{outputs_dir}/../timing.json` exists, read it and include timing data: its `total_duration_seconds` is the executor's duration alone (the orchestrator writes it from the executor's task-completion notice), so record it as the executor duration, and set the `timing` block's total duration to the executor duration plus the grader duration, or to the executor duration alone when the grader duration is `null`
 3. For `grader_duration_seconds`: provide a best-effort estimate of how long you spent grading (rough estimate based on number of reads and steps you performed); if you cannot determine it, write `null` — this field is optional and best-effort; the orchestrator may fill it from task-completion timing data
 
 ## Grading Criteria
@@ -152,7 +152,7 @@ Write a JSON file with this structure:
   "timing": {
     "executor_duration_seconds": 165.0,
     "grader_duration_seconds": 26.0,
-    "total_duration_seconds": 191.0   // executor+grader combined; aggregate_benchmark reads this field
+    "total_duration_seconds": 191.0
   },
   "claims": [
     {
@@ -205,7 +205,7 @@ Write a JSON file with this structure:
 - **timing**: Wall clock timing from timing.json (if available)
   - **executor_duration_seconds**: Time spent in executor subagent (informational only — no consumer in the current workflow reads this field; only total_duration_seconds is consumed by aggregate_benchmark.py)
   - **grader_duration_seconds**: Best-effort grader elapsed time (informational only — no consumer in the current workflow reads this field; provide a rough estimate or write null; see Step 7 item 3)
-  - **total_duration_seconds**: Total elapsed time for the run (executor+grader combined; this is what aggregate_benchmark.py reads)
+  - **total_duration_seconds**: Total elapsed time for the run (executor+grader combined, or the executor alone when `grader_duration_seconds` is `null`; this is what aggregate_benchmark.py reads)
 - **claims**: Extracted and verified claims from the output
   - **claim**: The statement being verified
   - **type**: one of "factual", "process", or "quality" — these three are the only categories; use the closest match (this field is part of the human-facing grading.json record; no machine consumer reads it)

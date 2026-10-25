@@ -1,7 +1,7 @@
 ---
-version: "1.3.0"
+version: "1.4.0"
 category: A
-parent-version: "1.2.0"
+parent-version: "1.3.0"
 author:
   primary: "Vaikri-costume"
   history:
@@ -9,7 +9,7 @@ author:
       name: "Anthropic"
       skill: "skill-creator"
       version: "1.0.0"
-      license: "MIT"
+      license: "Apache-2.0"
       source: "https://github.com/anthropics/skills"
     - role: "fork-adapter"
       name: "Vaikri-costume"
@@ -22,6 +22,32 @@ inspirations: []
 # History — skill-creator-ccvw
 
 ## Changelog
+
+### 1.4.0 — 2026-10-25 (shipped)
+Traced for 20 rounds (37 to 56; the last full sweep still returned 20 flags, so the trace did not converge), then the eval re-run passed (81/82 against 37/82 without the skill) and unit tests (36/36), py_compile and the three lints were clean on the final tree. Known open items are listed in the plan's "Next upgrade" section. Under Apache-2.0 section 4(b), the modified files are stated in the entries below.
+Upstream check 2026-10-24: `anthropics/skills` HEAD `dbd4588`; its `skill-creator` folder last changed 2026-04-20 (`b9e19e6`, licence copyright line), identical in the plugin copies cached locally. Nothing in its content is ahead of this fork except one Cowork tip (run tests in series on severe timeouts), merged into `references/runtime-adaptations.md`. Licence corrected: the upstream `LICENSE.txt` is Apache-2.0 (copyright Anthropic, PBC) and is kept unchanged; the frontmatter `license` and the `original` history entry now say Apache-2.0 instead of MIT. Under Apache-2.0 section 4(b), the modified files are stated in this changelog.
+#### Added
+- Helpers with unit tests (`tests/`): `eval_workspace.py`, `check_isolation.py` (3-failure re-dispatch cap), `write_timing.py`, `merge_notes.py`, `render_prompt.py` with four dispatch templates, `loop_ledger.py`, `skill_config.py`.
+- Hard rules (write each rule once), Known limitations, evidence-per-technique table, a synthetic worked example, a one-line self-check, a one-item pilot before any batch.
+- Loop-until-dry mode (cap 3 rounds, stable finding ids, regressed marker, stop reason).
+- Decide Path 3, adapt: licence check, attribution category B/C/A, source recorded, nothing copied from a red-flagged candidate.
+#### Changed
+- Eval-3 copy-edit fixes merged (21 files).
+- SKILL.md slimmed from 565 to about 323 lines; long procedures moved to `references/` (`eval-run-procedure.md`, `description-optimization.md`, `lint-details.md`, `intent-and-decide-details.md`, `blind-comparison.md`, `package-and-present.md`) with no behaviour change.
+- No personal data: session log, workspace root, scratch directory, author identity and helper model are read from the profile or environment with safe defaults and an off switch; `/tmp` paths replaced by a scratch directory.
+- Next-phase text now describes skill-tracer's three-tier cascade, up to 5 cycles, then skill-publisher.
+- Trace-stage and ship-stage changes: the description now says "run evals or benchmarks on a skill"; hard rules 4 to 8 each carry a Why; five test-run steps carry an Expected line; README Features & modes and Structure re-derived; the package placeholder is `<output-dir>` in SKILL.md and README; spec docs reconciled with the lint code; `schemas.md` delta-sign, config names and results.json fields corrected; the improve path no longer bumps the version or appends the changelog (skill-publisher does that at ship); weak marketplace matches pause for go-ahead; new skills default to a folder named after the skill, never under `~/.claude/skills/`; a task-named author identity goes only into the author fields, with the marker `AUTHOR-NOT-SET` for eval workers; glossary de-duplicated against `ccvw-glossary.md`, sorted, four never-used rows removed.
+#### Fixed
+- `run_eval.py`: a trigger event in the last read, or without a trailing newline, was scored "did not trigger"; the temp directory name no longer contains the skill name, which made every Read in the working directory count as a trigger.
+- `run_loop.py`: `--report auto` writes into the `--results-dir` subdirectory; `--max-iterations` and `--results-dir` help text corrected.
+- `aggregate_benchmark.py`: `runs_per_configuration` counted runs across all evals; it is now the maximum per (configuration, eval).
+- `attribution_lint.py`: inline YAML comments in the fallback parser, case-insensitive login comparison, crash on an emptied `history:` key, `.` path name resolution, BOM and CRLF.
+- `portability_lint.py`: off-by-one frontmatter line count, trailing-comment and single-quote handling, bare `compatibility:` and non-mapping metadata, BOM and CRLF.
+- `quick_validate.py` rejects an empty name or description; handles BOM and CRLF. `validate_eval_set.py` rejects duplicate queries. `portability_lint.py` reports an advisory `unknown-tier` finding.
+- `improve_description.py` resolves the claude binary through `claude_binary()` (Windows).
+- `generate_review.py` escapes `<` in embedded data so `</script>` cannot break the viewer, and flushes the URL to `viewer.log`.
+- `viewer.html`: a reload restores saved feedback, failed saves are reported, benchmark row colours follow config names, error-type output files render. `eval_review.html`: "Add row" focused the wrong textarea.
+- `grader.md`, `analyzer.md`, `viewer-ui.md` and stale step cross-references corrected. `scripts/loop_ledger.py` carries a comment that its sha1 is only a stable label.
 
 ### 1.3.0 — 2026-10-04 (shipped)
 Upstream check: compared against `anthropics/skills` HEAD `8a1541c`. Its `skill-creator` folder last changed 2026-04-20, before this fork (2026-05-27), and the fork already contains all of its content; nothing needed importing. The one candidate, "Communicating with the user", is already present as the condensed jargon-calibration paragraph in `SKILL.md`. This is the baseline for the next upstream check.

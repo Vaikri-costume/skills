@@ -34,6 +34,6 @@ Beyond the generic scoping questions, an MCP-enhancement skill needs:
 
 ## Testing an MCP-enhancement skill
 
-A triggering test is not enough — the skill must actually drive the calls correctly. Include at least one test case that exercises a real call sequence and confirms it succeeds. When a call fails during testing, first isolate whether the failure is in the MCP setup or the skill: confirm the server is connected, check auth/scopes/OAuth, and try the call directly (outside the skill) — if it fails there too, the issue is the MCP, not the skill. (See the build SKILL.md "Running and evaluating test cases" for the tool/MCP-dependent testing note.)
+The skill must actually drive the calls correctly, so the test rule for tool/MCP-dependent skills applies in full: the "Tool/MCP-dependent skills" paragraph of `references/eval-run-procedure.md` (at least one real call that succeeds, and how to tell an MCP-setup failure from a skill failure).
 
-The "0 failed API calls per workflow" success metric is specific to skills that coordinate MCP/tool calls — it doesn't apply to a pure document-creation skill that makes no external calls.
+The "0 failed API calls per workflow" success target (no tool or MCP call returns an error during a test run of the skill) is specific to skills that coordinate MCP/tool calls — it doesn't apply to a pure document-creation skill that makes no external calls.
