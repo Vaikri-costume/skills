@@ -43,6 +43,7 @@ constant for consistency). `subagent_type` `general-purpose`.
 ## The filled prompt
 
 ```
+You are the worker, no subagents, cannot redelegate. Use the model <helper_model> (the profile's `helper_model`, default sonnet, never Opus). Write only to the session scratchpad. Name no person; write "the user". Use only they/them for the user and anyone without stated pronouns.
 You are drafting the user-facing README sections for the <skill> skill. Read the SKILL.md
 below, and **read whichever of the listed reference/script files you need** (Read the paths
 directly) to understand and describe the skill's structure — derive each file's role

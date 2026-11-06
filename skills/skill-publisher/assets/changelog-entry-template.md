@@ -6,7 +6,7 @@
 #### Fixed
 - <bug fix>
 #### Removed
-- <removed/renamed command or feature — a breaking change (major bump)>
+- <what was removed> [interface] (a mode, flag, command, documented output or file layout users rely on: major bump) or [internal] (anything else: no bump of its own)
 
 <!--
 Keep-a-Changelog format. Insert this block at the TOP of HISTORY.md's "## Changelog"
@@ -25,7 +25,7 @@ ledger-only:
 Bump (SemVer), highest level any change warrants:
   patch (1.0.0->1.0.1) = Fixed / Changed-no-contract / docs;
   minor (1.0.0->1.1.0) = Added (new backward-compatible capability);
-  major (1.0.0->2.0.0) = Removed / a breaking Changed (renamed command, changed output contract).
+  major (1.0.0->2.0.0) = an [interface] Removed bullet / a breaking Changed (renamed command, changed output contract).
 
 Status suffix <status>: "shipped" for a normal ship; "initial publish" for a
 degraded-mode first publish (per changelog-format.md).

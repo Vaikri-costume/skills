@@ -44,6 +44,7 @@ name) — the constant string `recover_dispatch.py` matches for recovery
 ## The filled prompt
 
 ```
+You are the worker, no subagents, cannot redelegate. Use the model <helper_model> (the profile's `helper_model`, default sonnet, never Opus). Write only to the session scratchpad. Name no person; write "the user". Use only they/them for the user and anyone without stated pronouns.
 You are the changelog agent for the <skill> skill. Produce a version bump + changelog
 entry by reconciling three independent signals AT EQUAL WEIGHT. Do not assume one is more
 authoritative than the others — a real change can appear in any or all of them.
@@ -86,7 +87,8 @@ May be the literal `none`.
    Every Input-3 fix becomes a concrete **Fixed** (or Security/Changed) bullet naming the
    bug — never collapse them into one vague "various fixes" line.
 3. Recommend a SemVer BUMP from the union of changes:
-   - major — a breaking change (removed/renamed command, changed output format/contract)
+   - major — a breaking change (renamed command, changed output format/contract, or a Removed bullet marked [interface])
+   Mark EVERY bullet under `#### Removed` at its end with `[interface]` (a mode, flag, command, documented output or file layout users rely on) or `[internal]` (anything else, e.g. a maintainer-only helper). If you cannot tell, write `[unmarked]` and say so in your reply; never guess.
    - minor — new backward-compatible capability (Added)
    - patch — fixes / docs / internal-only (Fixed / Changed with no contract change)
    Choose the HIGHEST level any single change warrants. **Factor Input-3 severity**: a
@@ -99,11 +101,11 @@ May be the literal `none`.
 BUMP: <major|minor|patch>
 
 CHANGES:
-### Added
+#### Added
 - <one line> (from: <both|diff-only|ledger-only|tracer-ledger>)
-### Changed
+#### Changed
 - <one line> (from: ...)
-### Fixed
+#### Fixed
 - <one line> (from: ...)
 (omit any category with no entries; include Deprecated/Removed/Security only if used)
 
@@ -111,8 +113,10 @@ DISCREPANCIES:
 - <one line each, or the single line `none`>
 
 ENTRY:
-### <leave the version+date heading to the orchestrator — body bullets only, grouped by the
-     same Keep-a-Changelog categories, factual and concise, one line per meaningful change>
+<leave the version+date heading to the orchestrator — body only: the same Keep-a-Changelog
+ categories as `#### <Category>` headings (four hashes, as in assets/changelog-entry-template.md;
+ `scripts/verify_ship.py` ends an entry at the next 2-3 hash heading), each with its bullets,
+ factual and concise, one line per meaningful change>
 
 Then a final line, exactly:
 CHANGELOG PROPOSAL COMPLETE
@@ -139,7 +143,7 @@ CHANGELOG PROPOSAL COMPLETE
 - **Completion check** — the agent's result must end with `CHANGELOG PROPOSAL COMPLETE`.
   If absent (truncated/aborted), re-dispatch the cold agent (it is cheap — same inputs).
 - **Write** — fill `assets/changelog-entry-template.md` with `<new-version>` (= prior bumped
-  by `final_bump`), the date, and the agent's `ENTRY` bullets; prepend to the HISTORY.md
+  by `final_bump`), the date, and the agent's `ENTRY` body (keep its `####` category headings); prepend to the HISTORY.md
   changelog body per `changelog-format.md`.
 
 ---

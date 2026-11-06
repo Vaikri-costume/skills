@@ -52,7 +52,7 @@ All notes are informational, not blocking — the audit proceeds either way.
 |---|---|
 | `description` | exactly `skill-creator-ccvw audit of <skill>` (recovery-protocol.md Rule A scans for this string) |
 | `subagent_type` | `general-purpose` |
-| `prompt` | the filled-in prompt below |
+| `prompt` | the filled-in prompt: the full text of the file the stager writes (see the staging block below), or — when the stager is absent — the hand-substituted body of "The filled prompt" below |
 
 **SLOT table:**
 
@@ -71,14 +71,18 @@ All notes are informational, not blocking — the audit proceeds either way.
 #   EXCLUDING the opening ``` and closing ``` delimiter lines.
 #   Keep the [TARGET_SKILL_PATH] and [TARGET_FILE_LIST] tokens as-is —
 #   stage_cold_prompts.py substitutes them; do not substitute manually here.
+#   <Runtime> = the invocation timestamp in YYYY-MM-DDTHH:MM[:SS] form; the stager derives
+#   RUN_TIMESTAMP by replacing every ":" with "-".
+#   --spec takes a JSON LIST (one entry here); "-" reads it from stdin. JSON-escape the newlines
+#   in the file list as \n.
 python3 ~/.claude/skills/skill-tracer/scripts/stage_cold_prompts.py \
   --template /tmp/skill-publisher-prompts/audit-template.txt \
   --out-dir /tmp/skill-publisher-prompts \
-  --runtime "<Runtime>" \   # <Runtime> = the invocation timestamp in YYYY-MM-DDTHH:MM[:SS] form; the stager derives RUN_TIMESTAMP by replacing every ":" with "-"
-  --spec -   # `-` means read the spec JSON from stdin; pipe it directly. One entry: {"label":"audit","slots":{"[TARGET_SKILL_PATH]":"...","[TARGET_FILE_LIST]":"..."}}
-             # Shell syntax: echo '{"label":"audit","slots":{"[TARGET_SKILL_PATH]":"<abs-path>","[TARGET_FILE_LIST]":"<paths-one-per-line>"}}' | python3 ... stage_cold_prompts.py ... --spec -
-             # Or with a here-string: python3 ... stage_cold_prompts.py ... --spec - <<< '{"label":"audit","slots":{...}}'
+  --runtime "<Runtime>" \
+  --spec - <<< '[{"label":"audit","slots":{"[TARGET_SKILL_PATH]":"<abs-path>","[TARGET_FILE_LIST]":"<paths-joined-with-\n>"}}]'
 ```
+
+The stager writes `/tmp/skill-publisher-prompts/audit-<RUN_TIMESTAMP>.txt` and prints a JSON object on stdout whose `staged[0].path` is that file. Exit 0 = staged and no slot left unfilled; exit 1 = a file is missing after the write or a slot is unfilled (fix the spec's `slots`); exit 2 = template or spec not found, or the spec is not a non-empty JSON list. On exit 0, Read the file at `staged[0].path` and pass its full text as the dispatch `prompt`.
 
 (`stage_cold_prompts.py` is vendored with skill-tracer; if it is not installed, substitute the two SLOTs into the prompt body by hand and verify no literal `[SLOT]` remains before dispatch.)
 
@@ -89,6 +93,7 @@ python3 ~/.claude/skills/skill-tracer/scripts/stage_cold_prompts.py \
 ## The filled prompt
 
 ```
+You are the worker, no subagents, cannot redelegate. Use the model <helper_model> (the profile's `helper_model`, default sonnet, never Opus). Write only to the session scratchpad. Name no person; write "the user". Use only they/them for the user and anyone without stated pronouns.
 You are a skill-creator-ccvw compatibility auditor.
 
 This is a cold audit — do not request, reference, or remember any prior
@@ -130,10 +135,11 @@ requirements AND the CCVW-specific requirement are in scope.
 
 Audit against everything skill-creator-ccvw documents — inherited from
 upstream skill-creator plus CCVW-specific eval-output centralization.
-Read the reference SKILL.md and the linked specs (its sibling
-references/portability-spec.md and references/attribution-spec.md, resolved
-relative to the reference skill's own directory — so a fallback-resolved
-reference finds them under that skill's references/) for the canonical requirements.
+Read the reference SKILL.md and the linked specs (skill-creator-ccvw's
+`portability-spec.md` and `attribution-spec.md` under its own references/
+folder, resolved relative to the reference skill's own directory — so a
+fallback-resolved reference finds them under that skill's references/) for the
+canonical requirements.
 
 ### Step 2 — Read the target skill fresh.
 Target skill: [TARGET_SKILL_PATH]
@@ -204,6 +210,6 @@ After a successful (re-)dispatch, apply the zero/non-zero logic: **zero GAPs** (
 
 There are exactly two ABORTED output formats the audit Agent can emit (this list is closed):
 
-**If the audit agent returns `ABORTED — skill-creator-ccvw reference missing ...`**: the CCVW reference skill (or the resolved fallback) is not installed on this machine. (The ABORTED label always reads `skill-creator-ccvw reference missing` as a fixed contract anchor even when a fallback was resolved; the PATH in the message is rewritten to the resolved reference per the line-17 rule, so read the path — not the label — to see which reference actually failed pre-flight.) The audit cannot proceed without it; tell the user and pause the ship. Leave the `audit run-N` in-flight marker in place — when the user installs the reference skill and re-invokes, recovery Rule A (`audit run-N`) fires; `recover_dispatch.py` will return exit 1 (no prior result), directing a fresh cold re-dispatch of the audit. This is the one exception to the "no GAP dismissed externally" rule because the audit could not run at all — there are no GAPs to dismiss.
+**If the audit agent returns `ABORTED — skill-creator-ccvw reference missing ...`**: the CCVW reference skill (or the resolved fallback) is not installed on this machine. (The ABORTED label always reads `skill-creator-ccvw reference missing` as a fixed contract anchor even when a fallback was resolved; the PATH in the message is rewritten to the resolved reference per the path-rewrite rule in "Reference-skill resolution" above, so read the path — not the label — to see which reference actually failed pre-flight.) The audit cannot proceed without it; tell the user and pause the ship. Leave the `audit run-N` in-flight marker in place — when the user installs the reference skill and re-invokes, recovery Rule A (`audit run-N`) fires; `recover_dispatch.py` will return exit 1 (no prior result), directing a fresh cold re-dispatch of the audit. This is the one exception to the "no GAP dismissed externally" rule because the audit could not run at all — there are no GAPs to dismiss.
 
 **If the audit returns `ABORTED — missing target files: ...`**: the `[TARGET_FILE_LIST]` was stale (a file moved/renamed between enumeration and dispatch). Re-resolve the target file list (re-run the `find` from the SLOT table), re-stage, and re-dispatch the Step 3 audit Agent — **once only** (this re-dispatch is the single retry; if the re-dispatch also returns `ABORTED — missing target files`, USER-PAUSE: the file set is persistently unstable — ask the user to stabilize the target directory before continuing). If the single re-dispatch succeeds, proceed to **Step 4** (tier-transition checks), then **Step 5** (address the AUDIT + TIER GAPs) — this is an in-place re-dispatch within the same ship run, not a new round; no handoff marker is involved. Do not skip Step 4 — the tier-transition checks have not yet run for this ship run.
