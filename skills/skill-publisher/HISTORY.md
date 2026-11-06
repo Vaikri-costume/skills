@@ -1,7 +1,7 @@
 ---
-version: "2.0.0"
+version: "2.1.0"
 category: B
-parent-version: "1.3.0"
+parent-version: "2.0.0"
 author:
   primary: "Vaikri-costume"
   # Single self-referential "original" entry: the publisher's source-recording convention
@@ -29,6 +29,26 @@ inspirations:
 # History — skill-publisher
 
 ## Changelog
+
+### 2.1.0 — 2026-11-06 (shipped)
+#### Added
+- Personal-data scan (`scripts/personal_data_scan.py`): home paths, emails, profile terms and patterns, built-in module codes with assessment labels, and gendered pronouns in markdown; profile allowlist for known third-party text. Runs on the skill folder, the PR body and the staged PR files.
+- Mandatory full-history scan on every publish (`scripts/history_scan.py`, read-only): a finding blocks the push (`github_pr.py --confirmed` exits 10 without a clean report). `scripts/history_rewrite_plan.py` prints the mirror-backup, rewrite and force-push plan and runs nothing.
+- Install as its own step (`scripts/install_local.py`, `--install`): dry run, confirmation, backup, copy; offered before the push.
+- Prepare everything first, then ask once: install first, push second, each with its own yes, plus any history rewrite with its exact findings list.
+- Helper list printed at the start of a full ship; every helper prompt starts with the worker line and uses they/them.
+- `verify_ship.py --changelog-only` as a pre-PR gate; `[interface]`/`[internal]` marks on Removed bullets.
+- `unknown-tier` lint finding with the one close match; `work_dir` in `github_pr.py` output and `--work-dir`/`--cleanup`.
+- Unit tests for the personal-data scan (`tests/`).
+#### Changed
+- Only an `[interface]` removal forces a major bump; the changelog checks are always required. `--strict-changelog` is accepted and does nothing.
+- Step 10: a failed verification leaves the ship unfinished (marker `verify` stays set with a `verify-failed::` line, cleanup still runs); the run summary and manifest are written only after verification passes.
+- SKILL.md trimmed from about 7,000 to about 4,850 words by moving passages verbatim to `references/step-details.md`.
+- Packaging passes `--output` into the scratchpad; the dry run no longer prints the git author identity in the diff stat (it shows `commit_identity` instead).
+#### Fixed
+- `github_pr.py` now deletes files removed from the skill and lists them as `removed_files`.
+- The profile allowlist is applied by the scan itself (it was defined but never called); profile patterns are case-sensitive.
+- The history-report repo comparison tolerates path and URL spelling differences.
 
 ### 2.0.0 — 2026-10-04 (shipped)
 #### Added

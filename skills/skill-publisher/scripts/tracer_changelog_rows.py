@@ -20,7 +20,9 @@ applied) is not a changelog-worthy change and is dropped.
 Usage:
     tracer_changelog_rows.py <skill> [--since <ISO-ts>] [--ledger <path>]
                                      [--manifest <path>] [--json]
-      <skill>      skill name (keys both the tracer ledger and the ship manifest)
+      <skill>      skill name (keys both the tracer ledger and the ship manifest; when
+                   --ledger is given, that ledger's basename keys the manifest instead,
+                   so pass --manifest to point at <skill>'s manifest)
       --since      cutoff ISO timestamp (exclusive); rows with Runtime > cutoff are
                    kept. Default: the ship manifest's `timestamp` (the last ship).
                    No --since and no manifest → no cutoff (every applied row).

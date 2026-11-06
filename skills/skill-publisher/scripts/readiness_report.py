@@ -66,6 +66,8 @@ def _gate_frontmatter(target: str) -> dict:
     rc, out, err = _run([sys.executable, str(SCRIPTS / "quick_validate.py"), target])
     if rc == 0:
         return {"exit": rc, "cls": "pass", "detail": ""}
+    if rc == 3:  # PyYAML absent: an environment gap, a NOTE per references/readiness-gates.md, never RED
+        return {"exit": rc, "cls": "note", "detail": "PyYAML absent — install PyYAML to validate frontmatter"}
     msg = out or err or "frontmatter invalid"
     return {"exit": rc, "cls": "blocker", "detail": msg}
 

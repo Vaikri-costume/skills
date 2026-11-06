@@ -46,7 +46,7 @@ When the change since the last ship touches **only README.md / HISTORY.md prose*
 - No published baseline (no upstream / first ship) → refuse too: there is nothing to prove the change is docs-only against; route to full.
 
 **The docs-only path** (after the gate passes):
-1. Step 2 polish (README + HISTORY prose only).
+1. Step 2 polish (README.md only — the gate above guarantees SKILL.md is unchanged, and HISTORY.md is not a polish target, `references/polish-pass.md`).
 2. Skip Step 3 (cold audit) and Step 4's behavioral tier lints — but STILL run `quick_validate.py` + `spdx_check.py` (cheap frontmatter/license sanity; a docs edit can still break frontmatter). A failure there is a blocking TIER cluster as usual.
 3. Step 5 addressing (only the polish + any quick_validate/spdx cluster).
 4. Step 6 README, Step 7 **patch** bump + changelog (docs change = patch by definition).

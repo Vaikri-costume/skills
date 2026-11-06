@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Deterministic regex pre-pass for skill-publisher's Step-4 security check.
 
-security-checks.md lists 14 categories. Several are pure pattern-matches a script
+security-checks.md lists 15 categories (this script covers the grep-able subset of 1-14;
+category 15, frontmatter prompt-injection, is checked by portability_lint.py). Several are pure pattern-matches a script
 can find reliably every ship; the rest need adversarial human/model reading. This
 script runs the GREP-ABLE subset across a skill's files and emits SEC* candidate
 findings, so the orchestrator's security pass starts from a deterministic baseline

@@ -35,7 +35,10 @@ from pathlib import Path
 
 # --- Claude-extension blocklist ---
 # These are Claude Code features that will NOT work on non-Claude runtimes.
-# The model-agnostic tier disallows all of them; claude-users tier warns; personal allows.
+# quick_validate.py rejects all five at EVERY tier (its allowed frontmatter keys are only
+# name, description, license, allowed-tools, metadata, compatibility). This lint names them
+# at model-agnostic only; at the other tiers the quick_validate gate is what blocks them.
+# Full per-tier rules and rationale: see skill-creator-ccvw's references/portability-spec.md.
 # Full per-tier rules and rationale: see references/portability-spec.md in this skill.
 
 CLAUDE_FRONTMATTER_FIELDS = {
@@ -337,11 +340,56 @@ def lint_frontmatter_content(fm):
     return violations
 
 
+VALID_TIERS = ("personal", "claude-users", "model-agnostic")
+
+
+def close_tier(value):
+    """The single valid tier a mistyped value is close to, else None.
+    Normalises case, spaces and underscores, then needs exactly one candidate at
+    similarity >= 0.8 (difflib). Never guesses between tiers."""
+    import difflib
+    norm = str(value).strip().lower().replace("_", "-").replace(" ", "-")
+    if norm in VALID_TIERS:
+        return norm
+    hits = [t for t in VALID_TIERS if difflib.SequenceMatcher(None, norm, t).ratio() >= 0.8]
+    return hits[0] if len(hits) == 1 else None
+
+
+def lint_tier_values(fm):
+    """Exactly three tiers exist. Any other metadata.tier / metadata.intended-audience value
+    is an `unknown-tier` finding that names the one close match (or None) and blocks every
+    tier; the ship flow then corrects-and-tells (close match) or asks (unclear)."""
+    out = []
+    meta = fm.get("metadata", {}) if isinstance(fm.get("metadata"), dict) else {}
+    for field in ("tier", "intended-audience"):
+        if field not in meta:
+            continue
+        val = meta[field]
+        if str(val) in VALID_TIERS:
+            continue
+        match = close_tier(val)
+        out.append({
+            "line": 1,
+            "type": "unknown-tier",
+            "field": f"metadata.{field}",
+            "value": str(val),
+            "close_match": match,
+            "message": (f"metadata.{field} is {val!r}; the only valid tiers are "
+                        f"{', '.join(VALID_TIERS)}. "
+                        + (f"Close match: {match!r} (correct it and tell the user)."
+                           if match else "No single close match: ask the user which of the three they meant.")),
+            "suggested_fix": f"Set metadata.{field} to " + (repr(match) if match else "one of the three valid tiers (ask the user)"),
+            "blocks_tier": "all (only three tiers exist)",
+        })
+    return out
+
+
 def lint_tier_violations(fm, body, body_start_line, tier):
     """Return list of tier-specific violations."""
     violations = []
 
-    # Frontmatter-level Claude extensions (model-agnostic blocks all; claude-users/personal allow)
+    # Frontmatter-level Claude extensions: reported here at model-agnostic only; quick_validate.py
+    # rejects them at every tier (see the comment above CLAUDE_FRONTMATTER_FIELDS).
     if tier == "model-agnostic":
         for field in CLAUDE_FRONTMATTER_FIELDS:
             if field in fm:
@@ -365,7 +413,7 @@ def lint_tier_violations(fm, body, body_start_line, tier):
                         "line": body_start_line + i,
                         "type": vtype,
                         "message": msg,
-                        "suggested_fix": "See the Claude-extension blocklist in references/portability-spec.md for the per-feature rewrite",
+                        "suggested_fix": "See the Claude-extension blocklist in skill-creator-ccvw's references/portability-spec.md for the per-feature rewrite",
                         "blocks_tier": "model-agnostic" if tier == "model-agnostic" else "claude-users (warning)",
                     })
 
@@ -501,11 +549,15 @@ def main():
     body_start_line = fm_lines + 1
 
     declared_tier = args.tier or fm.get("metadata", {}).get("tier", "personal")
+    tier_value_findings = lint_tier_values(fm)
+    if declared_tier not in VALID_TIERS:
+        # Keep linting with the close match when there is one, else only the tier-free checks.
+        declared_tier = close_tier(declared_tier) or "personal"
     ccvw_missing = lint_frontmatter(fm) + lint_directories(skill_path)
     # Structural + frontmatter-content checks apply at every tier (registration
     # correctness + the frontmatter prompt-injection surface), so they run before
     # the tier-conditional checks and are merged into the same violations list.
-    violations = lint_structure(fm, skill_path)
+    violations = tier_value_findings + lint_structure(fm, skill_path)
     violations += lint_frontmatter_content(fm)
     violations += lint_tier_violations(fm, body, body_start_line, declared_tier)
 

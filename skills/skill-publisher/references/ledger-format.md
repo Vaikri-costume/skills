@@ -19,7 +19,7 @@ One file per target skill, accumulating every ship run. Not written inside the t
 ```
 # Ship ledger — <skill>
 
-<!-- in-flight marker lives here when a ship run is mid-flight, in the form `in-flight:: YYYY-MM-DDTHH:MM <action> run-N`; absent means no ship in flight. The action-keyword enum and recovery rules are in recovery-protocol.md (authoritative) — the inline list here (polish/audit/tier/addressing/changelog/packaging/pr) is a convenience summary; if the two ever diverge, recovery-protocol.md wins. -->
+<!-- in-flight marker lives here when a ship run is mid-flight, as a line that STARTS with `in-flight::` (form `in-flight:: YYYY-MM-DDTHH:MM <action> run-N`; this comment's own mention of the string is not a marker); no such line means no ship in flight. The action-keyword enum and recovery rules are in recovery-protocol.md (authoritative) — the inline list here (polish/audit/tier/addressing/changelog/packaging/pr/verify) is a convenience summary; if the two ever diverge, recovery-protocol.md wins. -->
 audit-references:: skill-creator-ccvw@<date-or-missing>, skill-creator@<date-or-missing>, plugin-dev/skill-development@<date-or-missing>
 
 | Runtime | Run | Phase | Cluster | Root cause | Address | Flags |
@@ -67,7 +67,7 @@ audit-references:: skill-creator-ccvw@<date-or-missing>, skill-creator@<date-or-
 
 ## Run + invocation summary comments
 
-After each Run's rows, write the run-summary comment. Use `scripts/append_ledger.py close-round <ledger> --round N` to auto-compute it from the ledger rows — the script generates:
+After each Run's rows, write the run-summary comment. Use `python3 ~/.claude/skills/skill-publisher/scripts/append_ledger.py close-round <ledger> --round N` to auto-compute it from the ledger rows — the script generates:
 `<!-- Round N total: raw flags <flags> — clusters <M> — addresses: <F> FIX + <S> STRENGTHEN + <P> USER-PAUSE -->`
 Note: `close-round` hardcodes `Round` in the label (skill-tracer's column name) and omits ship-context fields. The Edit-replace step's find target (`<!-- Round N total:`) is **tightly coupled to this hardcoded label** — the label is unconditionally hardcoded in the script body (`f"<!-- Round {args.round} total: …"`) and will not change without a deliberate code edit; if the script is ever updated and the label text changes, this find target must be updated in the same vendored-sync pass. Use `Edit` to find the generated `<!-- Round N total: raw flags … — clusters … — addresses: … -->` comment and replace it with the publisher's canonical form to add ship context:
 `<!-- Run N total: <X> clusters — <F> FIX + <S> STRENGTHEN + <P> USER-PAUSE — shipped at tier <tier>, version <prior>→<new>, PR: <url-or-none> -->`

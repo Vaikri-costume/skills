@@ -49,11 +49,15 @@ Example:
 - **Docs-only ship (`--docs-only`).** A shortened ship for changes that touch only README.md and HISTORY.md. It polishes, validates, bumps the patch version, packages and opens the PR. It skips the cold audit and the behavioral tier checks. If anything else changed, it refuses and points you to a full ship.
 - **Status (`--status`).** Read-only follow-up after a PR: whether it merged, whether the ship tag still points at the right place, and whether the marketplace catalog is stale. Add `--repoint-tag` only if you want a dangling tag fixed. Or ask "did X merge" / "ship status of X".
 - **Rollback (`--rollback`).** Undoes the most recent ship. It restores the pre-ship copies of SKILL.md, README.md and HISTORY.md, deletes the packaged archive, and closes the open PR. It always asks you to confirm first, and refuses if the PR is already merged (offering a revert PR instead). Or say "undo the ship of X" / "roll back X".
+- **Install (`--install`).** Its own step, never part of publishing. Shows what would be added, changed and removed in the skills folder, asks first, backs up the current copy, then installs. In a full ship it is offered first, before the push.
 - **Measured triggering eval (opt-in add-on).** Tests how often the skill's description actually triggers it, using a query set you provide as `{query, should_trigger}` entries. A result below the threshold becomes an audit finding to fix. Off by default to keep shipping fast; an add-on to a full ship, not a separate mode. Trigger it with `--triggering-eval --eval-set <queries.json>`. Without a query set only the quick description-confidence check runs.
 - **Proactive suggestion.** After skill-tracer finishes on a skill you plan to share, the publisher suggests moving on to the ship phase.
 
 **Notable features**
 
+- **Prepare everything, then ask once.** A full ship does all the preparation without asking (scans, history scan, PR dry run, PR body, install dry run), then sends one message: install first, then push, and any history rewrite with its exact findings list. Each item needs its own yes.
+- **Personal-data and wording scan.** Checks the skill folder, the PR body and the changelog for home paths, emails, module codes with assessment labels, your profile's terms and patterns, and gendered pronouns (they/them only). A profile allowlist skips known third-party text.
+- **Mandatory history scan.** Every publish scans the repo's full git history (file contents, commit messages, author identities). A finding blocks the push until the history is fixed. The rewrite plan is printed, never run: it needs your typed yes for the exact list, with a mirror backup first.
 - **Polish pass.** A mandatory simplify pass on SKILL.md and README.md that preserves the skill's stated intent and keeps explanations that justify a rule.
 - **Cold CCVW audit.** A fresh subagent with no prior context checks the skill against the CCVW conventions in letter and spirit. It must run from the top-level session, not from inside another subagent.
 - **Tier-aware checks.** `personal` skips the checks, `claude-users` adds the shared-skill checks, `model-agnostic` adds cross-runtime checks: frontmatter validity, portability, links, Cowork compatibility, attribution and license, security scan, and MCP dependency declarations.
@@ -75,9 +79,11 @@ Example:
   - pipeline mechanics: `polish-pass.md`, `packaging.md`, `github-pr-workflow.md` (including marketplace registration), `changelog-format.md`, `step-details.md` (step detail moved out of SKILL.md, plus a file index);
   - state and lifecycle: `ledger-format.md`, `recovery-protocol.md`, `lifecycle.md` (status, rollback, docs-only, pre-ship snapshot);
   - terms: `glossary.md`.
+- **`tests/`** — unit tests for the personal-data scan (`python3 -m unittest discover -s tests`).
 - **`scripts/`** — pure-Python helpers, grouped by job:
   - validation and lints: `quick_validate`, `portability_lint`, `attribution_lint`, `spdx_check`, `link_check`, `security_scan`, `mcp_deps`, `triggering_eval`, `readiness_report`;
-  - packaging and publishing: `package_skill`, `github_pr`, `marketplace_register`, `readme_register`, `diff_published`, `install_check`, `tracer_changelog_rows`;
+  - packaging and publishing: `package_skill`, `github_pr`, `marketplace_register`, `readme_register`, `diff_published`, `install_check`, `install_local`, `tracer_changelog_rows`;
+  - privacy and history: `personal_data_scan`, `history_scan` (read-only), `history_rewrite_plan` (prints, never runs);
   - ledger and state: `append_ledger`, `render_ledger` (with `ledger-render-config.json`), `ship_manifest`, `verify_ship`, `ship_status`, `recover_dispatch`;
   - shared utilities `frontmatter_util`, `hashutil`; maintainer-only tools (not part of shipping) `check_shared_sync`, `sync_shared`.
 - **`assets/`** — fill-in templates: `changelog-entry-template.md`, `pr-template.md`.

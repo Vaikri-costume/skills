@@ -12,9 +12,17 @@ didn't silently half-complete. Deterministic checks:
   5. changelog quality — the new version's entry uses valid Keep-a-Changelog categories
                          (Added/Changed/Deprecated/Removed/Fixed/Security) and the SemVer
                          bump is a clean single-level step consistent with the changes
-                         (Removed→major, Added→≥minor). Advisory by default; REQUIRED
-                         under --strict-changelog. Bump check needs the parent version
+                         (an `interface` removal→major, Added→≥minor). REQUIRED on every
+                         run (no longer opt-in). Each bullet under `#### Removed` must carry
+                         an `[interface]` or `[internal]` mark: interface = a mode, flag,
+                         command, documented output or file layout users rely on (forces
+                         major); internal = a helper nobody calls from outside (follows the
+                         other headings). An unmarked Removed bullet is a blocking question,
+                         never a guess. Bump check needs the parent version
                          (--parent-version, else SKILL.md metadata.parent-version).
+
+`--changelog-only` runs just checks 1, 2 and 5 (no artifact, no PR) so Step 7 can gate the
+bump BEFORE the PR is opened; Step 10 runs the full set again after the ship.
 
 Checks 1–3 are local/deterministic. Check 4 is network-dependent: if `gh` is
 absent or the network is unavailable, it DEGRADES to "unverified" (not a failure)
@@ -107,6 +115,20 @@ def _changelog_entry(history_text: str | None, version: str) -> str | None:
     return text[start:end]
 
 
+_REMOVAL_MARK = re.compile(r"\[(interface|internal)\]", re.I)
+
+
+def _removed_bullets(entry: str) -> list:
+    """Bullet lines under the `#### Removed` heading of one changelog entry."""
+    m = re.search(r"^#{4}\s*Removed\s*$", entry, re.MULTILINE)
+    if not m:
+        return []
+    rest = entry[m.end():]
+    nxt = re.search(r"^#{1,4}\s*\S", rest, re.MULTILINE)
+    block = rest[:nxt.start()] if nxt else rest
+    return [ln for ln in block.splitlines() if re.match(r"^\s*[-*]\s+\S", ln)]
+
+
 def check_changelog_quality(history_text: str | None, version: str, parent: str | None) -> dict:
     """Keep-a-Changelog category validity + SemVer bump consistency for the entry.
     Returns {entry_found, categories_ok, bump_consistent, bump, detail[]}.
@@ -131,8 +153,21 @@ def check_changelog_quality(history_text: str | None, version: str, parent: str 
         out["categories_ok"] = False
         out["detail"].append("changelog entry has no change bullets")
 
+    # Removal marks: every bullet under `#### Removed` says [interface] or [internal].
+    removed_bullets = _removed_bullets(entry)
+    unmarked = [b for b in removed_bullets if not _REMOVAL_MARK.search(b)]
+    has_interface = any(re.search(r"\[interface\]", b, re.I) for b in removed_bullets)
+    out["unmarked_removals"] = unmarked
+    if unmarked:
+        out["bump_consistent"] = False
+        out["detail"].append(
+            "QUESTION for the user: Removed bullet(s) carry no [interface] or [internal] mark: "
+            + " | ".join(u.strip()[:80] for u in unmarked)
+            + " (interface = a mode, flag, command, documented output or file layout users rely on; "
+              "internal = anything else). Ask; do not guess.")
+
     # Bump consistency: a clean single-level SemVer step from parent, and at least as
-    # high as the entry's categories imply (Removed → major; Added → ≥ minor).
+    # high as the entry's categories imply (an interface removal → major; Added → ≥ minor).
     pv = _parse_semver(parent) if parent else None
     nv = _parse_semver(version)
     if pv is None or nv is None:
@@ -145,13 +180,13 @@ def check_changelog_quality(history_text: str | None, version: str, parent: str 
         out["detail"].append(f"version {version} is not a clean single-level bump from {parent}")
     else:
         seen = set(headings)
-        needs = "major" if "Removed" in seen else ("minor" if "Added" in seen else "patch")
+        needs = "major" if has_interface else ("minor" if "Added" in seen else "patch")
         rank = {"patch": 0, "minor": 1, "major": 2}
         if rank[level] < rank[needs]:
             out["bump_consistent"] = False
             out["detail"].append(
                 f"bump {level} too low for the changes: a '{needs}' bump is implied "
-                f"(entry has {'Removed' if needs=='major' else 'Added'})")
+                f"(entry has {'an [interface] removal' if needs=='major' else 'Added'})")
     return out
 
 
@@ -221,15 +256,17 @@ def main() -> int:
                     help="the version being superseded (for the bump-consistency check); "
                          "falls back to SKILL.md metadata.parent-version if omitted")
     ap.add_argument("--strict-changelog", action="store_true",
-                    help="make the Keep-a-Changelog category + SemVer bump-consistency checks "
-                         "REQUIRED (fail the ship on a violation); advisory otherwise")
+                    help="accepted for compatibility; the changelog checks are now always required")
+    ap.add_argument("--changelog-only", action="store_true",
+                    help="pre-PR gate: check only the version, the changelog heading and the changelog "
+                         "quality/bump (no artifact, no PR)")
     args = ap.parse_args()
 
     # Enforce the integrity check at the layer that holds both inputs, not in
     # orchestrator prose: a packaged artifact must always be digest-checked. The
     # only path with --artifact but no digest would be a bug (the sole digest-free
     # ship is personal tier, which passes no --artifact at all).
-    if args.artifact and not args.expected_digest:
+    if args.artifact and not args.expected_digest and not args.changelog_only:
         ap.error("--expected-digest is required whenever --artifact is given "
                  "(re-run Step 8 to capture archive_sha256)")
 
@@ -299,15 +336,15 @@ def main() -> int:
         required_failures.append(f"version {args.version} not in HISTORY.md frontmatter")
     if not changelog_present:
         required_failures.append(f"no changelog heading for {args.version} in HISTORY.md")
-    if artifact["status"] == "MISSING":
+    if not args.changelog_only and artifact["status"] == "MISSING":
         required_failures.append(f"package artifact missing at {artifact['path']}")
-    if artifact.get("digest") == "MISMATCH":
+    if not args.changelog_only and artifact.get("digest") == "MISMATCH":
         required_failures.append(
             f"artifact digest mismatch (expected {artifact['expected'][:12]}…, "
             f"got {artifact['actual'][:12]}…) — the artifact is not the one packaged")
     # Changelog quality failures are REQUIRED only under --strict-changelog; advisory
     # otherwise (surfaced in the JSON + a stderr NOTE, but don't fail the ship).
-    if args.strict_changelog and changelog["entry_found"]:
+    if changelog["entry_found"]:
         if not changelog["categories_ok"]:
             required_failures.append("changelog categories invalid: " + "; ".join(changelog["detail"]))
         if not changelog["bump_consistent"]:
@@ -327,10 +364,6 @@ def main() -> int:
     print(json.dumps(result, indent=2))
     if pr.get("status") == "unverified":
         print(f"NOTE: PR check unverified ({pr.get('detail','')}) — not a failure; verify the URL manually.", file=sys.stderr)
-    if (not args.strict_changelog and changelog["entry_found"]
-            and (not changelog["categories_ok"] or not changelog["bump_consistent"])):
-        print(f"NOTE: changelog advisory ({'; '.join(changelog['detail'])}) — not a failure; "
-              "re-run with --strict-changelog to enforce.", file=sys.stderr)
     return 1 if required_failures else 0
 
 
