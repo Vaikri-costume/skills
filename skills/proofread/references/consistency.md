@@ -8,9 +8,13 @@ Delivered to consistency proofreading agents (ProofConsist-A and ProofConsist-B)
 
 Find: the same concept named two different ways without apparent intentionality; hyphenation inconsistency (e.g., "post-colonial" and "postcolonial" mixed); capitalisation inconsistency for key terms; the same entity referred to by two different names alternating without clear reason.
 
+When `style.json` is supplied it is authoritative: report each of its findings as Check 4 with the Pattern starting `[convention]`, unless the instance is inside quotation. Do not recompute it.
+
+Why one anchor: the two agents of a pair are matched on Current text; if each quotes a different occurrence of the same inconsistency the pair cannot match them and a real finding is marked UNVERIFIED.
+
 Rules:
 - Do NOT flag spelling variants inside directly quoted source material — only flag inconsistency in the writer's own prose.
-- Plural forms of the same root word are not inconsistencies ("bandana" / "bandanas").
+- Plural forms of the same root word are not inconsistencies ("lantern" / "lanterns").
 - Intentional variation that follows a consistent pattern (e.g., full form on first use, abbreviated thereafter) is not an inconsistency.
 
 ---
@@ -22,7 +26,7 @@ Return EXACTLY this format for every finding. One entry per issue:
 ```
 ## Finding [n]
 Location: paragraph [n], sentence [m] of the paragraph, [opening words of the sentence]
-Current text: "[exact text as it appears in the draft — show both variant forms if they occur in different sentences]"
+Current text: "[the EARLIEST occurrence in the draft of either variant form: the shortest exact span that contains it, one span only. Never quote the later occurrence or both; the other form goes in Pattern]"
 Pattern: [describe the inconsistency — what the two forms are and where each appears in the essay]
 Concern: [why this matters — potential reader confusion, ambiguity, or apparent lack of intentionality]
 Check: 4

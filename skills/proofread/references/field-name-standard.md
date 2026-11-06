@@ -13,7 +13,10 @@ Current text: "[exact text as it appears in the draft]"
 Proposed fix: "[corrected text]"
 Check: [1 / 2 / 3]
 Severity: High / Medium / Low
+Reason: [three to eight words naming the rule]
 ```
+
+`Reason:` feeds the Why column of the change table (`scripts/change_table.py`). It is not a match field: pair synthesis ignores it, and when the pair's two agents word it differently the first agent's wording is kept.
 
 Match criterion (within the surface pair, A vs B): same `Check:` value AND `Current text:` quoted is identical or one is a substring of the other.
 
@@ -40,7 +43,7 @@ Severity: High / Medium / Low
 
 No `Proposed fix:` field — Check 4 findings are diagnostic, not prescriptive. The challenger or writer determines the correction.
 
-Match criterion (within the consistency pair, A vs B): `Check: 4` AND `Current text:` quoted is identical or one is a substring of the other.
+Match criterion (within the consistency pair, A vs B): `Check: 4` AND `Current text:` quoted is identical or one is a substring of the other. For this reason a Check 4 `Current text:` is always the earliest occurrence of either variant form, as the shortest span containing it.
 
 ## Register agents (Check 5)
 
@@ -55,6 +58,8 @@ Concern: [why the shift matters]
 Check: 5
 Severity: High / Medium / Low
 ```
+
+`Pattern:` for Check 5 begins with one bracketed type tag, which `scripts/change_table.py` counts for the register audit: `[abbreviation]`, `[contraction]`, `[colloquialism]`, `[vague-quantifier]`, `[uncited-claim]` (research essays) or `[register-shift]` (personal, application and other essays). A finding without a recognised tag is counted as "other".
 
 No `Proposed fix:` field — Check 5 findings are diagnostic.
 

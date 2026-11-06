@@ -24,6 +24,12 @@ Do NOT flag spelling inside directly quoted source material. Genuine `-ize` verb
 
 ---
 
+## One finding for each defect
+
+Report a defect once. If one word is both misspelt and in the wrong tense, make one finding under its primary check and name the second point in Reason; never write a second finding whose Current text contains the first one's. `Proposed fix` holds only the replacement text, with no brackets or commentary; explanations go in Reason.
+
+---
+
 ## Output format
 
 Return EXACTLY this format for every finding. One entry per issue:
@@ -35,6 +41,7 @@ Current text: "[exact text as it appears in the draft]"
 Proposed fix: "[corrected text]"
 Check: [1 / 2 / 3]
 Severity: High / Medium / Low
+Reason: [three to eight words naming the rule, for example "American -ize spelling" or "subject-verb disagreement"]
 ```
 
 Severity guide:

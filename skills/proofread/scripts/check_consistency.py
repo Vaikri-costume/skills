@@ -11,6 +11,7 @@ import sys, re, json
 from collections import defaultdict
 import os
 sys.path.insert(0, os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'shared')))
+from quotes import mask_quotes  # noqa: E402
 try:
     from extract_paragraphs import prose_paragraphs
     from citelib import split_body_and_bibliography
@@ -27,10 +28,10 @@ except ImportError:  # shared helpers missing: fall back to plain blank-line par
 STOPWORDS = {
     "a", "an", "and", "as", "at", "be", "been", "being", "but", "by", "can",
     "could", "did", "do", "does", "even", "for", "from", "had", "has", "have",
-    "he", "their", "here", "his", "how", "i", "if", "in", "is", "it", "its",
+    "he", "her", "here", "his", "how", "i", "if", "in", "is", "it", "its",
     "just", "may", "might", "more", "most", "must", "my", "no", "not", "now",
     "of", "on", "one", "only", "or", "our", "out", "over", "own", "same",
-    "they", "should", "so", "some", "such", "than", "that", "the", "their",
+    "she", "should", "so", "some", "such", "than", "that", "the", "their",
     "them", "then", "there", "these", "they", "this", "those", "to", "too",
     "under", "up", "very", "was", "we", "were", "what", "when", "where",
     "which", "while", "who", "whom", "whose", "why", "will", "with", "would",
@@ -54,7 +55,7 @@ def find_variants(text):
     word_locations = defaultdict(list)
     for para_num, para in numbered:
         # Skip quoted material (straight or curly double quotes)
-        clean_para = re.sub(r'["\u201c][^"\u201c\u201d]*["\u201d]', '', para)
+        clean_para = mask_quotes(para)
         words = re.findall(r"\b[A-Za-z][\w'-]*\b", clean_para)
         for word in words:
             stem = word.lower().replace('-', '')

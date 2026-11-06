@@ -10,11 +10,11 @@ No state files, no tracking file.
 RUN=$(mktemp -d "${TMPDIR:-/tmp}/<skill>-XXXXXX")   # all intermediates go here
 ```
 
-Nothing is written next to the draft or into any memory folder during a run. Delete `$RUN` (`rm -rf "$RUN"`) when the report has been delivered. If the session is compacted mid-run, the run folder is still on disk: list it, read the newest agent outputs, and carry on from the last step whose output file exists. There is no resume question and no state machine.
+Nothing is written next to the draft or into any memory folder during a run. Delete the run folder by its literal absolute path (print `$RUN` first and use that text) when the report has been delivered. If the session is compacted mid-run, the run folder is still on disk: list it, read the newest agent outputs, and carry on from the last step whose output file exists. There is no resume question and no state machine.
 
 ## 2. Input
 
-- **File path given:** use it. **Pasted text:** write it to `$RUN/draft.md`, then `python3 ${CLAUDE_SKILL_DIR}/scripts/shared/strip_markers.py $RUN/draft.md` (removes Logseq bullet markers). **Neither:** ask once with AskUserQuestion (path or paste).
+- **File path given:** use it. If most non-blank lines begin with `- ` (a Logseq bullet file, one bullet per line with no blank lines between), the paragraph map would count the whole file as one paragraph: first run `python3 ${CLAUDE_SKILL_DIR}/scripts/shared/strip_markers.py <file> $RUN/draft.md` and use `$RUN/draft.md` as the draft for every script and agent. The original file is read only, and a commented copy is still made from the original. **Pasted text:** write it to `$RUN/draft.md`, then `python3 ${CLAUDE_SKILL_DIR}/scripts/shared/strip_markers.py $RUN/draft.md` (removes Logseq bullet markers). **Neither:** ask once with AskUserQuestion (path or paste).
 - Ask for essay type (`research | personal | application | other`) only if it was not given and the skill needs it. Never ask for facts that can be found on disk.
 - Paragraph map: `python3 ${CLAUDE_SKILL_DIR}/scripts/shared/extract_paragraphs.py <draft> > $RUN/paragraphs.json`. Every agent receives it; paragraph numbers in the report come from it, never from an agent's own count.
 

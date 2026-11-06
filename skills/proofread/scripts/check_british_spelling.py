@@ -29,6 +29,7 @@ import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.normpath(os.path.join(_HERE, 'shared')))
+from quotes import mask_quotes  # noqa: E402
 try:
     from extract_paragraphs import prose_paragraphs
 except ImportError:  # shared helper not found: fall back to plain blank-line paragraphs
@@ -178,6 +179,7 @@ def _mask(match):
 
 def strip_noise(text):
     """Blank out quoted material, URLs, wikilinks and link targets, preserving offsets."""
+    text = mask_quotes(text)
     for rx in (_QUOTE_RE, _URL_RE, _WIKILINK_RE, _MDLINK_TARGET_RE):
         text = rx.sub(_mask, text)
     return text
