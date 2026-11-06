@@ -27,6 +27,7 @@ _More skills I build for my workflows will land here._ (Each gets its own row + 
 | [**ai-detection-check**](skills/ai-detection-check/) | Flags AI-typical patterns, over-smooth texture and citation problems in a draft, and what evidence of your own process you can show; descriptive, never a verdict on authorship. |
 | [**proofread**](skills/proofread/) | Proofreads a draft in strict British English (grammar, typos, -ise spelling, consistency, register) and keeps a project vocabulary file across runs. |
 | [**plagiarism-check**](skills/plagiarism-check/) | Checks a draft for overlap with its sources, close paraphrase and citation integrity before submission, using common UK university misconduct-procedure vocabulary. |
+| [**guide-research-essay**](skills/guide-research-essay/) | Coaches reading, outlining and drafting of a research essay by questions only; never writes text for the user. |
 
 ## Requirements
 - Claude Code 2.0+ (or Cowork). Skills here are `claude-users` tier unless a skill's own README says otherwise.
