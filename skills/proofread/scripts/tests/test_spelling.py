@@ -98,3 +98,23 @@ class OtherBritishSpellings(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class QuoteMaskingTests(unittest.TestCase):
+    def test_blockquote_and_british_single_quotes_are_not_flagged(self):
+        import check_british_spelling as c
+        text = ("> A block quote about color and organization.\n\n"
+                "He said 'we realize it' and ‘we organize it’ in turn. They organize it themselves.\n")
+        got = [f['american_form'] for f in c.find_british_violations(text)['findings']]
+        self.assertEqual(got, ['organize'])        # only the writer's own, unquoted word
+
+    def test_apostrophes_do_not_open_a_quote(self):
+        import check_british_spelling as c
+        text = "It's what they don't realize, and the dogs' bowls are full of color."
+        got = [f['american_form'] for f in c.find_british_violations(text)['findings']]
+        self.assertEqual(got, ['realize', 'color'])
+
+    def test_mask_keeps_length(self):
+        from quotes import mask_quotes
+        t = "a 'quoted bit' here\n> block\nplain"
+        self.assertEqual(len(mask_quotes(t)), len(t))

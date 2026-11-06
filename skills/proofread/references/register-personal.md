@@ -23,7 +23,7 @@ Return EXACTLY this format for every finding. One entry per issue:
 ## Finding [n]
 Location: paragraph [n], sentence [m] of the paragraph, [opening words of the sentence]
 Current text: "[exact text as it appears in the draft]"
-Pattern: [describe the register shift — what the dominant register is and how this passage departs from it]
+Pattern: [register-shift] [describe the register shift — what the dominant register is and how this passage departs from it]
 Concern: [why this shift is likely unintentional and how it affects the reader's experience of the essay]
 Check: 5
 Severity: High / Medium / Low

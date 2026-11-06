@@ -15,5 +15,10 @@ Shared terms for the four writing skills: `$RUN` (temp run folder), A/B pair (tw
 | `near-matched` | unrecognised term close to a terms-file entry; reported as a Check 3 finding tagged UNVERIFIED |
 | `quick wins` | the report section of fixes that are simple and safe to apply first |
 | `surface / consistency / register agents` | the three read-only agent pairs |
+| `change table` | was / now / why rows for each proposed Check 1-3 change; proposals only |
+| `flagged, not changed` | findings with no replacement text, or that the challengers disputed or left open |
+| `register audit` | count of Check 5 findings by tagged type (colloquialism, contraction, vague-quantifier, abbreviation, uncited-claim, register-shift) |
+| `cut log` | word count against a stated limit, with deletion-only candidates; written on every run |
+| `annotated copy` | a separate file with comment lines added; the draft is never edited |
 | `terms file` | markdown list of canonical project terms, one `- term` per line |
 | `unresolved` | unrecognised term with no terms-file match; put to the writer in one question |

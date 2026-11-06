@@ -80,6 +80,11 @@ Omit this section if none.]
 
 ---
 
+### Change table and flagged list
+[Paste `tables.md` (from `scripts/change_table.py`) verbatim: "Change table (was, now, why)", "Flagged, not changed" and, when present, "Register audit". Do not add, drop or reword a row. Every row is a proposal: the draft itself is never edited.]
+
+---
+
 ### Vocabulary — migration recommendations
 [MIGRATION_FINDINGS — terms found in other projects' canonical lists or the global list, with suggested actions (add to current project / promote to global). Omit this section if none.]
 
@@ -99,6 +104,16 @@ Check 3 (British spelling): [n] upheld (HIGH: [n], UNVERIFIED: [n]) | [n] disput
 Check 4 (Consistency): [n] upheld (HIGH: [n], UNVERIFIED: [n]) | [n] disputed | [n] ambiguous | [n] unverified-challenger
 Check 5 (Register quality): [n] upheld (HIGH: [n], UNVERIFIED: [n]) | [n] disputed | [n] ambiguous | [n] unverified-challenger
 Total upheld: [n] | Total disputed: [n] | Total ambiguous: [n] | Total unverified-challenger: [n] | Migration recommendations: [n]
+
+---
+
+### Cut log
+[From `words.json` (the figures are the script's, never recounted):
+Words ([counted field, verbatim]): [words] | Limit: [limit, or "none stated"] | Over by: [n, or "n/a"]
+If a limit is stated and the draft is over it: list every cut candidate as "Para [n]: delete "[phrase]" ([words_saved] word(s))" and state the candidates' total against the amount over, and the count that would remain if every candidate were deleted (`words_after_all_candidates`, with `meets_limit_if_all_applied`). If the total falls short, say by how many words and stop: no rewording, no other cuts are proposed. If under the limit or no limit is given: write "No cuts needed." The log appears on every run.]
+
+### AI-use statement
+[One line, exactly this, with the checks that actually ran: "Claude checked this draft for [grammar, typos, British spelling, consistency and register] and returned a report of proposed changes; it generated no text for the draft and edited nothing."]
 ```
 
 ---

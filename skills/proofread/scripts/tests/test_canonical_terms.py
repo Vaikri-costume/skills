@@ -11,7 +11,7 @@ class Canonical(unittest.TestCase):
     def setUp(self):
         self.d = tempfile.mkdtemp()
         self.cur = os.path.join(self.d, 'cur.md')
-        open(self.cur, 'w').write('# Terms\n\n## Canonical terms\n- bandana\n- Ghoongat\n- Gita Govinda\n')
+        open(self.cur, 'w').write('# Terms\n\n## Canonical terms\n- lantern\n- Orrery\n- Tide Table\n')
         self.other = os.path.join(self.d, 'other.md')
         open(self.other, 'w').write('- Mughal-e-Azam\n')
 
@@ -20,25 +20,25 @@ class Canonical(unittest.TestCase):
 
     def test_classes(self):
         s = self.sets()
-        self.assertEqual(ct.classify('bandana', s)['class'], 'matched-correct')
+        self.assertEqual(ct.classify('lantern', s)['class'], 'matched-correct')
         r = ct.classify('Ghunghat', s)
         self.assertIn(r['class'], ('near-matched', 'unresolved'))
-        self.assertEqual(ct.classify('ghoongat', s)['class'], 'matched-incorrect')   # case differs
+        self.assertEqual(ct.classify('orrery', s)['class'], 'matched-incorrect')   # case differs
         self.assertEqual(ct.classify('Mughal e Azam', s)['class'], 'matched-incorrect')  # hyphens ignored
         self.assertEqual(ct.classify('Mughal e Azam', s)['source'], 'other:other.md')
-        self.assertEqual(ct.classify('Gita Govind', s)['class'], 'near-matched')
-        self.assertEqual(ct.classify('banyan', s)['class'], 'unresolved')
+        self.assertEqual(ct.classify('Tide Tabel', s)['class'], 'near-matched')
+        self.assertEqual(ct.classify('willow', s)['class'], 'unresolved')
 
     def test_collect_unions_and_dedupes(self):
         a, b = os.path.join(self.d, 'a.md'), os.path.join(self.d, 'b.md')
-        open(a, 'w').write('## Finding 1\nx\n\n## Unrecognised terms\nbandana\nghoongat\n')
-        open(b, 'w').write('## Unrecognised terms\nBandana\nNone identified\n')
-        self.assertEqual(ct.collect([a, b]), ['bandana', 'ghoongat'])
+        open(a, 'w').write('## Finding 1\nx\n\n## Unrecognised terms\nlantern\norrery\n')
+        open(b, 'w').write('## Unrecognised terms\nLantern\nNone identified\n')
+        self.assertEqual(ct.collect([a, b]), ['lantern', 'orrery'])
 
     def test_add_appends_only_new_terms(self):
-        added = ct.add_terms(self.cur, ['bandana', 'Banyan'])
-        self.assertEqual(added, ['Banyan'])
-        self.assertIn('- Banyan', open(self.cur).read())
+        added = ct.add_terms(self.cur, ['lantern', 'Willow'])
+        self.assertEqual(added, ['Willow'])
+        self.assertIn('- Willow', open(self.cur).read())
 
     def test_add_creates_file(self):
         p = os.path.join(self.d, 'new.md')
