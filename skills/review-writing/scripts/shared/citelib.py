@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-citelib.py — citation parsing shared by citation_audit.py, quote_verify.py,
-detect_sources.py and build_citation_map.py.
+citelib.py — citation parsing shared by citation_audit.py and quote_verify.py.
 
 Supported in-text forms (UK university guides list Harvard author-date and footnotes as the two
 main systems; Logseq/Obsidian drafts also use links):

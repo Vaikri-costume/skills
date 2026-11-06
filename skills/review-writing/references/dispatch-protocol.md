@@ -5,10 +5,10 @@ The run-folder, agent, synthesis and presentation mechanics below apply to this 
 ## 1. Run folder (no state files, no tracking file)
 
 ```bash
-RUN=$(mktemp -d "${TMPDIR:-/tmp}/<skill>-XXXXXX")   # all intermediates go here
+RUN=$(mktemp -d "${SCRATCH_DIR:-${TMPDIR:-/tmp}}/review-writing-XXXXXX")   # all intermediates go here; echo "$RUN" to see the path
 ```
 
-Nothing is written next to the draft or into any memory folder during a run. Delete `$RUN` (`rm -rf "$RUN"`) when the report has been delivered. If the session is compacted mid-run, the run folder is still on disk: list it, read the newest agent outputs, and carry on from the last step whose output file exists. There is no resume question and no state machine.
+Nothing is written next to the draft or into any memory folder during a run. Delete the run folder by its literal absolute path (the one echoed at creation, never through the variable) when the report has been delivered; shell variables are not expanded by every delete guard. If the session is compacted mid-run, the run folder is still on disk: list it, read the newest agent outputs, and carry on from the last step whose output file exists. There is no resume question and no state machine.
 
 ## 2. Input
 
@@ -19,7 +19,7 @@ Nothing is written next to the draft or into any memory folder during a run. Del
 ## 3. Agent rules
 
 - **Agent type:** `Explore` (read-only; no Edit/Write) for every analysis, challenger and presentation agent. An edit-capable agent must never be used to review a draft. The orchestrator, not the agent, writes each agent's returned text to `$RUN/<agent-name>.md`.
-- **Prompt skeleton** (one prompt per check, composed from the skill's brief file read in full and pasted verbatim, never summarised):
+- **Prompt skeleton** (one prompt per check, composed from this skill's brief file read in full and pasted verbatim, never summarised):
   1. Role line and "report only; do not rewrite passages or write files".
   2. `Read <draft path> in full.` (If lines begin `- `, they are Logseq bullets: treat as prose.)
   3. Essay type and PARAGRAPH MAP.
@@ -34,17 +34,17 @@ Nothing is written next to the draft or into any memory folder during a run. Del
 
 1. Save each raw output to `$RUN/<agent-name>.md`.
 2. `python3 ${CLAUDE_SKILL_DIR}/scripts/shared/correct_finding_locations.py <draft> $RUN/<agent>.md --flag-unmatched --out $RUN/<agent>-corrected.md 2> $RUN/<agent>-corrections.log` — overwrites paragraph numbers with the draft's own and marks findings whose quote is not in the draft `[QUOTE-UNMATCHED]` (treated as UNVERIFIED).
-3. Pair synthesis: `python3 ${CLAUDE_SKILL_DIR}/scripts/shared/synthesise_pairs.py $RUN/A-corrected.md $RUN/B-corrected.md [--exact Check] [--substring "Current text"] --out $RUN/<check>-merged.md`. If one agent failed, pass only A (or B) with `--single`. Match fields per skill are in that skill's `references/field-name-standard.md`. UNVERIFIED findings are never dropped.
+3. Pair synthesis: `python3 ${CLAUDE_SKILL_DIR}/scripts/shared/synthesise_pairs.py $RUN/A-corrected.md $RUN/B-corrected.md [--exact Check] [--substring "Current text"] --out $RUN/<check>-merged.md`. If one agent failed, pass only A (or B) with `--single`. Match fields are in this skill's `references/field-name-standard.md`. UNVERIFIED findings are never dropped.
 4. Combine the merged files in the order the skill states and renumber `Finding 1…n`.
 5. Empty list: skip the challenger and go straight to presentation with "no findings".
 
 ## 5. Challenger
 
-Dispatch the challenger(s) with the numbered findings in full plus the skill's scope rules (state reasoning first, verdict last, one verdict label per finding, NOT ASSESSED with a reason if a finding cannot be judged). Then `python3 ${CLAUDE_SKILL_DIR}/scripts/shared/synthesise_verdicts.py $RUN/ChallengerA.md [$RUN/ChallengerB.md] --findings N` produces `Finding n: label` lines plus verbatim disputed reasons and ambiguous questions. Two confidence axes stay separate in the report: analysis confidence (HIGH / UNVERIFIED) and verdict label.
+Dispatch the challenger(s) with the numbered findings in full plus the scope rules in `challenger-synthesis-rules.md` (state reasoning first, verdict last, one verdict label per finding, NOT ASSESSED with a reason if a finding cannot be judged). Then `python3 ${CLAUDE_SKILL_DIR}/scripts/shared/synthesise_verdicts.py $RUN/ChallengerA.md [$RUN/ChallengerB.md] --findings N` produces `Finding n: label` lines plus verbatim disputed reasons and ambiguous questions. Two confidence axes stay separate in the report: analysis confidence (HIGH / UNVERIFIED) and verdict label.
 
 ## 6. Presentation
 
-One `Explore` agent reads the skill's `references/presentation-format.md` and `assets/report-header-template.md`, receives the findings, verdict lines and status notes, and returns the whole report as its response. The orchestrator relays it verbatim; no summary, no truncation. If it fails twice, the orchestrator renders the report itself from the same inputs.
+One `Explore` agent reads `references/presentation-format.md` and `assets/report-header-template.md`, receives the findings, verdict lines and status notes, and returns the whole report as its response. The orchestrator relays it verbatim; no summary, no truncation. If it fails twice, the orchestrator renders the report itself from the same inputs.
 
 ## 7. Save and cleanup
 
