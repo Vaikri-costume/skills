@@ -7,7 +7,6 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
-from synthesise_pairs import synthesise  # noqa: E402
 from synthesise_verdicts import parse, label  # noqa: E402
 from correct_finding_locations import correct_agent_output  # noqa: E402
 from extract_paragraphs import extract_paragraphs  # noqa: E402
@@ -39,35 +38,6 @@ Current text: "something invented"
 Check: 2
 Severity: Low
 '''
-
-
-class PairSynthesis(unittest.TestCase):
-    def test_match_by_check_and_substring(self):
-        m = synthesise(A, B, ['Check'], ['Current text'])
-        self.assertEqual(m[0][1], 'HIGH')            # substring match, same check
-        self.assertEqual(m[0][2], 'description differs between agents')
-        self.assertEqual(m[1][1], 'UNVERIFIED')      # only A has "teh walls"
-        self.assertEqual(m[2][1], 'UNVERIFIED')      # B-only, and quote unmatched
-        self.assertEqual(len(m), 3)
-
-    def test_different_check_does_not_match(self):
-        b = B.replace('Check: 3', 'Check: 1')
-        m = synthesise(A, b, ['Check'], ['Current text'])
-        self.assertEqual(m[0][1], 'UNVERIFIED')
-
-    def test_unmatched_marker_survives_rendering(self):
-        from findings_lib import render
-        m = synthesise(A, B, ['Check'], ['Current text'])
-        self.assertTrue(render(m[2][0], 3, m[2][1]).startswith('## [QUOTE-UNMATCHED] Finding 3'))
-
-    def test_single_agent_is_all_unverified(self):
-        m = synthesise(A, '', ['Check'], ['Current text'], single=True)
-        self.assertTrue(all(c == 'UNVERIFIED' for _, c, _ in m))
-
-    def test_unmatched_marker_forces_unverified_even_if_matched(self):
-        a = A.replace('"teh walls"', '"something invented"')
-        m = synthesise(a, B, ['Check'], ['Current text'])
-        self.assertEqual([c for _, c, _ in m][1], 'UNVERIFIED')
 
 
 class VerdictSynthesis(unittest.TestCase):

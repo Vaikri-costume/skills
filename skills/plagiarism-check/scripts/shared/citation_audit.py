@@ -6,8 +6,8 @@ Usage: citation_audit.py <draft_file>
 Output: JSON on stdout (or {"error": ...}).
 
 Covers the typical UK misconduct-procedure indicators that can be checked by machine
-(REG-183-10: repeated introductions of authors, repeated bibliography entries, an
-extensive bibliography not cited in the text) plus source-reliance patterns and
+(repeated introductions of authors, repeated bibliography entries, an extensive
+bibliography not cited in the text) plus source-reliance patterns and
 citation artefacts typical of machine-written text.
 
 Fields

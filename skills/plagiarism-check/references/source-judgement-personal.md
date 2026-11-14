@@ -4,12 +4,6 @@ Appended to `source-judgement.md` for personal, application and other non-resear
 
 ---
 
-## Source material scope
-
-Personal essays usually have no source database. Source checks run only if the writer supplies source or prior-submission file paths. With none supplied, only the deterministic citation and quotation audit runs (it needs no sources); for authorship or style consistency use ai-detection-check.
-
----
-
 ## Check 2 adaptation — Reflection vs narrative
 
 "Synthesis vs summary" applies differently in personal writing. The equivalent check is: has the writer reflected on their experience and drawn something from it, or are they merely describing what happened?

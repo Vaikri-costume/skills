@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-citelib.py — citation parsing shared by citation_audit.py, quote_verify.py,
-detect_sources.py and build_citation_map.py.
+citelib.py — citation parsing shared by citation_audit.py, quote_verify.py
+and detect_sources.py.
 
 Supported in-text forms (UK university guides list Harvard author-date and footnotes as the two
 main systems; Logseq/Obsidian drafts also use links):
@@ -16,15 +16,16 @@ Everything is deterministic and regex-based; none of it needs an LLM.
 """
 import re
 
-YEAR = r'(?:1[5-9]\d\d|20\d\d)[a-z]?'
+YEAR = r'(?:(?:1[5-9]\d\d|20\d\d)[a-z]?|n\.d\.)'
+END = r'(?![\w])'
 NAME = r"[A-Z][\w'’\-]+(?:\s+(?:de|van|von|al|el|bin|ibn|le|la|di|da)\s+[A-Z][\w'’\-]+)?"
 AUTHORS = rf"{NAME}(?:\s*(?:,|and|&)\s*{NAME})*(?:\s+et\s+al\.?)?"
 PAGE = r"(?:\s*[:,]\s*(?:pp?\.\s*)?(?P<page>[\divxlc][\divxlc\-–, ]*))?"
 
-_PAREN_RE = re.compile(r'\(([^()]*?\b' + YEAR + r'\b[^()]*?)\)')
-_PART_RE = re.compile(rf'^\s*(?:see\s+|cf\.\s*|e\.g\.,?\s*|also\s+)?(?:[^;]*?cited in\s+)?(?P<authors>{AUTHORS})[,\s]+(?P<year>{YEAR}\b){PAGE}',
+_PAREN_RE = re.compile(r'\(([^()]*?\b' + YEAR + END + r'[^()]*?)\)')
+_PART_RE = re.compile(rf'^\s*(?:see\s+|cf\.\s*|e\.g\.,?\s*|also\s+)?(?:[^;]*?cited in\s+)?(?P<authors>{AUTHORS})[,\s]+(?P<year>{YEAR}){END}{PAGE}',
                       re.IGNORECASE)
-_NARR_RE = re.compile(rf'(?P<authors>{AUTHORS})\s*\((?P<year>{YEAR})\b{PAGE}\)')
+_NARR_RE = re.compile(rf'(?P<authors>{AUTHORS})\s*\((?P<year>{YEAR}){END}{PAGE}\)')
 _FN_REF_RE = re.compile(r'\[\^([^\]\s]+)\](?!:)')
 _FN_DEF_RE = re.compile(r'^\[\^([^\]\s]+)\]:\s*(.+)$', re.MULTILINE)
 _WIKI_RE = re.compile(r'\[\[([^\]]+)\]\]')
@@ -35,7 +36,7 @@ _BIB_HEAD_RE = re.compile(r'^\s{0,3}(?:#{1,6}\s*)?(references|bibliography|works
 
 def first_surname(authors):
     """'Hughes and Smith' -> 'hughes'; 'Gardner et al.' -> 'gardner'; 'de Souza' -> 'de souza'."""
-    a = re.split(r'\s*(?:,|and|&)\s*|\s+et\s+al', authors.strip(), maxsplit=1)[0]
+    a = re.split(r'\s*(?:,|\band\b|&)\s*|\s+et\s+al', authors.strip(), maxsplit=1)[0]
     return a.strip().casefold()
 
 
@@ -89,10 +90,10 @@ def footnote_definitions(text):
 
 def citation_from_note(note):
     """Parse a footnote definition like 'Jones 2002, 34.' or 'Michael Jones, 2002. "Title"…'."""
-    m = re.search(rf'(?P<authors>{AUTHORS})[,\s]+(?P<year>{YEAR})\b{PAGE}', note)
+    m = re.search(rf'(?P<authors>{AUTHORS})[,\s]+(?P<year>{YEAR}){END}{PAGE}', note)
     if m:
         return _mk('footnote-note', m.group('authors'), m.group('year'), m.group('page'), note, 0)
-    m = re.search(rf'(?P<first>[A-Z][\w\'’\-]+)\s+(?P<last>{NAME})[,.]?\s+(?P<year>{YEAR})\b', note)
+    m = re.search(rf'(?P<first>[A-Z][\w\'’\-]+)\s+(?P<last>{NAME})[,.]?\s+(?P<year>{YEAR}){END}', note)
     if m:
         return _mk('footnote-note', m.group('last'), m.group('year'), '', note, 0)
     return None
@@ -105,10 +106,15 @@ def parse_bibliography(bib_text):
     chunks = [c.strip() for c in re.split(r'\n\s*\n|\n(?=\s*[-*]\s|\s*[A-Z][\w\'’\-]+,)', bib_text) if c.strip()]
     for c in chunks:
         c1 = re.sub(r'^\s*[-*]\s*', '', c)
-        m = re.match(rf"(?P<sur>{NAME}),\s*[^\n]*?\(?(?P<year>{YEAR})\b", c1)
+        m = re.match(rf"(?P<sur>{NAME}),\s*[^\n]*?\(?(?P<year>{YEAR}){END}", c1)
         if m:
             entries.append({'surname': m.group('sur').casefold(), 'year': m.group('year'),
                             'raw': ' '.join(c1.split())[:160]})
+        else:
+            m = re.match(rf"(?P<sur>{NAME}),\s", c1)
+            if m and not re.search(r'\b(?:1[5-9]|20)\d\d\b', c1):
+                entries.append({'surname': m.group('sur').casefold(), 'year': 'n.d.',
+                                'raw': ' '.join(c1.split())[:160]})
     return entries
 
 

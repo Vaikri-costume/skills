@@ -97,5 +97,14 @@ class Quotes(unittest.TestCase):
         self.assertIn('no-source-supplied', r['summary'])
 
 
+class SurnameWithAnd(unittest.TestCase):
+    def test_surnames_containing_and_are_not_split(self):
+        from citelib import first_surname
+        for name in ("Brandt", "Anderson", "Landis", "Sandhu", "Hand"):
+            self.assertEqual(first_surname(name), name.casefold())
+        self.assertEqual(first_surname("Hughes and Smith"), "hughes")
+        self.assertEqual(first_surname("Gardner et al."), "gardner")
+
+
 if __name__ == '__main__':
     unittest.main()

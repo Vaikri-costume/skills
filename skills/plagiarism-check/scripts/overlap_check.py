@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 overlap_check.py — deterministic verbatim-overlap check between a draft and source texts.
-Replaces the old Tier 1 agent pair and per-source Check 1.
 
 Usage:
   overlap_check.py <draft> --source LABEL=PATH [--source ...]    # quoted passages of a source page
@@ -38,7 +37,7 @@ from extract_paragraphs import prose_paragraphs  # noqa: E402
 from citelib import split_body_and_bibliography  # noqa: E402
 
 STOP = set("""the a an is are was were be been being of in on to for with by at from this that these those and or but as it its
-their his their our your my which who whom whose not no so than then there here has have had do does did can could may might
+their his her our your my which who whom whose not no so than then there here has have had do does did can could may might
 will would shall should also such""".split())
 
 _WORD = re.compile(r"[\w]+(?:['’][\w]+)*")
