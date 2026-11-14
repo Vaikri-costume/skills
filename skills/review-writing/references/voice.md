@@ -23,6 +23,7 @@ A consistent analytical perspective runs through a well-written essay: the write
 Location: paragraph [n] — "[opening words of the passage]"
 Current text: "[exact quote]"
 Pattern: [describe the specific voice shift — one sentence]
+Layer: [paragraph / sentence]
 Concern: [what the writer's own perspective might be, if inferable]
 Severity: High / Medium / Low
 ```

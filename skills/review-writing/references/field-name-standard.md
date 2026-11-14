@@ -8,9 +8,11 @@ Synthesis and location correction match findings by exact field names. The quote
 ## Finding [n]
 Location: paragraph [n] — "[opening words]"
 Current text: "[sentence carrying the claim or move]"
-Element: claim / grounds / warrant / backing / qualifier / rebuttal / sub-claim
+Element: claim / grounds / warrant / backing / qualifier / rebuttal / sub-claim / promise
+Layer: foundation / structure / paragraph / sentence
 Concern: [one sentence]
 Severity: High / Medium / Low
+Would change if: [High only: a condition in the draft, never wording]
 ```
 Pair match: `--exact Element --substring "Current text"`.
 
@@ -20,6 +22,7 @@ Pair match: `--exact Element --substring "Current text"`.
 Location: paragraph [n] — "[opening words of the sentence]"
 Current text: "[exact text]"
 Sub-category: passive voice / compound sentence / unclear pronoun / jargon / sentence position
+Layer: paragraph / sentence
 Concern: [one sentence]
 Severity: High / Medium / Low
 ```
@@ -30,8 +33,10 @@ Pair match: `--exact Sub-category --substring "Current text"`.
 ## Finding [n]
 Location: paragraph [n] — "[opening words of the passage]"
 Current text: "[exact quote]"
+Layer: structure / paragraph / sentence
 Concern: [one sentence]
 Severity: High / Medium / Low
+Would change if: [High only: a condition in the draft, never wording]
 ```
 Pair match: `--substring "Current text"` (include quote-integration findings; name the sub-type in Concern).
 
@@ -41,10 +46,14 @@ Pair match: `--substring "Current text"` (include quote-integration findings; na
 Location: paragraph [n] — "[opening words of the passage]"
 Current text: "[exact quote]"
 Pattern: [one sentence]
+Layer: paragraph / sentence
 Concern: [what the writer's own perspective might be]
 Severity: High / Medium / Low
 ```
 Pair match: `--substring "Current text"`.
+
+## Lens agents (three, not paired)
+Format in `lenses.md`: `Location`, `Current text`, `Lens`, `Question`, `Prompted by`. Not pair-matched; run `correct_finding_locations.py` on each, then show side by side by lens.
 
 All agents end with `## Strengths` (at least 2, each a quoted passage plus the move it makes) or `## No findings`.
 

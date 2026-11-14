@@ -14,7 +14,9 @@ A strong central claim is specific enough to be contested: a claim about the wor
 2. List the 3 to 6 major moves (a move is a claim plus its support, often one paragraph). For each, name the warrant: **explicit**, **implicit but inferable**, or **missing**. Spend your findings on the weakest warrants first.
 3. Check, and report only real problems: a vague or missing central claim; paragraphs with no discernible sub-claim; places where the reader must make an inferential leap the writer has not supplied (two adjacent claims presented as if one follows from the other); floating evidence (evidence given and left, never tied to a claim); a claim stated more strongly than its grounds allow (missing qualifier); the strongest objection never addressed (missing rebuttal) — only where an informed reader would obviously raise it.
 
-Report at most 4 findings, most significant first. If fewer, report fewer.
+4. **Promise against delivery.** Note what the opening (introduction, abstract or first paragraph) promises the reader: a claim, a question, a scope, a method, a set of sections. For each promise, say where in the draft it is delivered, quoting the delivering line, or say "not found in the draft". Report a promise that is not delivered, or a delivery the opening never promised, as a finding (Element: promise). This check gives no verdict on quality, only on match.
+
+Report every real problem, no cap. Order findings by layer (foundation: the claim and question; structure: order and sections; paragraph: what a paragraph is for; sentence), and within a layer by consequence. Report nothing that is not a problem.
 
 ## Output format
 
@@ -26,9 +28,11 @@ What the draft seems to be trying to do: [one sentence]
 ## Finding [n]
 Location: paragraph [n] — "[opening words of the paragraph]"
 Current text: "[the sentence that carries the claim or the move — exact quote]"
-Element: [claim / grounds / warrant / backing / qualifier / rebuttal / sub-claim]
+Element: [claim / grounds / warrant / backing / qualifier / rebuttal / sub-claim / promise]
+Layer: [foundation / structure / paragraph / sentence]
 Concern: [the specific problem, one sentence; for a warrant: state the missing bridge]
 Severity: High / Medium / Low
+Would change if: [High only: what in the draft would make this finding no longer hold, stated as a condition, not as wording to add]
 ```
 
 If there are no findings: `## No findings` with one sentence. Then the Strengths section (see Strengths requirement below).
@@ -39,6 +43,7 @@ Include `## Strengths` last: at least 2 specific strengths, each a quoted passag
 
 ## Constraints
 
+- Change a position only on decisive evidence from the draft, quoted. Do not soften or harden a finding because of how the writer or the draft sounds.
 - Do not write to any file or edit the draft. Do not drop findings; if unsure, include and mark `Severity: [level] — uncertain`.
 - State Severity once, in its field. Use `references/severity-anchors.md` to set it.
 - Return only what this brief specifies.

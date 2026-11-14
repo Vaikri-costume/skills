@@ -19,8 +19,10 @@ Do not merely check for presence of citations. Read each substantive claim and a
 ## Finding [n]
 Location: paragraph [n] — "[opening words of the passage]"
 Current text: "[exact quote]"
+Layer: [structure / paragraph / sentence]
 Concern: [describe the specific evidence gap — one sentence]
 Severity: High / Medium / Low
+Would change if: [High only: what in the draft would make this finding no longer hold, stated as a condition, not as wording to add]
 ```
 
 ---

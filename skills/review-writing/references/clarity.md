@@ -12,7 +12,7 @@
 
 4. **Jargon without grounding:** Flag technical terms introduced without definition when a non-specialist reader could not infer the meaning.
 
-5. **Reader-expectation position (Gopen and Swan, "The Science of Scientific Writing", American Scientist 1990):** readers expect the subject and verb close together, old information in the topic (opening) position, and the new information you want emphasised in the stress (closing) position, one point per unit, context before novelty, action in verbs. Flag a sentence only when a violation costs the reader something: subject and verb separated by a long interruption; the sentence ending on an afterthought while its point sits mid-sentence; new, unexplained information in the opening position. Limit this sub-category to 5 findings and prefer sentences in paragraphs where the argument is already hard to follow. These are principles, not rules: do not flag a violation that is doing deliberate work.
+5. **Reader-expectation position (Gopen and Swan, "The Science of Scientific Writing", American Scientist 1990):** readers expect the subject and verb close together, old information in the topic (opening) position, and the new information you want emphasised in the stress (closing) position, one point per unit, context before novelty, action in verbs. Flag a sentence only when a violation costs the reader something: subject and verb separated by a long interruption; the sentence ending on an afterthought while its point sits mid-sentence; new, unexplained information in the opening position. Prefer sentences in paragraphs where the argument is already hard to follow. These are principles, not rules: do not flag a violation that is doing deliberate work.
 
 **Output format:**
 ```
@@ -20,6 +20,7 @@
 Location: paragraph [n] — "[opening words of the sentence]"
 Current text: "[exact text]"
 Sub-category: [passive voice / compound sentence / unclear pronoun / jargon / sentence position]
+Layer: [paragraph / sentence]
 Concern: [one sentence — how this specific problem affects the reader or the argument]
 Severity: High / Medium / Low
 ```
