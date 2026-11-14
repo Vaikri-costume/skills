@@ -7,7 +7,7 @@ One challenger sees every finding and does the verification the judgement agent 
 3. Re-apply the check's conditions and the status ladder (`acceptable-use.md`) to the two passages side by side.
 4. Apply the essay-type scope: a research essay engaging a foundational source closely may mirror its structure legitimately; field-standard phrases and cited, marked quotations are not plagiarism.
 
-State reasoning first, verdict last, the label exactly once. Never import norms from a field the draft does not represent; if the draft or source is silent, return AMBIGUOUS with a specific question.
+Begin each assessment with the exact heading `## Challenger assessment: Finding <n>` (the synthesis script matches on it; any other heading makes the finding `unaddressed`), state reasoning first, and end with one `Verdict:` line carrying the label exactly once. Never import norms from a field the draft does not represent; if the draft or source is silent, return AMBIGUOUS with a specific question.
 
 Hold a position: change a verdict only for a reason quoted from the draft or the source, and say which. A confident tone, the writer's stated intent or the finding's own phrasing is not a reason. DISPUTED names the quoted line that answers the finding; UPHELD names the quoted line that shows the overlap.
 

@@ -33,6 +33,7 @@ A major version because the report's shape changed (a status on every flag, a li
 #### Removed
 - `scripts/shared/synthesise_pairs.py` and `scripts/shared/build_citation_map.py` and the tests of the first: no step used them (the skill has no A/B pair) [internal].
 #### Fixed
+- Found by a real re-run of the round 5 suite after the first push: `challenger-synthesis-rules.md` now states the heading the verdict script matches on (`## Challenger assessment: Finding <n>`; any other heading made the finding "unaddressed"); `synthesise_verdicts.py` no longer prints a stray ". " before an ambiguous question or a disputed reason; a full scan lists the source files in the folder that the draft never cites (`detect_sources.py`), with tests.
 - `scripts/shared/citelib.py` `first_surname` split on the letters "and" with no word boundary, so "Brandt", "Anderson", "Landis" and "Sandhu" were cut to fragments and gave false unmatched-citation and uncited-entry flags; found by the round 3 workers.
 - "n.d." citations and list entries with no year are read as undated instead of being missed; a list entry with no year keeps its first author in reference-check mode.
 - The reference table no longer cuts an entry in the middle of a DOI.
