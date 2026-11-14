@@ -1,6 +1,6 @@
 # Glossary — plagiarism-check
 
-Terms this skill uses. `$RUN` is the run folder; `[QUOTE-UNMATCHED]` marks a finding whose quote is not in the draft. Verdict labels: upheld, disputed, ambiguous, unaddressed (`challenger-synthesis-rules.md`).
+Terms this skill uses. `<run>` is the absolute path of the run folder that `runfolder.py new` printed; `[QUOTE-UNMATCHED]` marks a finding whose quote is not in the draft. Verdict labels: upheld, disputed, ambiguous, unaddressed (`challenger-synthesis-rules.md`).
 
 | Term | Definition |
 |---|---|
