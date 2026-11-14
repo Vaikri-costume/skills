@@ -97,5 +97,22 @@ class Quotes(unittest.TestCase):
         self.assertIn('no-source-supplied', r['summary'])
 
 
+class SurnameWithAnd(unittest.TestCase):
+    def test_surnames_containing_and_are_not_split(self):
+        from citelib import first_surname
+        for name in ("Brandt", "Anderson", "Landis", "Sandhu", "Hand"):
+            self.assertEqual(first_surname(name), name.casefold())
+        self.assertEqual(first_surname("Hughes and Smith"), "hughes")
+        self.assertEqual(first_surname("Gardner et al."), "gardner")
+
+    def test_audit_matches_such_surnames_to_the_list(self):
+        from citation_audit import audit
+        text = ("A claim (Brandt 2017) and another (Anderson 2019).\n\n## References\n\n"
+                "Brandt, E. (2017) *Timber*. Hollow: Press.\n\nAnderson, K. (2019) *Roads*. Hollow: Press.\n")
+        r = audit(text)
+        self.assertEqual(r["unmatched_citations"], [])
+        self.assertEqual(r["uncited_bibliography"], [])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -41,6 +41,7 @@ Upgrade built from the published 2.0.0 (the installed project copy was the basel
 - `scripts/shared/detect_sources.py` and `scripts/shared/build_citation_map.py`: no step used them [internal].
 #### Fixed
 - `references/glossary.md` no longer links to a file outside the skill.
+- `scripts/shared/citelib.py`: author surnames containing "and" (Brandt, Anderson, Sandhu) are no longer cut into fragments, which caused false "unmatched citation" flags; two tests added.
 
 ### 2.0.0 — 2026-10-04 (shipped)
 Rewrite on the research refresh. 

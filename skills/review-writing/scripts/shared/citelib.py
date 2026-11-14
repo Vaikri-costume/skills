@@ -34,7 +34,7 @@ _BIB_HEAD_RE = re.compile(r'^\s{0,3}(?:#{1,6}\s*)?(references|bibliography|works
 
 def first_surname(authors):
     """'Hughes and Smith' -> 'hughes'; 'Gardner et al.' -> 'gardner'; 'de Souza' -> 'de souza'."""
-    a = re.split(r'\s*(?:,|and|&)\s*|\s+et\s+al', authors.strip(), maxsplit=1)[0]
+    a = re.split(r'\s*(?:,|\band\b|&)\s*|\s+et\s+al', authors.strip(), maxsplit=1)[0]
     return a.strip().casefold()
 
 
