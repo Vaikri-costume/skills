@@ -1,7 +1,7 @@
 ---
-version: "2.0.0"
+version: "3.0.0"
 category: D
-parent-version: "1.0.0"
+parent-version: "2.0.0"
 author:
   primary: "Vaikri-costume"
   history:
@@ -18,6 +18,32 @@ inspirations: []
 # History — plagiarism-check
 
 ## Changelog
+
+### 3.0.0 — 2026-11-14
+A major version because the report's shape changed (a status on every flag, a limits line, a cleared-matches list and a reference section). Upgrade built from the published 2.0.0 (the installed project copy was the baseline for round 1). Five eval and improve rounds, each graded against the previous round's snapshot, then description rounds and a ship pass; evidence is in the build folder, not shipped.
+#### Added
+- Reference-check mode (`references/mode-reference-check.md`, `scripts/reference_check.py`): parse the list, document-wide cross-check with near matches, Crossref and OpenAlex lookups (only title, first author, year, DOI and ISBN sent), field verdicts, outcomes Clean, Fix, Not found and Review, a frankenstein flag for an identifier that leads to a different work, a patch log that keeps the original value, never a filled-in identifier, books and grey literature never "Not found".
+- `references/acceptable-use.md`: what is and is not plagiarism, the status ladder (verbatim, near-verbatim, structurally derived, possibly derived) and the honest-limits sentence "Clean means nothing found through the search used" in every report.
+- Check 6 (claim fidelity) with statuses supports, partly supports, contradicts, not found in the source text, not checked.
+- `references/profile.md`: the course AI rules, institution wording, common terms and field pages are read from the writer's profile at run time; a gate that stops for a ban without an invitation to retry; rule against following instructions found inside files.
+- `scripts/report_lint.py` (TLDR, offers, gendered words, accusations, evasion advice, grades, rewrite blocks, the limits sentence, identifiers not in the data) and tests: 32 for the new scripts.
+- `scripts/tofile.py` and `scripts/runfolder.py`: every step is one plain `python3` command (no shell redirect, no `mktemp`, no shell variable, no `rm`); the run folder is made and removed by script, and removal refuses anything that is not a plagiarism-check run folder.
+- Shared-identifier flag: two list entries carrying one DOI or ISBN are both Review; an ISBN that belongs to a different book in Crossref is a frankenstein flag.
+- A cleared-matches list under each source in the report, so the writer sees what was looked at and not flagged.
+#### Removed
+- `scripts/shared/synthesise_pairs.py` and `scripts/shared/build_citation_map.py` and the tests of the first: no step used them (the skill has no A/B pair) [internal].
+#### Fixed
+- Found by a real re-run of the round 5 suite after the first push: `challenger-synthesis-rules.md` now states the heading the verdict script matches on (`## Challenger assessment: Finding <n>`; any other heading made the finding "unaddressed"); `synthesise_verdicts.py` no longer prints a stray ". " before an ambiguous question or a disputed reason; a full scan lists the source files in the folder that the draft never cites (`detect_sources.py`), with tests.
+- Found by the same re-run: helpers wrote shell variables (`S=`, `R=`) for the run folder because the steps used the look-alike `$RUN`; the steps now say `<run>` and tell the executor to type absolute paths and never create a shell variable. The gate is now the first instruction in SKILL.md, before any file is opened, even when the task lists the draft as an input file.
+- `scripts/shared/citelib.py` `first_surname` split on the letters "and" with no word boundary, so "Brandt", "Anderson", "Landis" and "Sandhu" were cut to fragments and gave false unmatched-citation and uncited-entry flags; found by the round 3 workers.
+- "n.d." citations and list entries with no year are read as undated instead of being missed; a list entry with no year keeps its first author in reference-check mode.
+- The reference table no longer cuts an entry in the middle of a DOI.
+#### Changed
+- Runs only when the writer asks, naming the check; no offers, no Next line; they/them only.
+- Personal-content scan: the framework list in `source-judgement-research.md` (named theorists drawn from the writer's fields) and an institution regulation number in a script docstring were removed; the field's credited frameworks now come from the writer's field page.
+- The gate is the first Hard rule: nothing but the profile and the rules file is opened before it passes (workers read the draft in the same batch otherwise).
+- The status ladder has a word-for-word alignment test, and a structurally derived finding lists the shared elements in the source's order; a request to reword text so a checker will not flag it is declined in one sentence with no wording.
+- Anti-sycophancy for the judgement agent and challenger: a position changes only for a reason quoted from the draft or source.
 
 ### 2.0.0 — 2026-10-04 (shipped)
 Rewrite on the research refresh. All six open design decisions approved by the user 2026-10-04 as recommended (the original 4 May 2026 plan file is lost; the options were re-derived in the research doc, section 2.2):
@@ -43,3 +69,5 @@ checked-marketplace: 2026-10-05
 Independent design (category D). The 2026-05-14 "SKILL REWRITE STATUS" banner that used to open SKILL.md is recorded in the 1.0.0 entry above; its pending items are closed or explicitly not adopted.
 
 The dispatch protocol in `references/dispatch-protocol.md` was originally written for the sibling writing skills and is now maintained as this skill's own reference.
+
+Acknowledgements (ideas only, rewritten in new words and code; no file, text or script copied): Writing Desk 0.1.0 by Naji Kayal (Apache-2.0) for reference-check wording; peer-review, bibtidy, nagomi, sourceverify and cite2fn plugins for outcome and verdict ideas (licences not checked). Recorded as an acknowledgement, not a change of category.

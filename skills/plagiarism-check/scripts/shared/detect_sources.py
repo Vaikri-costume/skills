@@ -152,6 +152,18 @@ def author_date_sources(draft_text, sources_dir):
     return out
 
 
+def uncited_source_files(sources_dir, results):
+    """full-scan: every file in the sources folder that no cited work was matched to."""
+    used = {r["path"] for r in results if r.get("path")}
+    out = []
+    for f in sorted(os.listdir(sources_dir)):
+        p = os.path.join(sources_dir, f)
+        if os.path.isfile(p) and p not in used and not f.startswith("."):
+            out.append({"id": os.path.splitext(f)[0], "path": p, "title": None,
+                        "in_bibliography": False, "resolved": True, "cited": False})
+    return out
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -183,6 +195,8 @@ def main():
 
     elif args.fmt == "author-date":
         results = author_date_sources(draft_text, args.sources_dir)
+        if args.mode == "full-scan" and args.sources_dir and os.path.isdir(args.sources_dir):
+            results += uncited_source_files(args.sources_dir, results)
 
     else:  # plain-md or other
         if args.mode == "citation-check":
