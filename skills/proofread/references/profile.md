@@ -14,6 +14,7 @@ In this order: the file named by the environment variable `CCVW_USER_PROFILE`; e
 | `style_profile` | Path to the writer's one-page style profile | none: no extra conventions |
 | `session_log_dir` | Folder for the optional one-line session-log marker | none: write nothing |
 | `terms_file` | Path to the canonical-terms file | `canonical-terms.md` beside the draft, if it exists |
+| `scratch_dir` | Folder the run folder is made under | the system temporary directory |
 
 ## Reading the AI rules (the gate)
 

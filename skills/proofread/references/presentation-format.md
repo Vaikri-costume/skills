@@ -109,8 +109,8 @@ Total upheld: [n] | Total disputed: [n] | Total ambiguous: [n] | Total unverifie
 
 ### Cut log
 [From `words.json` (the figures are the script's, never recounted):
-Words ([counted field, verbatim]): [words] | Limit: [limit, or "none stated"] | Over by: [n, or "n/a"]
-If a limit is stated and the draft is over it: list every cut candidate as "Para [n]: delete "[phrase]" ([words_saved] word(s))" and state the candidates' total against the amount over, and the count that would remain if every candidate were deleted (`words_after_all_candidates`, with `meets_limit_if_all_applied`). If the total falls short, say by how many words and stop: no rewording, no other cuts are proposed. If under the limit or no limit is given: write "No cuts needed." The log appears on every run.]
+Words ([counted field, verbatim]): [words] | Limit: [limit, or "none stated"] | Over by: [n, or "n/a"] | Under by: [`under_by` (0 when the draft is over), or "n/a" when no limit]
+If a limit is stated and the draft is over it: list every cut candidate as "Para [n]: delete "[phrase]" ([words_saved] word(s))" and state the candidates' total against the amount over, and the count that would remain if every candidate were deleted (`words_after_all_candidates`, with `meets_limit_if_all_applied`). If the total falls short, write "N words short" (the words still over the limit if every candidate were deleted) and stop: no rewording, no other cuts are proposed. If under the limit or no limit is given: write "No cuts needed." (when a limit is given, the Under by figure above states the margin). The log appears on every run.]
 
 ### AI-use statement
 [One line, exactly this, with the checks that actually ran: "Claude checked this draft for [grammar, typos, British spelling, consistency and register] and returned a report of proposed changes; it generated no text for the draft and edited nothing."]

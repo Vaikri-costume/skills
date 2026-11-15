@@ -9,7 +9,7 @@ Output: JSON on stdout, or {"error": "..."}.
   words                 body words: prose paragraphs, reference list excluded,
                         quoted text included (quotations count towards a limit)
   words_with_references body words plus the reference list
-  limit / over_by       the stated limit and how far over it the body is (null when no limit)
+  limit / over_by / under_by   the stated limit and how far over or under it the body is (null when no limit)
   per_paragraph         [{"paragraph": n, "words": w}] numbered by the shared paragraph map
   cut_candidates        deletion-only suggestions: a filler word or phrase whose removal
                         leaves the sentence grammatical, with the words saved. Candidates
@@ -62,6 +62,7 @@ def analyse(text, limit=None):
     out = {'counted': 'body prose; headings, property lines and the reference list excluded; quotations included',
            'words': words, 'words_with_references': full, 'limit': limit,
            'over_by': (max(0, words - limit) if limit is not None else None),
+           'under_by': (max(0, limit - words) if limit is not None else None),
            'per_paragraph': per, 'cut_candidates': cands,
            'candidate_words_saved': sum(c['words_saved'] for c in cands)}
     out['words_after_all_candidates'] = words - out['candidate_words_saved']
