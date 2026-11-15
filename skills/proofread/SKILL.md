@@ -1,6 +1,6 @@
 ---
 name: proofread
-description: "Proofread a draft essay or any prose in strict British English: grammar, typos, spelling (strict -ise, never -ize), consistency, and register (colloquialisms, contractions, vague quantifiers). Returns proposed changes in a was/now/why table, a cut log against any word limit and an AI-use line; it never edits or rewrites the draft, and writes a separate commented copy on request. Use whenever the user shares or pastes a draft and asks to proofread, check grammar, typos, British spelling, consistency, tone or register, or word count, before submission or during revision. Optional canonical-terms file for project vocabulary. Do NOT use to rewrite or rephrase sentences, write text, or proofread code; for argument and structure feedback use review-writing, for source overlap plagiarism-check, for AI-style review ai-detection-check."
+description: "Proofread a draft essay or any prose in strict British English: grammar, typos, spelling (strict -ise, never -ize), consistency, and register (colloquialisms, contractions, vague quantifiers). Returns proposed changes in a was/now/why table, a cut log against any word limit and an AI-use line; it never edits or rewrites the draft, and writes a separate commented copy on request. Use whenever the user shares, pastes or names the file of a draft and asks to proofread, spell-check, check grammar, typos, -ise versus -ize or other British spelling, consistency, tone or register, how many words it is, or what filler to cut to fit a word limit, before submission or during revision. Optional canonical-terms file for project vocabulary. Do NOT use to rewrite or rephrase sentences, write text, or proofread code; for argument and structure feedback use review-writing, for source overlap plagiarism-check, for AI-style review ai-detection-check."
 license: MIT
 compatibility: Claude Code 2.0 or newer, Python 3
 metadata:
@@ -8,7 +8,7 @@ metadata:
   tier: claude-users
   created: 2026-05-14T00:00
   created-by: Vaikri-costume
-  parent-version: 2.0.0
+  parent-version: 2.1.0
   intended-audience: claude-users
 allowed-tools:
   - Read
@@ -20,15 +20,19 @@ allowed-tools:
   - Write
 ---
 
+**STOP: DO NOT OPEN THE DRAFT YET.** The draft file is the last thing you read, after the profile and the gate below, even if the task names it first. Reading it alongside this file is the one mistake runs keep making.
+
 # proofread
 
-Strict British proofreading. Deterministic scripts do the searching and the tables; read-only agents do the judging; scripts do the synthesising. Detail lives in `references/`; the shared mechanics are in `${CLAUDE_SKILL_DIR}/references/dispatch-protocol.md` (read it once at the start of a run).
+**Before anything else, read in this order, one step per turn:** (1) this file alone; (2) `references/profile.md`, then the profile and rules file it names; (3) only after the gate has passed, the draft. A task's list of input files does not change this order, and the draft is never in the same batch of reads as this file.
+
+Strict British proofreading. Deterministic scripts do the searching and the tables; read-only agents do the judging; scripts do the synthesising. Detail lives in `references/`; read `${CLAUDE_SKILL_DIR}/references/dispatch-protocol.md` once at the start of a run for the shared mechanics. Every step is one plain `python3` command with absolute paths: `<run>` stands for the absolute path of the run folder (type it in; never create a shell variable), and `tofile.py` saves a script's output where a shell redirect would.
 
 It runs when the writer asks and is never volunteered: do not suggest running it, and end the report without proposing further checks. This does not block the writer from using any other skill when they ask for it. Refer to the writer as "the writer" or "they"; never assume gender.
 
 ## Spelling policy (decided 2026-10-04)
 
-Strict British `-ise`. Every `-ize`, `-ization`, `-yze` form is an error, even if used consistently, except words spelt `-ize` in every system (size, prize, seize, capsize, maize). Prefer the other standard British spellings (colour, analyse, catalogue, programme, centre). Quoted source material is never changed.
+Strict British `-ise`. Every `-ize`, `-ization`, `-yze` form is an error, even if used consistently, except words spelt `-ize` in every system (the full exception list is in `references/surface.md`). Prefer the other standard British spellings (colour, analyse, catalogue, programme, centre). Quoted source material is never changed.
 
 ## Gate (first, before any run)
 
@@ -36,33 +40,33 @@ Read `references/profile.md` once: it says where the writer's profile lives, wha
 
 ## Run
 
-1. **Setup** (`dispatch-protocol.md`, Run folder and Input): run folder, draft path or paste, essay type (`research | personal | application | other`), paragraph map. Note a word limit if the writer gives one. If the profile sets `session_log_dir`, append one line `**[HH:MM:SS] SKILL:proofread RUN:<run id> STEP:start**` to the day's log there; with no key, write nothing. Ask for a terms file path only if the writer wants vocabulary checking; otherwise look for `canonical-terms.md` beside the draft. Never invent one. Read the writer's style profile if the profile names one (`references/profile.md`).
-2. **Pre-scans** into `$RUN` (each prints JSON; an `{"error": …}` aborts with that message):
+1. **Setup** (`dispatch-protocol.md`, Run folder and Input): run folder, draft path or paste, essay type (`research | personal | application | other`), paragraph map. Note a word limit if the writer gives one. If the profile sets `session_log_dir`, append one line `**[HH:MM:SS] SKILL:proofread RUN:<run id> STEP:start**` to the day's log there (`<run id>` is the run folder's name); with no key, write nothing. Ask for a terms file path only if the writer wants vocabulary checking; otherwise look for `canonical-terms.md` beside the draft. Never invent one. Read the writer's style profile if the profile names one (`references/profile.md`). Expected output: a run folder, the draft path, the essay type and the paragraph map.
+2. **Pre-scans** into `<run>` (each writes JSON; an `{"error": …}` aborts with that message):
    Independent of each other, so run them together:
-   - `python3 ${CLAUDE_SKILL_DIR}/scripts/check_british_spelling.py <draft> > $RUN/spelling.json`
-   - `python3 ${CLAUDE_SKILL_DIR}/scripts/check_consistency.py <draft> > $RUN/consistency.json`
-   - `python3 ${CLAUDE_SKILL_DIR}/scripts/word_count.py <draft> [--limit N] > $RUN/words.json` (word count, limit, deletion-only cut candidates)
-   - only when the profile names a style profile: `python3 ${CLAUDE_SKILL_DIR}/scripts/style_check.py <draft> <style profile> > $RUN/style.json` (departures from the writer's own conventions; pass it to the Consistency agents as authoritative, like `consistency.json`, to be reported as Check 4 with the Pattern starting `[convention]`)
-3. **Briefs:** read in full from `references/`: `surface.md` (Checks 1–3), `consistency.md` (Check 4), and `register-research.md` or `register-personal.md` (Check 5, by essay type). Field names must match `references/field-name-standard.md`. When a style profile exists, paste its Quick Reference into the register brief as the writer's own conventions.
+   - `python3 ${CLAUDE_SKILL_DIR}/scripts/tofile.py <run>/spelling.json ${CLAUDE_SKILL_DIR}/scripts/check_british_spelling.py <draft>`
+   - `python3 ${CLAUDE_SKILL_DIR}/scripts/tofile.py <run>/consistency.json ${CLAUDE_SKILL_DIR}/scripts/check_consistency.py <draft>`
+   - `python3 ${CLAUDE_SKILL_DIR}/scripts/tofile.py <run>/words.json ${CLAUDE_SKILL_DIR}/scripts/word_count.py <draft> [--limit N]` (word count, limit, deletion-only cut candidates)
+   - only when the profile names a style profile: `python3 ${CLAUDE_SKILL_DIR}/scripts/tofile.py <run>/style.json ${CLAUDE_SKILL_DIR}/scripts/style_check.py <draft> <style profile>` (departures from the writer's own conventions; pass it to the Consistency agents as authoritative, like `consistency.json`, to be reported as Check 4 with the Pattern starting `[convention]`)
+3. **Briefs:** read in full from `references/`: `surface.md` (Checks 1–3), `consistency.md` (Check 4), and `register-research.md` or `register-personal.md` (Check 5, by essay type). Field names must match `references/field-name-standard.md`. When a style profile exists, paste its Quick Reference into the register brief as the writer's own conventions. Expected output: the briefs read, ready to paste into the agent prompts.
 4. **Dispatch six agents in parallel** (`dispatch-protocol.md`, Agent rules; `Explore`, A/B pairs with identical prompts): Surface (gets `spelling.json`), Consistency (gets `consistency.json`), Register. Prompt skeleton and pair rules are in the protocol. Say: "Six proofreader agents running…" Expected output: six agent reports, each with `## Finding` or `## No findings`.
 5. **After return** (`dispatch-protocol.md`, After agents return): correct locations, then pair-synthesise per check:
    - Surface: `--exact Check --substring "Current text"`; Consistency and Register: the same.
    - Merge a Check 3 finding with a Check 4 finding for the same word (compare case-folded, hyphen-stripped forms of both the American and British variants); keep one compound entry, higher severity, with the note `⚠ Also flagged by Consistency check: …`, labelled "⚠ Compound: spelling + consistency" in the report.
-   - Order for the report: Surface, Consistency, Register; renumber into one file `$RUN/findings.md`. Expected output: three merged finding lists (`*-merged.md`), HIGH or UNVERIFIED per finding.
+   - Order for the report: Surface, Consistency, Register; renumber into one file `<run>/findings.md`. Expected output: three merged finding lists (`*-merged.md`), HIGH or UNVERIFIED per finding.
 6. **Vocabulary check** (only if a terms file exists and the surface agents listed unrecognised terms):
-   - `python3 ${CLAUDE_SKILL_DIR}/scripts/canonical_terms.py collect $RUN/<SurfaceA>.md $RUN/<SurfaceB>.md > $RUN/unrecognised.txt` (expected: one term per line)
-   - `python3 ${CLAUDE_SKILL_DIR}/scripts/canonical_terms.py check --terms <file> [--other <file>] [--global <file>] --words $RUN/unrecognised.txt`
+   - `python3 ${CLAUDE_SKILL_DIR}/scripts/tofile.py <run>/unrecognised.txt ${CLAUDE_SKILL_DIR}/scripts/canonical_terms.py collect <run>/<SurfaceA>.md <run>/<SurfaceB>.md` (expected: one term per line)
+   - `python3 ${CLAUDE_SKILL_DIR}/scripts/canonical_terms.py check --terms <file> [--other <file>] [--global <file>] --words <run>/unrecognised.txt`
    - `matched-incorrect` and `near-matched` become Check 3 findings (Severity High, in the field structure of `references/field-name-standard.md`), tagged UNVERIFIED when the class is `near-matched`. Matches from other or global files are migration suggestions for the report. `unresolved` terms go to the writer in one AskUserQuestion ("type the correct spelling, or leave blank to skip"); confirmed terms are appended with `canonical_terms.py add --terms <file> <term>…`. Never write to a terms file without that confirmation.
 7. **Challenger** (`dispatch-protocol.md`, Challenger): two identical challengers, rules from `references/challenger-synthesis-rules.md`; extra scope rules for this skill:
    - Check 3: do not uphold a finding inside directly quoted material.
    - Check 4: do not uphold a variation that follows a consistent pattern (full form then abbreviation; one form only inside quotations). If intent cannot be told, AMBIGUOUS with a specific question.
    - Check 5: do not uphold a register that is consistent throughout.
    - Compound findings: UPHELD if either concern is upheld; DISPUTED only if both are disputed.
-   Save the verdict lines to `$RUN/verdicts.txt`. Expected output: `Finding n: label` lines covering every finding number.
-8. **Tables:** `python3 ${CLAUDE_SKILL_DIR}/scripts/change_table.py $RUN/findings.md --verdicts $RUN/verdicts.txt > $RUN/tables.md` (omit `--verdicts` when the challenger step was skipped). It gives the change table (was, now, why), the flagged-not-changed list and the register audit. The report carries `tables.md` verbatim and never adds a row of its own.
-9. **Presentation** (`dispatch-protocol.md`, Presentation): agent reads `references/presentation-format.md` and `assets/report-header-template.md`. Inputs: findings, verdict lines, `tables.md`, `words.json`, status notes, migration suggestions. The report ends with the cut log and the AI-use line.
-10. **Annotated copy, only when the writer asks for comments in a file:** write it beside the draft as `<draft name>-proofread-comments.<ext>` (add `-2`, `-3` if that name is taken) with `python3 ${CLAUDE_SKILL_DIR}/scripts/annotate_copy.py <draft> $RUN/findings.md --out <copy>`. The script refuses to overwrite any file and checks that stripping its comments restores the draft. Expected output: JSON with `placed` and `unplaced` counts and the copy's path.
-11. **Save on request, then clean up** (`dispatch-protocol.md`, Save and cleanup). Expected output: the report file only where the writer asked, and no run folder left behind.
+   Save the verdict lines to `<run>/verdicts.txt`. Expected output: `Finding n: label` lines covering every finding number.
+8. **Tables:** `python3 ${CLAUDE_SKILL_DIR}/scripts/tofile.py <run>/tables.md ${CLAUDE_SKILL_DIR}/scripts/change_table.py <run>/findings.md --verdicts <run>/verdicts.txt` (omit `--verdicts` when the challenger step was skipped). It gives the change table (was, now, why), the flagged-not-changed list and the register audit. The report carries `tables.md` verbatim and never adds a row of its own.
+9. **Presentation** (`dispatch-protocol.md`, Presentation): agent reads `references/presentation-format.md` and `assets/report-header-template.md`. Inputs: findings, verdict lines, `tables.md`, `words.json`, status notes, migration suggestions. The report ends with the cut log and the AI-use line. Save it to `<run>/report.md` and run `python3 ${CLAUDE_SKILL_DIR}/scripts/report_lint.py <run>/report.md`; fix each problem by editing the file (never re-dispatch the presenter), up to three lint passes, and relay the report verbatim only when it exits 0; if it still fails after three, relay it and name each remaining lint problem. Expected output: `report_lint.py` exits 0.
+10. **Annotated copy, only when the writer asks for comments in a file:** write it beside the draft as `<draft name>-proofread-comments.<ext>` (add `-2`, `-3` if that name is taken) with `python3 ${CLAUDE_SKILL_DIR}/scripts/annotate_copy.py <draft> <run>/findings.md --out <copy>`. The script refuses to overwrite any file and checks that stripping its comments restores the draft. Expected output: JSON with `placed` and `unplaced` counts and the copy's path.
+11. **Save on request, then clean up** (`dispatch-protocol.md`, Save and cleanup). Expected output: the report file only where the writer asked, and no run folder left behind. Removal is a single `runfolder.py remove` call with the literal absolute path; it is safe and must run, not be skipped.
 
 ## Example
 
@@ -83,6 +87,7 @@ User: "proofread my essay.md, it's a research essay, 1,500 words max". Result: t
 - Add terms to a terms file, or entries to a style profile, without the writer's confirmation (a wrong entry silently excuses later errors); never build a style profile from past writing.
 - Drop an UNVERIFIED finding; one agent's catch may be the one the other missed.
 - Volunteer or run another check, or create a profile; the writer asks.
+- Open the draft before the gate has passed, even when the task lists it as an input file or in the same batch of reads as this file: the rules may forbid the run, and reading first leaks coursework.
 
 ## Known limitations
 
