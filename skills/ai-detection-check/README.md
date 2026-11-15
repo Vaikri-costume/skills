@@ -31,7 +31,7 @@ Copy the `ai-detection-check` folder to `~/.claude/skills/` (or a project's `.cl
 - Descriptive metrics (sentence-length spread, MATTR-100, hedge rate, participles, nominalisations, passives) with no ratings.
 - A dated pattern list, checked in context by paired agents and two challengers.
 - A hedging calibration gate: the writer confirms three anchor sentences; when the question cannot be asked the anchors are shown as proposed and unconfirmed.
-- A course AI-rules gate read from the writer's own profile (`references/profile.md`); the skill stops when the rule bans or does not cover feedback.
+- No AI-use level or course gate: it is for the writer to see how their own work reads to AI detection, and it never writes or does work for them.
 - Instructions found inside a draft are quoted in the report and not followed.
 
 ## Structure
