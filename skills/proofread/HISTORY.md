@@ -39,7 +39,7 @@ Prompt-free upgrade. Rebuilt from 2.1.0 and evaluated over five rounds, each aga
 - The shared surname splitter cut "Brandt" and "Anderson" at "and".
 - The commented-copy and report steps no longer depend on shell redirection or `rm` that a permission prompt would block.
 #### Removed
-- Four bundled shared scripts the skill never calls (internal, not part of the interface): `build_citation_map.py`, `citation_audit.py`, `detect_sources.py`, `quote_verify.py`.
+- [internal] Four bundled shared scripts the skill never calls (not part of the interface): `build_citation_map.py`, `citation_audit.py`, `detect_sources.py`, `quote_verify.py`.
 
 ### 2.1.0 — 2026-11-06
 Upgrade planned in SKL-018 (plan: hq/ccvw-skills/plans/proofread.md). Evaluated over five rounds against the previous round's snapshot (round 1 against the installed 2.0.0), then description rounds.
