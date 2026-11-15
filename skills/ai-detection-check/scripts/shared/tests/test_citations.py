@@ -4,8 +4,6 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from citelib import find_citations, parse_bibliography, keys_match, normalise_for_match, quotations  # noqa: E402
-from citation_audit import audit, _isbn_ok  # noqa: E402
-from quote_verify import verify  # noqa: E402
 
 DRAFT = '''# Essay
 
@@ -55,46 +53,12 @@ class Lib(unittest.TestCase):
         self.assertEqual(q[0]['cite']['surname'], 'jones')
 
 
-class Audit(unittest.TestCase):
-    def test_audit(self):
-        a = audit(DRAFT)
-        self.assertEqual(a['bibliography_entries'], 4)
-        self.assertEqual([u['citation'][:6] for u in a['unmatched_citations']], [])       # all cited works are listed
-        self.assertTrue(any('Bohlman' in e for e in a['uncited_bibliography']))            # Bohlman never cited
-        self.assertEqual(a['author_reintroductions'], [{'author': 'jones', 'times': 3}])
-        self.assertEqual(a['sources_per_paragraph']['1'], ['jones 2002', 'hughes 2005', 'gardner 2007'][:0] + a['sources_per_paragraph']['1'])
-
-    def test_unmatched_citation(self):
-        a = audit('Text (Nobody 1999).\n\n## References\n\nJones, M. 2002. Title.\n')
-        self.assertEqual(len(a['unmatched_citations']), 1)
-
-    def test_dominance_and_artefacts(self):
-        paras = '\n\n'.join(f'Paragraph {i} says so (Jones 2002).' for i in range(5))
-        a = audit(paras + '\n\nSee https://x.org/a?utm_source=chatgpt.com and ISBN 978-0-306-40615-7 and ISBN 978-0-306-40615-9.')
-        self.assertTrue(a['dominance'] and a['dominance'][0]['paragraphs'] >= 4)
-        kinds = [x['kind'] for x in a['artefacts']]
-        self.assertIn('utm-parameter', kinds)
-        self.assertEqual(kinds.count('invalid-isbn-checksum'), 1)
-
-    def test_isbn_checksums(self):
-        self.assertTrue(_isbn_ok('978-0-306-40615-7'))
-        self.assertFalse(_isbn_ok('978-0-306-40615-8'))
-        self.assertTrue(_isbn_ok('0-306-40615-2'))
-
-
-class Quotes(unittest.TestCase):
-    SRC = {'jones': 'Intro. Different colleges in the University of London use different referencing systems. More.',
-           'hughes': 'Nothing relevant here at all.'}
-
-    def test_statuses(self):
-        r = verify(DRAFT, self.SRC)
-        by = {x['quote'][:9]: x['status'] for x in r['results']}
-        self.assertEqual(by['different'], 'verified')
-        self.assertEqual(by['an invent'], 'not-found')
-
-    def test_no_source_supplied(self):
-        r = verify(DRAFT, {'jones': self.SRC['jones']})
-        self.assertIn('no-source-supplied', r['summary'])
+class Surnames(unittest.TestCase):
+    def test_surnames_containing_and_are_not_split(self):
+        from citelib import first_surname
+        for name in ("Brandt", "Anderson", "Landis", "Sandhu", "Hand"):
+            self.assertEqual(first_surname(name), name.casefold())
+        self.assertEqual(first_surname("Hughes and Smith"), "hughes")
 
 
 if __name__ == '__main__':

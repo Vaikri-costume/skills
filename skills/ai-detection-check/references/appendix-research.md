@@ -29,6 +29,6 @@ Flag all instances of vague attribution in research essays. The repair is always
 
 Some terms in Pattern 5 are field-standard in specific disciplines. If the vocabulary register (from context loading) includes a term as domain-standard, do NOT flag it as AI vocabulary.
 
-Examples: "nuanced" as a precise qualifier in postcolonial studies; "landscape" as a specific term in urban geography or ecology. When the vocabulary register confirms field-standard use: note "retained — field-standard per vocabulary register."
+Examples: "landscape" as a specific term in geography or ecology; "framework" as a defined term in a named theory. When the vocabulary register confirms field-standard use: note "retained — field-standard per vocabulary register."
 
 If no vocabulary register was provided: apply standard Pattern 5 criteria and note the absence.

@@ -37,11 +37,7 @@ import sys
 
 import os as _os
 sys.path.insert(0, _os.path.normpath(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'shared')))
-try:
-    from citelib import split_body_and_bibliography as _split_body
-except ImportError:  # shared helper missing: scan the whole text
-    def _split_body(t):
-        return t, ''
+from citelib import split_body_and_bibliography as _split_body  # bundled in scripts/shared
 
 _SENTENCE_ABBREVS = ('Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.', 'vs.', 'et al.',
                      'e.g.', 'i.e.', 'etc.', 'Fig.', 'No.', 'Vol.', 'pp.', 'p.')

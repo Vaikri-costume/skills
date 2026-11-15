@@ -8,7 +8,7 @@ For each of: sentence-length variation (`cv`), `mattr_100` (null means too short
 
 ## 2. Hedging calibration
 
-Flag hedging as unnecessary when: the claim is a verifiable fact with a specific citation ("the film was released in 1957": state it); the writer reports their own direct observation or count from close reading ("the bandana appears in 12 of the 15 scenes": state it); the hedge is tautological ("this could possibly be seen as an example of X": if it is X, say so).
+Flag hedging as unnecessary when: the claim is a verifiable fact with a specific citation ("the bridge opened in 1957": state it); the writer reports their own direct observation or count from close reading ("the term appears in 12 of the 15 interviews": state it); the hedge is tautological ("this could possibly be seen as an example of X": if it is X, say so).
 Retain hedging when: the claim is interpretive judgement about cultural meaning, historical causation or contested theory; it attributes intention to a social structure or process; the discipline treats this class of claim as uncertain; the project context marks it as requiring hedging.
 When ambiguous: report "hedging — context-dependent" and quote the claim for the writer. Do not decide for the writer.
 

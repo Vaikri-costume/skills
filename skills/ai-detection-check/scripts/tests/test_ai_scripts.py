@@ -6,10 +6,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 from compute_metrics import compute_metrics, compare_baseline, mattr, features, _split_sentences  # noqa: E402
 from find_ai_patterns import find_patterns  # noqa: E402
 
-HUMAN = ("The bandana appears in twelve of the fifteen scenes. I counted them twice. "
-         "That surprised me, because the film barely mentions it in dialogue; yet the camera keeps returning to it. "
+HUMAN = ("The weir appears in twelve of the fifteen survey photographs. I counted them twice. "
+         "That surprised me, because the report barely mentions it; yet the surveyors keep returning to it. "
          "Short. A much longer sentence follows, which wanders through the argument and refuses, for a while, to arrive anywhere definite. ") * 8
-LLM = ("This analysis underscores the importance of the bandana, highlighting its role in the narrative, "
+LLM = ("This analysis underscores the importance of the weir, highlighting its role in the narrative, "
        "showcasing the interplay of tradition and modernity. The implementation of reforms was initiated by the state. "
        "It is worth noting that the continuation of this tradition stands as a testament to resilience. ") * 6
 

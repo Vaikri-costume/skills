@@ -1,16 +1,16 @@
 # AI Detection Check — Base Brief
 
-This brief is delivered selectively. Agents B and C receive the full brief (all 14 patterns + semantic scanning + hedging criteria + critical reminder). Agent A receives only the hedging calibration section. The challenger receives the full brief plus confirmed calibration anchors and disciplinary context (composed and inlined by the executor at dispatch time).
+This brief is delivered selectively. The Pattern and Voice agents receive the brief below the hedging criteria (all 14 patterns, semantic scanning and the critical reminder). The Quantitative agent applies the hedging criteria (its own brief, `agent-quant.md`, carries the same section). The challengers receive the full brief plus confirmed calibration anchors and disciplinary context (composed and inlined by the executor at dispatch time).
 
 ---
 
-## HEDGING CALIBRATION CRITERIA (Agent A receives this section only)
+## HEDGING CALIBRATION CRITERIA (applied by the Quantitative agent and passed to the challengers)
 
 ### When to flag hedging as unnecessary
 
 Flag hedging when:
-- The claim is a verifiable fact with a specific citation (e.g., "the film was released in 1957" — state directly)
-- The writer is reporting their own direct observation or count from close reading (e.g., "the bandana appears in 12 of the 15 scenes" — if this is a count, state it)
+- The claim is a verifiable fact with a specific citation (e.g., "the bridge opened in 1957" — state directly)
+- The writer is reporting their own direct observation or count from close reading (e.g., "the term appears in 12 of the 15 interviews" — if this is a count, state it)
 - The hedged statement is tautological: "this could possibly be seen as an example of X" — if it is X, say so
 
 ### When to retain hedging
@@ -27,7 +27,7 @@ Report as "hedging — context-dependent" and quote the specific claim for the w
 
 ---
 
-## 14 AI DETECTION PATTERNS (Agents B and C receive below this line; Agent A does not)
+## 14 AI DETECTION PATTERNS (the Pattern and Voice agents read from this line)
 
 These patterns are anchor sets, not exhaustive lists. For every category, you must:
 1. Scan for the listed phrases and constructions (exact match)
