@@ -42,7 +42,7 @@ Upgrade built from the 12 November research on current AI-detection systems (kep
 - The shared surname splitter cut surnames at the letters "and" (Brandt, Anderson, Sandhu), producing false unmatched-citation findings; it now matches whole words.
 - `synthesise_verdicts.py`: a "## Suggested vocabulary register" section after the last challenger assessment was read as that assessment's reason; the block now ends at that heading. A new `--partial` flag gives the `partial-*` labels when only one challenger ran (one file without the flag still gives plain verdict words), and `references/dispatch-protocol.md` says to use it.
 #### Removed
-- The skill's own `evals/` folder is no longer shipped (internal; fixtures stay in the maintainer's build evidence).
+- [internal] The skill's own `evals/` folder is no longer shipped (fixtures stay in the maintainer's build evidence).
 
 ### 2.0.0 — 2026-10-04
 Rewrite on the research refresh. Approved by the user 2026-10-04.
