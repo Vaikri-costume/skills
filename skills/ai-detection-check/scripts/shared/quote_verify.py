@@ -14,9 +14,11 @@ For each quotation of 4+ words (inline "…" or `>` block) the result is one of:
   verified          found (ignoring case, quote style, dashes, ellipses, [editorial] words)
   not-found         the cited source was supplied and the passage is not in it
   no-source-supplied  the citation names an author for whom no --source was given
-  uncited           no citation follows the quotation
+  uncited           no citation follows the quotation (and no source was searched)
 With --all-sources-fallback a not-found/no-source quote is also searched in every supplied source
-(reported as verified-elsewhere) — useful when citations are footnotes.
+(reported as verified-elsewhere) — useful when citations are footnotes or sit at the end of the
+sentence. An uncited quotation found in none of the supplied sources is reported as
+not-found-in-supplied-sources.
 
 Output: JSON {"results": [...], "summary": {...}}.
 """
@@ -53,6 +55,8 @@ def verify(draft_text, sources, fallback=False):
                 hit = [k for k, v in norm_src.items() if nq in v]
                 if hit:
                     status, where = 'verified-elsewhere', hit[0]
+                elif status == 'uncited' and norm_src:
+                    status = 'not-found-in-supplied-sources'
             results.append({'paragraph': num, 'quote': q['quote'][:200], 'status': status,
                             'source': where, 'citation': (cite or {}).get('raw')})
     summary = {}

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
 findings_lib.py — parse and render the `## Finding [n]` blocks that every
-writing-skill agent returns. Shared by synthesise_pairs.py and
-synthesise_verdicts.py.
+writing-skill agent returns. Used by synthesise_verdicts.py.
 
 A block starts at `## Finding <n>` (optionally prefixed `[QUOTE-UNMATCHED]`) and
 ends at the next `## ` heading. Inside it, `Field: value` lines are fields.

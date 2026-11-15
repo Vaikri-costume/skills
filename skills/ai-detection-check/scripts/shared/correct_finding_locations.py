@@ -14,7 +14,7 @@ agent's claim and emits a warning to stderr.
 Why this exists: even with PARAGRAPH MAP injected into every agent prompt,
 agents inconsistently use the canonical numbers. For values that drive
 revision routing (paragraph numbers), promptcraft has a ceiling — deterministic
-post-processing eliminates the variance entirely. See:
+post-processing eliminates the variance entirely.
 
 Output: corrected agent output to stdout (or --out <path>). Stderr carries
 warnings about unmatched quotes (which the calling skill should aggregate

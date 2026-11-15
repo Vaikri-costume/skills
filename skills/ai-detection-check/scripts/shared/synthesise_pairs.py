@@ -8,7 +8,7 @@ Usage:
                       [--out merged.md] [--json]
   synthesise_pairs.py A.md --single       # one agent failed: everything UNVERIFIED
 
-Match rule (same as the old SKILL.md prose): two findings match when every
+Match rule: two findings match when every
 --exact field is equal (case-insensitive) AND every --substring field is equal
 or one contains the other (after whitespace/quote/case normalisation).
 

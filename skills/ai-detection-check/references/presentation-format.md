@@ -11,7 +11,7 @@ Each finding shows: analysis confidence (HIGH = both agents of the pair flagged 
 ```
 [HEADER from assets/report-header-template.md]
 
-**Read this first.** A flag means this language may have replaced sharper, more specific writing. It is not evidence that the text was machine-written, and no tool, including this one, can show that. Formal academic prose and second-language writing are flagged by detectors more often than other writing.
+**Read this first.** A flag means this language may have replaced sharper, more specific writing. It is not evidence about how the text was produced, and no tool, including this one, can show that. External detectors disagree with each other, their results change when text is edited or the tool is updated, and plain, formal and second-language writing is flagged more often than other writing. This report gives no percentage, likelihood or verdict.
 
 ---
 ### Descriptive metrics
@@ -22,7 +22,7 @@ Each finding shows: analysis confidence (HIGH = both agents of the pair flagged 
 
 ---
 ### Citation and quotation integrity   (deterministic: audit.json, quotes.json)
-[A checklist, not accusations. Subsections only if non-empty: quotations not found in the cited source; quotations whose source was not supplied (name the authors to supply); citations with no reference-list entry; reference-list entries never cited; repeated reference entries; authors introduced narratively 3+ times; reference artefacts (utm parameters, invalid ISBN checksums, malformed DOIs, placeholder markers). Say these are the machine-checkable items among the human-judgement indicators in typical UK university misconduct procedures and are also ordinary referencing errors.]
+[A checklist, not accusations. Subsections only if non-empty: quotations not found in the cited source (or, for a quotation with no citation, in any supplied source); quotations whose source was not supplied (name the authors to supply); citations with no reference-list entry; reference-list entries never cited; repeated reference entries; authors introduced narratively 3+ times; reference artefacts (utm parameters, invalid ISBN checksums, malformed DOIs, placeholder markers). Say these are the machine-checkable items among the human-judgement indicators in typical UK university misconduct procedures and are also ordinary referencing errors.]
 
 ---
 ### Quick wins
@@ -48,7 +48,7 @@ Each finding shows: analysis confidence (HIGH = both agents of the pair flagged 
 [The checklist from references/authenticity-evidence.md. Offered, not required.]
 
 ### What this check cannot tell you
-[Four lines from references/authenticity-evidence.md "Rules for the report" 4, plus: whether the institution runs a detector is unknown; honest AI assistance should be declared per the module's rules.]
+[From references/authenticity-evidence.md "Rules for the report": no tool can show how a text was written; features of this draft that systems which score text tend to react to (predictable wording, even rhythm, plain or formal style) also occur in honest writing, so their presence says nothing about origin (describe, never advise on changing the draft); whether the institution runs a detector, and what it would report, is unknown; honest AI assistance is declared in the form the institution asks.]
 
 ### Suggested vocabulary register
 [10–20 terms from the challenger, comma-separated, plus the path they would be saved to. Omit if empty. Never saved without the writer's say-so.]

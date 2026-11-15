@@ -9,9 +9,9 @@ reviewed on LAST_REVIEWED against the Wikipedia guide "Signs of AI writing" (Wik
 AI Cleanup, advice page, not policy). A hit is a prompt to look at the sentence, never
 evidence of machine authorship; human judges do no better than chance on such signs.
 
-Per cross-skill lesson #2 from proofread (scripts pre-filter deterministic noise),
+Because scripts pre-filter deterministic noise,
 this scan EXCLUDES patterns appearing inside directly quoted source material —
-"..." regions are masked before scanning. The B (pattern) agents receive the
+"..." regions are masked before scanning. The Pattern agents receive the
 remaining real-prose hits and focus on context-judgment + semantic equivalents,
 not re-doing the keyword search.
 """
@@ -21,11 +21,7 @@ LAST_REVIEWED = "2026-10-04"
 
 import os as _os
 sys.path.insert(0, _os.path.normpath(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'shared')))
-try:
-    from citelib import split_body_and_bibliography as _split_body
-except ImportError:  # shared helper missing: scan the whole text
-    def _split_body(t):
-        return t, ''
+from citelib import split_body_and_bibliography as _split_body  # bundled in scripts/shared
 
 PATTERNS = {
     1: {"name": "Significance inflation", "phrases": [
@@ -58,7 +54,7 @@ PATTERNS = {
         "powerful", "striking", "compelling", "rich", "innovative",
         "fascinating", "remarkable", "eloquent", "insightful"],
         "density_threshold": 3,
-        "note": "Standard analytical vocabulary in film/cultural-studies essays. Agents should only flag when density >= density_threshold occurrences per paragraph."},
+        "note": "Standard analytical vocabulary in many humanities essays. Agents should only flag when density >= density_threshold occurrences per paragraph."},
     9: {"name": "Excessive hedging", "phrases": [
         "it could be argued that", "it might be suggested that",
         "one could possibly say", "this may indicate",

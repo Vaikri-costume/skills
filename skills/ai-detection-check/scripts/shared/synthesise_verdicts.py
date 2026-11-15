@@ -18,16 +18,16 @@ Output: one line per finding, `Finding n: label`, then (after a blank line) a
 detail section carrying each challenger's reasoning-free verdict text so the
 presentation step can show disputed reasons and ambiguous questions verbatim.
 
-With --single (the plagiarism-check design, one verifying challenger) the label
+With --single (one verifying challenger) the label
 is the plain verdict word: upheld | disputed | ambiguous | unaddressed.
 """
 import argparse
 import re
 import sys
 
-BLOCK_RE = re.compile(r'^##\s*Challenger assessment:\s*Finding\s+(\d+)[^\n]*\n(.*?)(?=^##\s*Challenger assessment:|\Z)',
+BLOCK_RE = re.compile(r'^##\s*Challenger assessment:\s*Finding\s+(\d+)[^\n]*\n(.*?)(?=^##\s*(?:Challenger assessment:|Suggested vocabulary register)|\Z)',
                       re.DOTALL | re.MULTILINE | re.IGNORECASE)
-VERDICT_RE = re.compile(r'^\s*\**Verdict:?\**\s*\[?\s*(UPHELD|DISPUTED|AMBIGUOUS|NOT ASSESSED)\b[:\s—\-]*(.*?)\]?\s*$',
+VERDICT_RE = re.compile(r'^\s*\**Verdict:?\**\s*\[?\s*(UPHELD|DISPUTED|AMBIGUOUS|NOT ASSESSED)\b[:.; \t—\-]*(.*?)\]?\s*$',
                         re.IGNORECASE | re.MULTILINE)
 
 
@@ -69,6 +69,7 @@ def main(argv=None):
     ap.add_argument('a')
     ap.add_argument('b', nargs='?')
     ap.add_argument('--single', action='store_true')
+    ap.add_argument('--partial', action='store_true', help='one challenger file: give the partial-* labels, not plain verdict words')
     ap.add_argument('--findings', type=int, required=True, help='number of findings sent to the challenger(s)')
     args = ap.parse_args(argv)
     try:
@@ -77,7 +78,7 @@ def main(argv=None):
     except OSError as e:
         print(f'error: {e}', file=sys.stderr)
         return 1
-    single = args.single or not args.b
+    single = args.single or (not args.b and not args.partial)
     lines, detail = [], []
     for n in range(1, args.findings + 1):
         ka = va.get(n, (None, ''))

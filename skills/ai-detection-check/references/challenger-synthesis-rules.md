@@ -1,6 +1,6 @@
 # Challenger synthesis rules — ai-detection-check
 
-After both AIChallenger-A and AIChallenger-B return, run `python3 ${CLAUDE_SKILL_DIR}/scripts/shared/synthesise_verdicts.py A.md B.md --findings N`. The script implements the table below (matching by finding number); this file is its specification, and tests in `${CLAUDE_SKILL_DIR}/scripts/shared/tests/` cover it.
+After both challengers return, run `python3 ${CLAUDE_SKILL_DIR}/scripts/shared/synthesise_verdicts.py A.md B.md --findings N` (type the skill folder's absolute path). The script implements the table below (matching by finding number); this file is its specification, and tests in `scripts/shared/tests/` cover it.
 
 ## Match criterion
 
@@ -29,8 +29,8 @@ When **both challengers failed**: tag every finding **unverified-challenger**. N
 
 ai-detection-check carries THREE independent confidence dimensions per finding. The presentation agent must keep them visible separately:
 
-1. **Analysis confidence** — `HIGH` (both primary agents in the pair flagged it) or `UNVERIFIED` (only one flagged it). Set during Step 6 primary-agent synthesis.
-2. **Challenger verdict confidence** — one of the nine values above. Set during Step 9 challenger synthesis.
+1. **Analysis confidence** — `HIGH` (both primary agents in the pair flagged it) or `UNVERIFIED` (only one flagged it). Set when the pattern and voice pairs are synthesised.
+2. **Challenger verdict confidence** — one of the nine values above. Set when the challenger verdicts are synthesised.
 3. **Finding type** — Quantitative metric / Pattern (B agents) / Voice & texture (C agents). Determines which output section the finding lands in.
 
 A single finding can be `(UNVERIFIED, confirmed, Voice & texture)` — only one C agent flagged it, but both challengers upheld it, and it goes in the Voice section. That is a meaningfully strong finding *despite* UNVERIFIED analysis. Do not collapse the three axes; they measure different things.
@@ -61,7 +61,7 @@ The presentation coverage table aggregates the nine verdict values into four buc
 
 ## NOT_ASSESSED handling
 
-The Step 8 challenger prompt instructs: *"if you cannot assess one, write `## Challenger assessment: Finding [n] — NOT ASSESSED — [reason]`."* This is a deliberate non-skip — the challenger explicitly declares the finding wasn't evaluated, so synthesis treats it like a per-finding agent failure, not as silent absence.
+The challenger prompt instructs: *"if you cannot assess one, write `## Challenger assessment: Finding [n] — NOT ASSESSED — [reason]`."* This is a deliberate non-skip — the challenger explicitly declares the finding wasn't evaluated, so synthesis treats it like a per-finding agent failure, not as silent absence.
 
 Synthesis rules for `NOT ASSESSED`:
 - Both challengers return NOT_ASSESSED for a finding → verdict = **partial-unaddressed**, falls into the "needs your decision" bucket. Note the reason from at least one challenger in the entry.
