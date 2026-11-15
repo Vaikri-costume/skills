@@ -8,7 +8,7 @@ metadata:
   tier: claude-users
   created: 2026-05-14T00:00
   created-by: Vaikri-costume
-  parent-version: 2.0.0
+  parent-version: 3.0.0
   intended-audience: claude-users
   mcp-server: zotero (optional; provides zotero_search_items and zotero_get_item_fulltext)
 allowed-tools:

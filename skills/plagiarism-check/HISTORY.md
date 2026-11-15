@@ -1,7 +1,7 @@
 ---
-version: "3.0.0"
+version: "3.0.1"
 category: D
-parent-version: "2.0.0"
+parent-version: "3.0.0"
 author:
   primary: "Vaikri-costume"
   history:
@@ -18,6 +18,11 @@ inspirations: []
 # History — plagiarism-check
 
 ## Changelog
+
+### 3.0.1 — 2026-11-14
+Patch: one bug in a bundled shared script, found while evaluating ai-detection-check.
+#### Fixed
+- `scripts/shared/synthesise_verdicts.py`: a "## Suggested vocabulary register" section after the last challenger assessment was read as part of that assessment and attached to its verdict reason (a verdict with no reason on its own line also picked up the next line). The assessment block now ends at that heading and a reason is read from its own line. Two tests added (`scripts/shared/tests/test_synthesise_verdicts.py`).
 
 ### 3.0.0 — 2026-11-14
 A major version because the report's shape changed (a status on every flag, a limits line, a cleared-matches list and a reference section). Upgrade built from the published 2.0.0 (the installed project copy was the baseline for round 1). Five eval and improve rounds, each graded against the previous round's snapshot, then description rounds and a ship pass; evidence is in the build folder, not shipped.

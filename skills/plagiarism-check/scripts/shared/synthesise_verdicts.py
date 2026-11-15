@@ -25,9 +25,9 @@ import argparse
 import re
 import sys
 
-BLOCK_RE = re.compile(r'^##\s*Challenger assessment:\s*Finding\s+(\d+)[^\n]*\n(.*?)(?=^##\s*Challenger assessment:|\Z)',
+BLOCK_RE = re.compile(r'^##\s*Challenger assessment:\s*Finding\s+(\d+)[^\n]*\n(.*?)(?=^##\s*(?:Challenger assessment:|Suggested vocabulary register)|\Z)',
                       re.DOTALL | re.MULTILINE | re.IGNORECASE)
-VERDICT_RE = re.compile(r'^\s*\**Verdict:?\**\s*\[?\s*(UPHELD|DISPUTED|AMBIGUOUS|NOT ASSESSED)\b[:.;\s—\-]*(.*?)\]?\s*$',
+VERDICT_RE = re.compile(r'^\s*\**Verdict:?\**\s*\[?\s*(UPHELD|DISPUTED|AMBIGUOUS|NOT ASSESSED)\b[:.; \t—\-]*(.*?)\]?\s*$',
                         re.IGNORECASE | re.MULTILINE)
 
 
