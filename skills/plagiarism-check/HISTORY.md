@@ -1,7 +1,7 @@
 ---
-version: "3.0.1"
+version: "3.0.2"
 category: D
-parent-version: "3.0.0"
+parent-version: "3.0.1"
 author:
   primary: "Vaikri-costume"
   history:
@@ -18,6 +18,11 @@ inspirations: []
 # History — plagiarism-check
 
 ## Changelog
+
+### 3.0.2 — 2026-11-16
+Patch from a four-lens polish review (reuse, simplification, efficiency, altitude) of 3.0.1: wording only.
+#### Changed
+- Wording tightened in SKILL.md and README (an out-of-scope sentence, three prohibitions split with semicolons, the "run by name" rule worded the same way in two places, a duplicated adapt-to-your-institution sentence removed); `parent-version` set to 3.0.1. No behaviour changes.
 
 ### 3.0.1 — 2026-11-14
 Patch: one bug in a bundled shared script, found while evaluating ai-detection-check.

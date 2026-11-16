@@ -10,7 +10,7 @@ Checks a draft for plagiarism risk before submission and reports in UK universit
 
 ## Intent
 
-Categories and weights follow common UK university misconduct procedures; adapt the category names and thresholds to your own institution's policy. Scripts find, agents judge, a challenger verifies against the texts. It reports flags, not accusations, and says every time what it cannot do: it compares only the sources it is given and cannot replace the Turnitin similarity report. Overlap thresholds (6 words verbatim, 4 to 5 weak) are heuristics because institutions and QAA publish none. Each flag has a status (verbatim, near-verbatim, structurally derived, possibly derived) and "Clean" always means nothing found through the search used. It runs only when you ask, names no field or course, and never offers another check. Voice comparison with the writer's past work was removed (an authorship question) and quote-integration moved to review-writing.
+Scripts find, agents judge, a challenger verifies against the texts. It reports flags, not accusations, and says every time what it cannot do: it compares only the sources it is given and cannot replace the Turnitin similarity report. Overlap thresholds (6 words verbatim, 4 to 5 weak) are heuristics because institutions and QAA publish none. Each flag has a status (verbatim, near-verbatim, structurally derived, possibly derived) and "Clean" always means nothing found through the search used. It runs only when you ask, names no field or course, and never offers another check. Voice comparison with the writer's past work was removed (an authorship question) and quote-integration moved to review-writing.
 
 ## When to use / When NOT to use
 
