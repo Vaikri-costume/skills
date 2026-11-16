@@ -92,7 +92,7 @@ Omit this section if none.]
 
 ### Coverage
 
-Bucket mapping (from `references/challenger-synthesis-rules.md`):
+Bucket mapping:
 - upheld = confirmed + partial-upheld
 - disputed = confirmed-disputed + partial-disputed
 - ambiguous = split + ambiguous + partial-ambiguous + partial-unaddressed

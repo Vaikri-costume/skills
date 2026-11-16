@@ -43,11 +43,6 @@ Use this format verbatim when passing `[CHALLENGER_VERDICTS]` to the presentatio
 
 ## Coverage table bucket mapping (used by the presentation agent)
 
-The presentation agent's coverage table aggregates the nine labels into four buckets:
-
-- **upheld**: confirmed + partial-upheld
-- **disputed**: confirmed-disputed + partial-disputed
-- **ambiguous**: split + ambiguous + partial-ambiguous + partial-unaddressed
-- **unverified-challenger**: unverified-challenger
+The presentation agent's coverage table aggregates the nine labels into four buckets. The mapping is written once, in `references/presentation-format.md` (Coverage), which is the only file the presentation agent reads for it.
 
 This collapse is intentional — readers care about the four actionable buckets. The full nine-value taxonomy is preserved in the per-finding entries so a reader can see whether an "upheld" finding had both challengers agreeing or only one challenger surviving.
