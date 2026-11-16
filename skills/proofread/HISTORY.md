@@ -1,7 +1,7 @@
 ---
-version: "2.2.0"
+version: "2.2.1"
 category: D
-parent-version: "2.1.0"
+parent-version: "2.2.0"
 author:
   primary: "Vaikri-costume"
   history:
@@ -18,6 +18,13 @@ inspirations: []
 # History — proofread
 
 ## Changelog
+
+### 2.2.1 — 2026-11-16
+Patch from the cold audit and a four-lens polish review (reuse, simplification, efficiency, altitude) of 2.2.0.
+#### Changed
+- SKILL.md sections now follow the standard order (hard rules before the run steps, known limitations after them, Examples and Troubleshooting last); the session-log marker is written again at the agents, challenge and present steps so a compaction can tell which phase was active.
+- The four-bucket verdict mapping is written once, in `references/presentation-format.md`; `references/challenger-synthesis-rules.md` points to it.
+- Wording tightened in SKILL.md and README (duplicated rules, vague referents, a stale README line about the session log); `parent-version` set to 2.2.0.
 
 ### 2.2.0 — 2026-11-14
 Prompt-free upgrade. Rebuilt from 2.1.0 and evaluated over five rounds, each against the previous round's snapshot (round 1 against installed 2.1.0), then real description trigger tests. Real defects found and fixed are listed below; round reports are in the build's `evidence/`.

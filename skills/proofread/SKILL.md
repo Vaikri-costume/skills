@@ -8,7 +8,7 @@ metadata:
   tier: claude-users
   created: 2026-05-14T00:00
   created-by: Vaikri-costume
-  parent-version: 2.1.0
+  parent-version: 2.2.0
   intended-audience: claude-users
 allowed-tools:
   - Read
@@ -20,55 +20,70 @@ allowed-tools:
   - Write
 ---
 
-**STOP: DO NOT OPEN THE DRAFT YET.** The draft file is the last thing you read, after the profile and the gate below, even if the task names it first. Reading it alongside this file is the one mistake runs keep making.
+**STOP: DO NOT OPEN THE DRAFT YET.** Read the draft last, after the profile and the gate below, even if the task names it first, and never in the same batch as this file. Reading it early is the one mistake runs keep making.
 
 # proofread
 
-**Before anything else, read in this order, one step per turn:** (1) this file alone; (2) `references/profile.md`, then the profile and rules file it names; (3) only after the gate has passed, the draft. A task's list of input files does not change this order, and the draft is never in the same batch of reads as this file.
+**Before anything else, read in this order, one step per turn:** (1) this file alone; (2) `references/profile.md`, then the profile and rules file it names; (3) only after the gate has passed, the draft. A task's input-file list does not change this order.
 
-Strict British proofreading. Deterministic scripts do the searching and the tables; read-only agents do the judging; scripts do the synthesising. Detail lives in `references/`; read `${CLAUDE_SKILL_DIR}/references/dispatch-protocol.md` once at the start of a run for the shared mechanics. Every step is one plain `python3` command with absolute paths: `<run>` stands for the absolute path of the run folder (type it in; never create a shell variable), and `tofile.py` saves a script's output where a shell redirect would.
+Strict British proofreading: scripts search, build tables and synthesise; read-only agents judge. Read `${CLAUDE_SKILL_DIR}/references/dispatch-protocol.md` once at the start of a run for the shared mechanics; other detail is in `references/`. Every step is one plain `python3` command with absolute paths. `<run>` is the run folder's absolute path (type it in; never create a shell variable); `tofile.py` saves a script's output instead of a shell redirect.
 
-It runs when the writer asks and is never volunteered: do not suggest running it, and end the report without proposing further checks. This does not block the writer from using any other skill when they ask for it. Refer to the writer as "the writer" or "they"; never assume gender.
+It runs only when the writer asks: do not suggest running it or propose further checks at the end of the report. Other skills remain available when the writer asks. Refer to the writer as "the writer" or "they"; never assume gender.
 
 ## Spelling policy (decided 2026-10-04)
 
-Strict British `-ise`. Every `-ize`, `-ization`, `-yze` form is an error, even if used consistently, except words spelt `-ize` in every system (the full exception list is in `references/surface.md`). Prefer the other standard British spellings (colour, analyse, catalogue, programme, centre). Quoted source material is never changed.
+Strict British `-ise`. Every `-ize`, `-ization` and `-yze` form is an error, even if used consistently, except words spelt `-ize` in every system (full list in `references/surface.md`). Prefer the other standard British spellings (colour, analyse, catalogue, programme, centre). Quoted source material is never changed.
 
 ## Gate (first, before any run)
 
-Read `references/profile.md` once: it says where the writer's profile lives, what each key means and how to apply the course AI rules. If the draft is coursework, apply that gate and stop, saying why, unless a rule allows language feedback or the writer confirms it does. With no profile and no coursework, carry on with the defaults.
+Read `references/profile.md` once; it says where the profile lives, what each key means and how to apply the course AI rules. For coursework, apply that gate and stop, saying why, unless a rule allows language feedback or the writer confirms it does. With no profile and no coursework, carry on with the defaults.
+
+## Hard rules (never do any of these)
+
+- Rewrite or silently correct the writer's prose: every change is a finding for the writer to decide. Never edit the draft file in place; comments go in a separate copy.
+- Treat quoted source spelling as an error; quotations are the source's words, not the writer's.
+- Add terms or style-profile entries without the writer's confirmation (a wrong entry silently excuses later errors); never build a style profile from past writing.
+- Drop an UNVERIFIED finding; one agent's catch may be the one the other missed.
+- Volunteer or run another check, or create a profile; the writer asks.
+- Open the draft before the gate has passed, however the task lists it: the rules may forbid the run, and reading first leaks coursework.
 
 ## Run
 
-1. **Setup** (`dispatch-protocol.md`, Run folder and Input): run folder, draft path or paste, essay type (`research | personal | application | other`), paragraph map. Note a word limit if the writer gives one. If the profile sets `session_log_dir`, append one line `**[HH:MM:SS] SKILL:proofread RUN:<run id> STEP:start**` to the day's log there (`<run id>` is the run folder's name); with no key, write nothing. Ask for a terms file path only if the writer wants vocabulary checking; otherwise look for `canonical-terms.md` beside the draft. Never invent one. Read the writer's style profile if the profile names one (`references/profile.md`). Expected output: a run folder, the draft path, the essay type and the paragraph map.
-2. **Pre-scans** into `<run>` (each writes JSON; an `{"error": …}` aborts with that message):
-   Independent of each other, so run them together:
+1. **Setup** (`dispatch-protocol.md`, Run folder and Input): run folder, draft path or paste, essay type (`research | personal | application | other`), paragraph map. Note a word limit if the writer gives one. If the profile sets `session_log_dir`, append `**[HH:MM:SS] SKILL:proofread RUN:<run id> STEP:start**` to that day's log (`<run id>` is the run folder's name); otherwise write nothing. Append the same line with `STEP:agents` at step 4, `STEP:challenge` at step 7 and `STEP:present` at step 9, so a compaction shows which phase was active. Ask for a terms file path only if the writer wants vocabulary checking; otherwise look for `canonical-terms.md` beside the draft, and never invent one. If the profile names a style profile, read it (`references/profile.md`). Expected output: a run folder, the draft path, the essay type and the paragraph map.
+2. **Pre-scans** into `<run>` (each writes JSON; an `{"error": …}` aborts with that message). They are independent, so run them together:
    - `python3 ${CLAUDE_SKILL_DIR}/scripts/tofile.py <run>/spelling.json ${CLAUDE_SKILL_DIR}/scripts/check_british_spelling.py <draft>`
    - `python3 ${CLAUDE_SKILL_DIR}/scripts/tofile.py <run>/consistency.json ${CLAUDE_SKILL_DIR}/scripts/check_consistency.py <draft>`
    - `python3 ${CLAUDE_SKILL_DIR}/scripts/tofile.py <run>/words.json ${CLAUDE_SKILL_DIR}/scripts/word_count.py <draft> [--limit N]` (word count, limit, deletion-only cut candidates)
-   - only when the profile names a style profile: `python3 ${CLAUDE_SKILL_DIR}/scripts/tofile.py <run>/style.json ${CLAUDE_SKILL_DIR}/scripts/style_check.py <draft> <style profile>` (departures from the writer's own conventions; pass it to the Consistency agents as authoritative, like `consistency.json`, to be reported as Check 4 with the Pattern starting `[convention]`)
-3. **Briefs:** read in full from `references/`: `surface.md` (Checks 1–3), `consistency.md` (Check 4), and `register-research.md` or `register-personal.md` (Check 5, by essay type). Field names must match `references/field-name-standard.md`. When a style profile exists, paste its Quick Reference into the register brief as the writer's own conventions. Expected output: the briefs read, ready to paste into the agent prompts.
-4. **Dispatch six agents in parallel** (`dispatch-protocol.md`, Agent rules; `Explore`, A/B pairs with identical prompts): Surface (gets `spelling.json`), Consistency (gets `consistency.json`), Register. Prompt skeleton and pair rules are in the protocol. Say: "Six proofreader agents running…" Expected output: six agent reports, each with `## Finding` or `## No findings`.
+   - only when the profile names a style profile: `python3 ${CLAUDE_SKILL_DIR}/scripts/tofile.py <run>/style.json ${CLAUDE_SKILL_DIR}/scripts/style_check.py <draft> <style profile>` (departures from the writer's own conventions; pass it to the Consistency agents as authoritative, like `consistency.json`; they report it as Check 4, Pattern starting `[convention]`)
+3. **Briefs:** read in full from `references/`: `surface.md` (Checks 1–3), `consistency.md` (Check 4), and `register-research.md` or `register-personal.md` (Check 5, by essay type). Field names must match `references/field-name-standard.md`. If a style profile was read at step 1, paste its Quick Reference into the register brief as the writer's own conventions. Expected output: the briefs, ready to paste into the agent prompts.
+4. **Dispatch six agents in parallel** (`dispatch-protocol.md`, Agent rules; `Explore`, A/B pairs with identical prompts): Surface (gets `spelling.json`), Consistency (gets `consistency.json`), Register. Say: "Six proofreader agents running…" Expected output: six agent reports, each with `## Finding` or `## No findings`.
 5. **After return** (`dispatch-protocol.md`, After agents return): correct locations, then pair-synthesise per check:
    - Surface: `--exact Check --substring "Current text"`; Consistency and Register: the same.
-   - Merge a Check 3 finding with a Check 4 finding for the same word (compare case-folded, hyphen-stripped forms of both the American and British variants); keep one compound entry, higher severity, with the note `⚠ Also flagged by Consistency check: …`, labelled "⚠ Compound: spelling + consistency" in the report.
+   - Merge a Check 3 and a Check 4 finding for the same word (compare case-folded, hyphen-stripped forms of the American and British variants) into one compound entry at the higher severity, with the note `⚠ Also flagged by Consistency check: …`; the report labels it "⚠ Compound: spelling + consistency".
    - Order for the report: Surface, Consistency, Register; renumber into one file `<run>/findings.md`. Expected output: three merged finding lists (`*-merged.md`), HIGH or UNVERIFIED per finding.
 6. **Vocabulary check** (only if a terms file exists and the surface agents listed unrecognised terms):
    - `python3 ${CLAUDE_SKILL_DIR}/scripts/tofile.py <run>/unrecognised.txt ${CLAUDE_SKILL_DIR}/scripts/canonical_terms.py collect <run>/<SurfaceA>.md <run>/<SurfaceB>.md` (expected: one term per line)
    - `python3 ${CLAUDE_SKILL_DIR}/scripts/canonical_terms.py check --terms <file> [--other <file>] [--global <file>] --words <run>/unrecognised.txt`
-   - `matched-incorrect` and `near-matched` become Check 3 findings (Severity High, in the field structure of `references/field-name-standard.md`), tagged UNVERIFIED when the class is `near-matched`. Matches from other or global files are migration suggestions for the report. `unresolved` terms go to the writer in one AskUserQuestion ("type the correct spelling, or leave blank to skip"); confirmed terms are appended with `canonical_terms.py add --terms <file> <term>…`. Never write to a terms file without that confirmation.
-7. **Challenger** (`dispatch-protocol.md`, Challenger): two identical challengers, rules from `references/challenger-synthesis-rules.md`; extra scope rules for this skill:
+   - `matched-incorrect` and `near-matched` become Check 3 findings (Severity High, fields per `references/field-name-standard.md`), tagged UNVERIFIED for `near-matched`. Matches from other or global files are migration suggestions for the report. `unresolved` terms go to the writer in one AskUserQuestion ("type the correct spelling, or leave blank to skip"); confirmed terms are appended with `canonical_terms.py add --terms <file> <term>…`. Never write to a terms file without that confirmation.
+7. **Challenger** (`dispatch-protocol.md`, Challenger): two identical challengers using `references/challenger-synthesis-rules.md`, plus these scope rules for this skill:
    - Check 3: do not uphold a finding inside directly quoted material.
-   - Check 4: do not uphold a variation that follows a consistent pattern (full form then abbreviation; one form only inside quotations). If intent cannot be told, AMBIGUOUS with a specific question.
+   - Check 4: do not uphold a variation that follows a consistent pattern (full form then abbreviation; one form only inside quotations). If intent cannot be told, label it AMBIGUOUS and ask a specific question.
    - Check 5: do not uphold a register that is consistent throughout.
    - Compound findings: UPHELD if either concern is upheld; DISPUTED only if both are disputed.
    Save the verdict lines to `<run>/verdicts.txt`. Expected output: `Finding n: label` lines covering every finding number.
 8. **Tables:** `python3 ${CLAUDE_SKILL_DIR}/scripts/tofile.py <run>/tables.md ${CLAUDE_SKILL_DIR}/scripts/change_table.py <run>/findings.md --verdicts <run>/verdicts.txt` (omit `--verdicts` when the challenger step was skipped). It gives the change table (was, now, why), the flagged-not-changed list and the register audit. The report carries `tables.md` verbatim and never adds a row of its own.
-9. **Presentation** (`dispatch-protocol.md`, Presentation): agent reads `references/presentation-format.md` and `assets/report-header-template.md`. Inputs: findings, verdict lines, `tables.md`, `words.json`, status notes, migration suggestions. The report ends with the cut log and the AI-use line. Save it to `<run>/report.md` and run `python3 ${CLAUDE_SKILL_DIR}/scripts/report_lint.py <run>/report.md`; fix each problem by editing the file (never re-dispatch the presenter), up to three lint passes, and relay the report verbatim only when it exits 0; if it still fails after three, relay it and name each remaining lint problem. Expected output: `report_lint.py` exits 0.
+9. **Presentation** (`dispatch-protocol.md`, Presentation): agent reads `references/presentation-format.md` and `assets/report-header-template.md`. Inputs: findings, verdict lines, `tables.md`, `words.json`, status notes, migration suggestions. The report ends with the cut log and the AI-use line. Save it to `<run>/report.md` and run `python3 ${CLAUDE_SKILL_DIR}/scripts/report_lint.py <run>/report.md`; fix each problem by editing the file (never re-dispatch the presenter), for up to three lint passes. Relay the report verbatim only on exit 0; if it still fails after three passes, relay it and name each remaining problem. Expected output: `report_lint.py` exits 0.
 10. **Annotated copy, only when the writer asks for comments in a file:** write it beside the draft as `<draft name>-proofread-comments.<ext>` (add `-2`, `-3` if that name is taken) with `python3 ${CLAUDE_SKILL_DIR}/scripts/annotate_copy.py <draft> <run>/findings.md --out <copy>`. The script refuses to overwrite any file and checks that stripping its comments restores the draft. Expected output: JSON with `placed` and `unplaced` counts and the copy's path.
-11. **Save on request, then clean up** (`dispatch-protocol.md`, Save and cleanup). Expected output: the report file only where the writer asked, and no run folder left behind. Removal is a single `runfolder.py remove` call with the literal absolute path; it is safe and must run, not be skipped.
+11. **Save on request, then clean up** (`dispatch-protocol.md`, Save and cleanup). Expected output: the report file only where the writer asked, and no run folder left behind. Remove it with a single `runfolder.py remove` call using the literal absolute path; this is safe and mandatory.
 
-## Example
+## Known limitations
+
+- The A/B pairs and two challengers need a runtime that can dispatch read-only subagents. Without one, a single pass per role is possible, but every finding is UNVERIFIED and none is a quick win.
+- The word count includes quotations and excludes headings and the reference list; a course that counts differently needs its own number.
+- `style_check.py` matches the listed forms exactly; it cannot see a convention written only as guidance.
+- British single-quote masking can mis-pair a possessive plural followed by a space (the dogs' bowls); the agents' judgement covers the rest.
+
+## Examples
 
 User: "proofread my essay.md, it's a research essay, 1,500 words max". Result: the full report with a cut log against 1,500 and an AI-use line; essay.md is not altered.
 
@@ -80,22 +95,6 @@ User: "proofread my essay.md, it's a research essay, 1,500 words max". Result: t
 - Terms file missing -> skip the vocabulary check and say so; never create one unasked.
 - `annotate_copy.py` refuses -> choose another `--out` name.
 
-## Hard rules (never)
-
-- Rewrite the writer's prose or silently correct it; every change is a finding, so the writer decides. Never edit the draft file in place; comments go in a separate copy.
-- Treat quoted source spelling as an error; quotations are the source's words, not the writer's.
-- Add terms to a terms file, or entries to a style profile, without the writer's confirmation (a wrong entry silently excuses later errors); never build a style profile from past writing.
-- Drop an UNVERIFIED finding; one agent's catch may be the one the other missed.
-- Volunteer or run another check, or create a profile; the writer asks.
-- Open the draft before the gate has passed, even when the task lists it as an input file or in the same batch of reads as this file: the rules may forbid the run, and reading first leaks coursework.
-
-## Known limitations
-
-- The A/B pairs and two challengers need a runtime that can dispatch read-only subagents; without them, one pass per role is possible but every finding is UNVERIFIED and there are no quick wins.
-- The word count includes quotations and excludes headings and the reference list; a course that counts differently needs its own number.
-- `style_check.py` matches the listed forms exactly; it cannot see a convention written only as guidance.
-- British single-quote masking can mis-pair a possessive plural followed by a space (the dogs' bowls); the agents' judgement covers the rest.
-
 ## References
 
 | Path | Purpose | When to read |
@@ -105,5 +104,3 @@ User: "proofread my essay.md, it's a research essay, 1,500 words max". Result: t
 | `references/surface.md`, `consistency.md`, `register-research.md`, `register-personal.md` | The agent briefs for Checks 1 to 5 | step 3 |
 | `references/field-name-standard.md`, `challenger-synthesis-rules.md`, `presentation-format.md`, `glossary.md` | Field contract, verdict labels, report format, terms | steps 5 to 9 |
 | `scripts/` (with `tests/` and `shared/`) | Prescans, tables, copy tool and synthesis helpers | named in each step |
-
-Sibling skills: `review-writing`, `plagiarism-check`, `ai-detection-check`.
