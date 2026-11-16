@@ -10,7 +10,7 @@ Reviews a draft for AI-typical language, over-smooth texture, hedging calibratio
 
 ## Intent
 
-Detectors differ from each other, are easy to evade and flag plain, formal and second-language writing more often, so this skill is a revision aid, not a detector: no scores, no RED/YELLOW/GREEN on metrics (no published thresholds exist), no claim about authorship, no advice on evasion. The machine-checkable indicators from typical UK misconduct procedures (non-existent quotations, uncited bibliography entries, repeated introductions) are checked by scripts. Pattern lists and detector background are perishable and dated (`references/detector-landscape.md`).
+Detectors differ from each other, are easy to evade and flag plain, formal and second-language writing more often, so this skill is a revision aid, not a detector: no scores, no RED/YELLOW/GREEN on metrics (no published thresholds exist), no claim about authorship, no advice on evasion. The machine-checkable indicators from typical UK misconduct procedures (non-existent quotations, uncited bibliography entries, repeated introductions) are checked by scripts. Pattern lists and detector background are dated (`references/detector-landscape.md`).
 
 ## When to use / When NOT to use
 
@@ -31,14 +31,14 @@ Copy the `ai-detection-check` folder to `~/.claude/skills/` (or a project's `.cl
 - Descriptive metrics (sentence-length spread, MATTR-100, hedge rate, participles, nominalisations, passives) with no ratings.
 - A dated pattern list, checked in context by paired agents and two challengers.
 - A hedging calibration gate: the writer confirms three anchor sentences; when the question cannot be asked the anchors are shown as proposed and unconfirmed.
-- No AI-use level or course gate: it is for the writer to see how their own work reads to AI detection, and it never writes or does work for them.
+- No AI-use level or course-category gate: the writer runs it on their own work, and it never writes or does work for them.
 - Instructions found inside a draft are quoted in the report and not followed.
 
 ## Structure
 
 - `SKILL.md` — the steps, hard rules and limitations.
 - `references/` — briefs, the report format, the evidence and limits text, the profile reference and the dated detector landscape.
-- `scripts/` — `compute_metrics.py`, `find_ai_patterns.py`, `report_lint.py`, `tofile.py`, `runfolder.py` and the bundled shared citation scripts in `scripts/shared/`, with tests.
+- `scripts/` — `compute_metrics.py`, `find_ai_patterns.py`, `report_lint.py`, `tofile.py`, `runfolder.py` and `scripts/shared/` (citation, quotation, paragraph, location, pair and verdict scripts), with tests in each `tests/` folder.
 
 ## Sibling skills
 

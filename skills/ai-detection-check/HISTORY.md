@@ -1,7 +1,7 @@
 ---
-version: "3.0.0"
+version: "3.0.1"
 category: D
-parent-version: "2.0.0"
+parent-version: "3.0.0"
 author:
   primary: "Vaikri-costume"
   history:
@@ -18,6 +18,13 @@ inspirations: []
 # History — ai-detection-check
 
 ## Changelog
+
+### 3.0.1 — 2026-11-16
+Patch from the cold audit of 3.0.0 and a four-lens polish review (reuse, simplification, efficiency, altitude).
+#### Changed
+- SKILL.md sections follow the standard order (settings and hard rules before the run steps, known limitations after them, Examples and Troubleshooting last); the session-log marker is written again at the agents, challenge and present steps; the evasion-request reply is stated once, in `references/authenticity-evidence.md`; a known-limitation line says looking works up in Crossref and OpenAlex is plagiarism-check's reference-check mode.
+- Wording tightened in SKILL.md and README (duplicated rules, vague referents, the shared scripts listed completely); `parent-version` set to 3.0.0.
+- Tests for the citation audit (surnames containing "and", uncited entries, reference artefacts) added to the shared test suite; no behaviour change.
 
 ### 3.0.0 — 2026-11-14
 Upgrade built from the 12 November research on current AI-detection systems (kept descriptive: no score, no verdict, no evasion advice). Evaluated over five rounds, each against the version it was iterated from (round 1 against installed 2.0.0), then real description trigger tests. Round reports are in the build's `evidence/`.
