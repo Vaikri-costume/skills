@@ -88,7 +88,9 @@ def parse_entry(n, raw):
     isbn = ISBN_RE.search(raw)
     e["isbn"] = isbn.group(1).strip() if isbn else ""
     url = URL_RE.search(raw)
-    e["url"] = url.group(0).rstrip(".,;)") if url and not (doi and "doi.org" in url.group(0)) else ""
+    host = (urllib.parse.urlparse(url.group(0)).hostname or "").lower() if url else ""
+    is_doi_link = host == "doi.org" or host.endswith(".doi.org")
+    e["url"] = url.group(0).rstrip(".,;)") if url and not (doi and is_doi_link) else ""
     m = YEAR_RE.search(raw)
     e["year"] = m.group(1) if m else ""
     head = raw[:m.start()] if m else ""
