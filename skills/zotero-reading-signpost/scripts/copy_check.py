@@ -27,7 +27,7 @@ from pathlib import Path
 STOP = set("""a an the and or but if then so because as of in on at to for from by with without about
 into onto over under between through is are was were be been being it its this that these those there
 which who whom whose what when where while not no nor than too very can could may might will would
-shall should must do does did done has have had he they they them their his their we you i our your one
+shall should must do does did done has have had he she they them their his her we you i our your one
 also only such more most some any each every both either neither just even still yet how why""".split())
 
 

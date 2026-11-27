@@ -20,7 +20,7 @@ Each query text must be unique: `run_eval.py` scores results by query text, so t
 Queries must be realistic — what a Claude Code or Claude.ai user would actually type. Concrete, specific, with detail (file paths, job context, column names, company names, URLs, a bit of backstory). Mix lengths and casual/formal/typo registers. Focus on edge cases.
 
 Bad: `"Format this data"`, `"Extract text from PDF"`, `"Create a chart"`
-Good: `"ok so my boss just sent me this xlsx file (its in my downloads, called something like 'Q4 sales final FINAL v2.xlsx') and they wants me to add a column that shows the profit margin as a percentage. The revenue is in column C and costs are in column D i think"`
+Good: `"ok so my boss just sent me this xlsx file (its in my downloads, called something like 'Q4 sales final FINAL v2.xlsx') and they want me to add a column that shows the profit margin as a percentage. The revenue is in column C and costs are in column D i think"`
 
 - **should-trigger (8-10)**: vary phrasing (formal/casual), include cases without explicit skill/file names, throw in uncommon use cases and cases where this skill competes with another but should win.
 - **should-not-trigger (8-10)**: near-misses are most valuable — same keywords/concepts but actually need something different. Avoid obviously-irrelevant negatives like "write a fibonacci function" for a PDF skill; they don't test anything.

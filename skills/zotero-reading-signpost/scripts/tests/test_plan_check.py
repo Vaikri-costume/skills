@@ -97,8 +97,8 @@ class PlanFlags(unittest.TestCase):
         self.assertNotIn("NOT PLACED", out)
 
     def test_sentence_ending_in_a_closing_quote_is_counted(self):
-        plan = [{"n": 1, "comment": "they said stop", "page": 2, "quote": 'They said "stop."'}]
-        code, out = run(plan, 'They said stop [1] "now." Then the protest ended.')
+        plan = [{"n": 1, "comment": "she said stop", "page": 2, "quote": 'She said "stop."'}]
+        code, out = run(plan, 'She said stop [1] "now." Then the protest ended.')
         self.assertIn("WORDING: no highlight behind this sentence | Then the protest ended.", out)
 
     def test_number_with_comma_is_one_word(self):
