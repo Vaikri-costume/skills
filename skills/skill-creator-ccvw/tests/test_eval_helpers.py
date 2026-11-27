@@ -311,5 +311,39 @@ class ValidateEvalSet(unittest.TestCase):
         self.assertFalse(any("duplicate" in e for e in out["errors"]))
 
 
+class FixtureDir(unittest.TestCase):
+    """--fixture-dir copies a folder into each throwaway eval root."""
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT))
+
+    def test_parameter_is_wired(self):
+        import inspect
+        from scripts import run_eval, run_loop
+        self.assertIn("fixture_dir", inspect.signature(run_eval.run_single_query).parameters)
+        self.assertIn("fixture_dir", inspect.signature(run_eval.run_eval).parameters)
+        self.assertIn("fixture_dir", inspect.signature(run_loop.run_loop).parameters)
+
+    def test_fixture_is_copied_before_the_run(self):
+        from unittest import mock
+        from scripts import run_eval
+        with tempfile.TemporaryDirectory() as d:
+            fx = Path(d) / "fx"
+            (fx / "notes").mkdir(parents=True)
+            (fx / "notes" / "a.md").write_text("x")
+            seen = {}
+
+            def fake_popen(*a, **kw):
+                seen["has"] = (Path(kw["cwd"]) / "notes" / "a.md").exists()
+                raise RuntimeError("stop after the check")
+
+            with mock.patch.object(run_eval.subprocess, "Popen", fake_popen):
+                try:
+                    run_eval.run_single_query("q", "s", "d", 5, None, str(fx))
+                except Exception:
+                    pass
+            self.assertTrue(seen.get("has"))
+
+
 if __name__ == "__main__":
     unittest.main()

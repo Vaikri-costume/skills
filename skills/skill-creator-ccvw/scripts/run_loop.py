@@ -58,6 +58,7 @@ def run_loop(
     verbose: bool,
     live_report_path: Path | None = None,
     log_dir: Path | None = None,
+    fixture_dir: str | None = None,
 ) -> dict:
     """Run the eval + improvement loop."""
     name, original_description, content = parse_skill_md(skill_path)
@@ -94,6 +95,7 @@ def run_loop(
             runs_per_query=runs_per_query,
             trigger_threshold=trigger_threshold,
             model=model,
+            fixture_dir=fixture_dir,
         )
         eval_elapsed = time.time() - t0
 
@@ -279,6 +281,7 @@ def main():
     parser.add_argument("--trigger-threshold", type=float, default=0.5, help="Trigger rate threshold")
     parser.add_argument("--holdout", type=float, default=0.4, help="Fraction of eval set to hold out for testing (0 to disable)")
     parser.add_argument("--model", required=True, help="Model for improvement")
+    parser.add_argument("--fixture-dir", default=None, help="Folder copied into each throwaway eval root, so queries that name a skill folder or graph path find it")
     parser.add_argument("--verbose", action="store_true", help="Print progress to stderr")
     parser.add_argument("--report", default="auto", help="Generate HTML report at this path (default: 'auto' = report.html in the --results-dir subdirectory, or a temp file when no --results-dir is given; 'none' to disable)")
     parser.add_argument("--results-dir", default=None, help="Save all outputs (results.json, report.html, and a logs folder of improve_iter_N.json files) to a timestamped subdirectory here")
@@ -334,6 +337,7 @@ def main():
         verbose=args.verbose,
         live_report_path=live_report_path,
         log_dir=log_dir,
+        fixture_dir=args.fixture_dir,
     )
 
     # Save JSON output

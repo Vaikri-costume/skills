@@ -76,6 +76,7 @@ def run_single_query(
     skill_description: str,
     timeout: int,
     model: str | None = None,
+    fixture_dir: str | None = None,
 ) -> bool:
     """Run a single query and return whether the skill was triggered.
 
@@ -112,6 +113,11 @@ def run_single_query(
     clean_name = skill_name
     unique_id = uuid.uuid4().hex[:8]
     eval_root = Path(tempfile.mkdtemp(prefix=f"skill-eval-{unique_id}-"))
+    if fixture_dir:
+        # Skills that act on a folder (a skill dir, a graph) need that folder
+        # to exist in the throwaway root, or queries naming it measure the
+        # missing path instead of the description. Copy it in before the run.
+        shutil.copytree(fixture_dir, eval_root, dirs_exist_ok=True)
     command_file = eval_root / ".claude" / "commands" / f"{clean_name}.md"
 
     try:
@@ -305,6 +311,7 @@ def run_eval(
     runs_per_query: int = 1,
     trigger_threshold: float = 0.5,
     model: str | None = None,
+    fixture_dir: str | None = None,
 ) -> dict:
     """Run the full eval set and return results."""
     results = []
@@ -320,6 +327,7 @@ def run_eval(
                     description,
                     timeout,
                     model,
+                    fixture_dir,
                 )
                 future_to_info[future] = (item, run_idx)
 
@@ -387,6 +395,7 @@ def main():
     parser.add_argument("--runs-per-query", type=int, default=3, help="Number of runs per query")
     parser.add_argument("--trigger-threshold", type=float, default=0.5, help="Trigger rate threshold")
     parser.add_argument("--model", default=None, help="Model to use for claude -p (default: user's configured model)")
+    parser.add_argument("--fixture-dir", default=None, help="Folder copied into each throwaway eval root, so queries that name a skill folder or graph path find it")
     parser.add_argument("--verbose", action="store_true", help="Print progress to stderr")
     args = parser.parse_args()
 
@@ -414,6 +423,7 @@ def main():
         runs_per_query=args.runs_per_query,
         trigger_threshold=args.trigger_threshold,
         model=args.model,
+        fixture_dir=args.fixture_dir,
     )
 
     if args.verbose:
